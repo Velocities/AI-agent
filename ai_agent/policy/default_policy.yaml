@@ -1,0 +1,177 @@
+# Default command policy for the ai-agent.
+# Rules are evaluated in order; first match wins unless marked as fallback.
+#
+# Each rule matches on binary name (argv[0]) and optional subcommand (argv[1]).
+# Risk levels: READ_ONLY, REVERSIBLE, DESTRUCTIVE, FORBIDDEN
+
+forbidden_patterns:
+  - argv_contains: [";"]
+  - argv_contains: ["|", "sh"]
+  - argv_contains: ["|", "bash"]
+  - argv_regex: '^(/bin/sh|/usr/bin/sh|bash|/bin/bash)$'
+  - argv_regex: '^(rm)$'
+    subcommand_regex: '^-.*r.*f$|^--recursive$'
+  - argv_regex: '^(mkfs|dd|mkswap|parted|fdisk|gdisk)$'
+
+filesystem:
+  readable_paths:
+    - /etc
+    - /var/log
+    - /proc
+    - /sys
+    - /run
+    - /tmp
+    - /home
+    - /opt
+    - /usr
+    - /lib
+  writable_redirect_paths:
+    - /tmp/ai-agent
+
+network:
+  allowed_hosts:
+    - 127.0.0.1
+    - localhost
+    - ::1
+  allowed_methods:
+    - GET
+    - HEAD
+  forbid_upload_flags:
+    - -d
+    - --data
+    - --data-binary
+    - --data-urlencode
+    - -F
+    - --form
+    - -T
+    - --upload-file
+  forbid_stdin: true
+
+rules:
+  - binary: df
+    risk: READ_ONLY
+  - binary: free
+    risk: READ_ONLY
+  - binary: uptime
+    risk: READ_ONLY
+  - binary: ps
+    risk: READ_ONLY
+  - binary: top
+    subcommand: -bn1
+    risk: READ_ONLY
+  - binary: ls
+    risk: READ_ONLY
+    path_args: true
+  - binary: cat
+    risk: READ_ONLY
+    path_args: true
+  - binary: head
+    risk: READ_ONLY
+    path_args: optional
+  - binary: tail
+    risk: READ_ONLY
+    path_args: optional
+  - binary: grep
+    risk: READ_ONLY
+    path_args: optional
+  - binary: journalctl
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: status
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: is-active
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: is-enabled
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: list-units
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: show
+    risk: READ_ONLY
+  - binary: systemctl
+    subcommand: restart
+    risk: REVERSIBLE
+  - binary: systemctl
+    subcommand: start
+    risk: REVERSIBLE
+  - binary: systemctl
+    subcommand: stop
+    risk: REVERSIBLE
+  - binary: systemctl
+    subcommand: reload
+    risk: REVERSIBLE
+  - binary: systemctl
+    subcommand: enable
+    risk: DESTRUCTIVE
+  - binary: systemctl
+    subcommand: disable
+    risk: DESTRUCTIVE
+  - binary: docker
+    subcommand: ps
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: inspect
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: logs
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: stats
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: images
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: version
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: info
+    risk: READ_ONLY
+  - binary: docker
+    subcommand: restart
+    risk: REVERSIBLE
+  - binary: docker
+    subcommand: start
+    risk: REVERSIBLE
+  - binary: docker
+    subcommand: stop
+    risk: REVERSIBLE
+  - binary: docker
+    subcommand: rm
+    risk: DESTRUCTIVE
+  - binary: docker
+    subcommand: volume
+    arg_prefix: rm
+    risk: DESTRUCTIVE
+  - binary: docker
+    subcommand: system
+    arg_prefix: prune
+    risk: DESTRUCTIVE
+  - binary: docker
+    subcommand: run
+    risk: FORBIDDEN
+  - binary: docker
+    subcommand: exec
+    risk: REVERSIBLE
+  - binary: docker
+    subcommand: compose
+    risk: READ_ONLY
+  - binary: curl
+    risk: READ_ONLY
+    network: true
+  - binary: wget
+    risk: READ_ONLY
+    network: true
+  - binary: nginx
+    subcommand: -t
+    risk: READ_ONLY
+  - binary: nginx
+    subcommand: -T
+    risk: READ_ONLY
+
+fallback:
+  risk: FORBIDDEN
+  reason: "No matching policy rule"
