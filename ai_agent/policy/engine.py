@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,11 +94,13 @@ class PolicyEngine:
         fs = raw.get("filesystem", {})
         net = raw.get("network", {})
         fallback = raw.get("fallback", {})
+        readable_paths = [Path(p) for p in fs.get("readable_paths", [])]
+        readable_paths.extend(cls._extra_readable_paths_for_platform())
         config = PolicyConfig(
             rules=rules,
             forbidden_patterns=raw.get("forbidden_patterns", []),
             filesystem=FilesystemPolicy(
-                readable_paths=[Path(p) for p in fs.get("readable_paths", [])],
+                readable_paths=readable_paths,
                 writable_redirect_paths=[
                     Path(p) for p in fs.get("writable_redirect_paths", [])
                 ],
@@ -112,6 +115,16 @@ class PolicyEngine:
             fallback_reason=fallback.get("reason", "No matching policy rule"),
         )
         return cls(config, scratch_dir)
+
+    @staticmethod
+    def _extra_readable_paths_for_platform() -> list[Path]:
+        extras = [Path.home(), Path.cwd()]
+        if platform.system() == "Windows":
+            extras.append(Path("C:/Users"))
+        return extras
+
+    def allowed_binaries(self) -> list[str]:
+        return sorted({rule.binary for rule in self.config.rules})
 
     def evaluate(self, expr: CommandExpr, *, piped_to: str | None = None) -> PolicyDecision:
         segments: list[SegmentDecision] = []
@@ -356,6 +369,8 @@ class PolicyEngine:
 
     @staticmethod
     def _looks_like_path(arg: str) -> bool:
+        if re.match(r"^[A-Za-z]:[\\/]", arg):
+            return True
         return arg.startswith(("/", "./", "../", "~"))
 
     def _validate_network(self, argv: list[str], binary: str) -> str | None:

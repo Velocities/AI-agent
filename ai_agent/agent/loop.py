@@ -4,7 +4,8 @@ import json
 import logging
 from dataclasses import dataclass
 
-from ai_agent.agent.tools import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from ai_agent.agent.context import build_system_prompt, gather_runtime_context
+from ai_agent.agent.tools import TOOL_DEFINITIONS
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -43,8 +44,10 @@ class AgentLoop:
         self.audit = audit
         self.prompter = prompter
         self.session = session
+        runtime = gather_runtime_context(settings)
+        system_prompt = build_system_prompt(runtime, policy.allowed_binaries())
         self.messages: list[LLMMessage] = [
-            LLMMessage(role="system", content=SYSTEM_PROMPT)
+            LLMMessage(role="system", content=system_prompt)
         ]
 
     def run(self, user_input: str) -> AgentRunResult:

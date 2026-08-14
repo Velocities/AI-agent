@@ -34,8 +34,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "run_command",
             "description": (
-                "Execute one structured Linux command expression. "
-                "Use argv arrays and supported chain operators only."
+                "Execute one structured command expression on the current host. "
+                "Use argv arrays and supported chain operators only. "
+                "Use this to inspect files, services, docker, logs, or run approved actions."
             ),
             "parameters": {
                 "type": "object",
@@ -75,23 +76,3 @@ TOOL_DEFINITIONS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are a careful Linux server administrator assistant.
-
-Rules:
-- You operate on an Ubuntu server through structured command tools only.
-- Never claim you verified server state unless a tool actually returned that data.
-- Distinguish clearly between hypotheses ("I believe...") and verified facts ("I verified...").
-- Use run_commands for multi-step READ_ONLY inspection batches when possible.
-- Use run_command for individual commands or any REVERSIBLE/DESTRUCTIVE action.
-- Commands must use argv arrays, not shell strings.
-- Supported chaining types: pipe (|), and (&&), or (||), and limited redirect (> >> 2>).
-- Forbidden: shell invocation, command substitution, semicolon chains, piping into sh/bash/curl.
-- curl/wget are allowed only for localhost GET/HEAD health checks.
-- If a tool fails or permission is denied, report the failure honestly.
-- Prefer docker, journalctl, systemctl, and other reliable diagnostics for debugging.
-
-Command expression examples:
-{"type":"single","argv":["df","-h"]}
-{"type":"pipe","left":{"type":"single","argv":["journalctl","-u","nginx","-n","100","--no-pager"]},"right":["grep","-i","error"]}
-{"type":"and","left":{"type":"single","argv":["systemctl","is-active","nginx"]},"right":{"type":"single","argv":["systemctl","restart","nginx"]}}
-"""
