@@ -1,0 +1,19 @@
+# Windows policy overlay — merged automatically when running on Windows.
+# Adds read-only file inspection via constrained PowerShell cmdlets.
+
+rules:
+  - binary: powershell
+    subcommand: -NoProfile
+    risk: READ_ONLY
+    powershell: true
+  - binary: where
+    risk: READ_ONLY
+
+forbidden_patterns:
+  - argv_contains: ["Invoke-Expression"]
+  - argv_contains: ["Start-Process"]
+  - argv_contains: ["Remove-Item"]
+  - argv_contains: ["Set-Content"]
+  - argv_contains: ["Add-Content"]
+  - argv_contains: ["New-Item"]
+  - argv_contains: ["iex"]

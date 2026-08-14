@@ -199,5 +199,51 @@ class CommandExecutor:
 
     @staticmethod
     def _safe_env() -> dict[str, str]:
-        allowed = {"PATH", "LANG", "LC_ALL", "HOME", "USER", "LOGNAME", "TERM"}
-        return {key: value for key, value in os.environ.items() if key in allowed}
+        """Return a trimmed environment safe for subprocess execution."""
+        allowed = {
+            "path",
+            "lang",
+            "lc_all",
+            "home",
+            "user",
+            "logname",
+            "term",
+            "tmp",
+            "temp",
+            # Windows essentials — PowerShell fails without these (error 8009001d).
+            "systemroot",
+            "windir",
+            "userprofile",
+            "appdata",
+            "localappdata",
+            "homedrive",
+            "homepath",
+            "username",
+            "userdomain",
+            "computername",
+            "comspec",
+            "pathext",
+            "psmodulepath",
+            "programdata",
+            "programfiles",
+            "programfiles(x86)",
+            "programw6432",
+            "commonprogramfiles",
+            "commonprogramfiles(x86)",
+            "commonprogramw6432",
+            "systemdrive",
+            "os",
+            "number_of_processors",
+            "processor_architecture",
+            "processor_identifier",
+            "processor_level",
+            "processor_revision",
+            "allusersprofile",
+            "driverdata",
+            "windir",
+        }
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if key.lower() in allowed
+        }

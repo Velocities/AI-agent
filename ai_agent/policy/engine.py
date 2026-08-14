@@ -46,6 +46,7 @@ class PolicyRule:
     arg_prefix: str | None = None
     path_args: str | None = None
     network: bool = False
+    powershell: bool = False
 
 
 @dataclass
@@ -73,6 +74,25 @@ class PolicyConfig:
 
 
 class PolicyEngine:
+    POWERSHELL_ALLOWED_CMDLETS = frozenset({"Get-ChildItem", "Get-Content", "Test-Path"})
+    POWERSHELL_FORBIDDEN_TOKENS = frozenset(
+        {
+            ";",
+            "|",
+            "&",
+            "`",
+            "Invoke-Expression",
+            "iex",
+            "Start-Process",
+            "Remove-Item",
+            "Set-Content",
+            "Add-Content",
+            "New-Item",
+            "DownloadString",
+            "WebClient",
+        }
+    )
+
     def __init__(self, config: PolicyConfig, scratch_dir: Path):
         self.config = config
         self.scratch_dir = scratch_dir.resolve()
@@ -80,6 +100,14 @@ class PolicyEngine:
     @classmethod
     def from_yaml(cls, path: Path, scratch_dir: Path) -> "PolicyEngine":
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if platform.system() == "Windows":
+            overlay_path = path.parent / "windows_policy.yaml"
+            if overlay_path.exists():
+                overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8"))
+                raw["rules"] = raw.get("rules", []) + overlay.get("rules", [])
+                raw["forbidden_patterns"] = raw.get("forbidden_patterns", []) + overlay.get(
+                    "forbidden_patterns", []
+                )
         rules = [
             PolicyRule(
                 binary=item["binary"],
@@ -88,6 +116,7 @@ class PolicyEngine:
                 arg_prefix=item.get("arg_prefix"),
                 path_args=item.get("path_args"),
                 network=item.get("network", False),
+                powershell=item.get("powershell", False),
             )
             for item in raw.get("rules", [])
         ]
@@ -308,6 +337,17 @@ class PolicyEngine:
                     cwd=cwd,
                 )
 
+        if rule.powershell:
+            powershell_error = self._validate_powershell(argv)
+            if powershell_error:
+                return SegmentDecision(
+                    argv=argv,
+                    binary=binary,
+                    risk=RiskLevel.FORBIDDEN,
+                    reason=powershell_error,
+                    cwd=cwd,
+                )
+
         return SegmentDecision(
             argv=argv,
             binary=binary,
@@ -318,8 +358,9 @@ class PolicyEngine:
 
     def _match_rule(self, argv: list[str], binary: str) -> PolicyRule | None:
         subcommand = argv[1] if len(argv) > 1 else None
+        normalized = self._normalize_binary(binary)
         for rule in self.config.rules:
-            if rule.binary != binary:
+            if self._normalize_binary(rule.binary) != normalized:
                 continue
             if rule.subcommand is not None and rule.subcommand != subcommand:
                 continue
@@ -328,6 +369,50 @@ class PolicyEngine:
                     continue
             return rule
         return None
+
+    def _validate_powershell(self, argv: list[str]) -> str | None:
+        if "-Command" not in argv:
+            return (
+                "PowerShell must use argv form: powershell -NoProfile -Command "
+                "<Cmdlet> -LiteralPath <path> [extra args]"
+            )
+
+        command_index = argv.index("-Command")
+        script_parts = argv[command_index + 1 :]
+        if not script_parts:
+            return "PowerShell -Command requires a cmdlet"
+
+        cmdlet = script_parts[0]
+        if cmdlet not in self.POWERSHELL_ALLOWED_CMDLETS:
+            return f"PowerShell cmdlet not allowed: {cmdlet}"
+
+        joined = " ".join(script_parts)
+        for token in self.POWERSHELL_FORBIDDEN_TOKENS:
+            if token in joined:
+                return f"PowerShell script contains forbidden token: {token}"
+
+        for index, arg in enumerate(script_parts):
+            if arg in {"-Path", "-LiteralPath"} and index + 1 < len(script_parts):
+                path_error = self._validate_readable_path(script_parts[index + 1])
+                if path_error:
+                    return path_error
+        return None
+
+    def _validate_readable_path(self, raw_path: str) -> str | None:
+        resolved = Path(raw_path).expanduser().resolve()
+        if not any(
+            self._is_under(resolved, root.resolve())
+            for root in self.config.filesystem.readable_paths
+        ):
+            return f"Path not allowed by filesystem policy: {raw_path}"
+        return None
+
+    @staticmethod
+    def _normalize_binary(name: str) -> str:
+        lower = name.lower()
+        if lower.endswith(".exe"):
+            return lower[:-4]
+        return lower
 
     def _matches_forbidden_pattern(self, argv: list[str]) -> bool:
         joined = " ".join(argv)
@@ -359,12 +444,9 @@ class PolicyEngine:
                 return "Path argument required but missing"
             return None
         for raw_path in path_candidates:
-            resolved = Path(raw_path).expanduser().resolve()
-            if not any(
-                self._is_under(resolved, root.resolve())
-                for root in self.config.filesystem.readable_paths
-            ):
-                return f"Path not allowed by filesystem policy: {raw_path}"
+            path_error = self._validate_readable_path(raw_path)
+            if path_error:
+                return path_error
         return None
 
     @staticmethod

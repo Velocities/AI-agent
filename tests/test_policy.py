@@ -118,3 +118,65 @@ def test_redirect_outside_scratch_forbidden(policy_engine: PolicyEngine, tmp_pat
     )
     decision = engine.evaluate(expr)
     assert not decision.allowed
+
+
+def test_powershell_get_childitem_allowed_on_windows(tmp_path: Path) -> None:
+    import platform
+
+    if platform.system() != "Windows":
+        pytest.skip("Windows-only policy overlay")
+
+    engine = PolicyEngine.from_yaml(Settings().policy_path(), tmp_path / "scratch")
+    project = Path.cwd()
+    expr = parse_command_expr(
+        {
+            "type": "single",
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-ChildItem",
+                "-LiteralPath",
+                str(project),
+                "-Name",
+            ],
+        }
+    )
+    decision = engine.evaluate(expr)
+    assert decision.allowed
+    assert decision.effective_risk == RiskLevel.READ_ONLY
+
+
+def test_powershell_invoke_expression_forbidden(tmp_path: Path) -> None:
+    import platform
+
+    if platform.system() != "Windows":
+        pytest.skip("Windows-only policy overlay")
+
+    engine = PolicyEngine.from_yaml(Settings().policy_path(), tmp_path / "scratch")
+    expr = parse_command_expr(
+        {
+            "type": "single",
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Invoke-Expression",
+                "Get-ChildItem",
+            ],
+        }
+    )
+    decision = engine.evaluate(expr)
+    assert not decision.allowed
+
+
+def test_dir_command_forbidden(tmp_path: Path) -> None:
+    engine = PolicyEngine.from_yaml(Settings().policy_path(), tmp_path / "scratch")
+    expr = parse_command_expr(
+        {
+            "type": "single",
+            "argv": ["dir", "/B", str(Path.cwd())],
+        }
+    )
+    decision = engine.evaluate(expr)
+    assert not decision.allowed

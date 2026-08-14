@@ -52,10 +52,14 @@ def platform_guidance(context: RuntimeContext) -> str:
     if context.is_windows:
         return (
             "- This host is Windows. Do NOT assume Ubuntu, WSL, or systemd unless a tool verifies it.\n"
-            "- Linux-only tools (systemctl, journalctl, df, free, uptime) are usually unavailable.\n"
-            "- Windows paths like C:\\Users\\... are valid. Prefer tools over guessing.\n"
+            "- Linux-only tools (systemctl, journalctl, ls, cat, df) are usually unavailable.\n"
+            "- For directory listings use PowerShell:\n"
+            '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Name"]}\n'
+            "- For reading files use PowerShell:\n"
+            '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-Content","-LiteralPath","C:\\\\path\\\\to\\\\file","-TotalCount","200"]}\n'
+            "- Do NOT use dir, cmd.exe, or unconstrained PowerShell scripts.\n"
             "- docker works only when Docker Desktop is running.\n"
-            "- If a command fails with 'file not found', try a different approach for this OS."
+            "- If a command fails, report the error honestly and try another allowed approach."
         )
     if context.is_linux:
         return (
