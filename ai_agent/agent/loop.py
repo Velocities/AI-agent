@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
-from ai_agent.agent.tools import TOOL_DEFINITIONS
+from ai_agent.agent.tools import SCHEMA_NUDGE, TOOL_DEFINITIONS
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -66,23 +66,24 @@ class AgentLoop:
             self.messages.append(assistant)
 
             if not assistant.tool_calls:
+                if iteration < self.settings.agent_max_iterations:
+                    self.messages.append(LLMMessage(role="user", content=SCHEMA_NUDGE))
+                    continue
                 return AgentRunResult(
-                    final_message=assistant.content or "(empty response)",
+                    final_message=(
+                        "The model stopped without calling respond(finished=true). "
+                        "Try again or narrow the request."
+                    ),
                     iterations=iteration,
+                    error="missing_respond",
                 )
 
-            tool_calls = assistant.tool_calls
-            if len(tool_calls) > 1 and all(
-                call.name in {"run_command", "run_commands"} for call in tool_calls
-            ):
-                batch_results = self._handle_batch_tool_calls(tool_calls)
-            else:
-                batch_results = []
-                for call in tool_calls:
-                    batch_results.append(self._handle_tool_call(call))
-
-            for tool_message in batch_results:
-                self.messages.append(tool_message)
+            final_message = self._process_tool_calls(assistant.tool_calls)
+            if final_message is not None:
+                return AgentRunResult(
+                    final_message=final_message,
+                    iterations=iteration,
+                )
 
         return AgentRunResult(
             final_message=(
@@ -91,6 +92,78 @@ class AgentLoop:
             ),
             iterations=self.settings.agent_max_iterations,
             error="max_iterations",
+        )
+
+    def _process_tool_calls(self, tool_calls: list[ToolCall]) -> str | None:
+        final_message: str | None = None
+        command_calls = [
+            call for call in tool_calls if call.name in {"run_command", "run_commands"}
+        ]
+        other_calls = [
+            call for call in tool_calls if call.name not in {"run_command", "run_commands"}
+        ]
+
+        if len(command_calls) > 1 and len(other_calls) == 0:
+            tool_messages = self._handle_batch_tool_calls(command_calls)
+        else:
+            tool_messages = []
+            for call in tool_calls:
+                if call.name == "respond":
+                    tool_message, finished_message = self._handle_respond(call)
+                    tool_messages.append(tool_message)
+                    if finished_message is not None:
+                        final_message = finished_message
+                else:
+                    tool_messages.append(self._handle_tool_call(call))
+
+        for tool_message in tool_messages:
+            self.messages.append(tool_message)
+        return final_message
+
+    def _handle_respond(self, call: ToolCall) -> tuple[LLMMessage, str | None]:
+        finished = call.arguments.get("finished")
+        message = call.arguments.get("message", "")
+
+        if not isinstance(finished, bool):
+            payload = {
+                "success": False,
+                "error": "respond requires finished to be a boolean",
+            }
+            return (
+                LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                ),
+                None,
+            )
+
+        if finished:
+            payload = {"success": True, "finished": True}
+            return (
+                LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                ),
+                message,
+            )
+
+        payload = {
+            "success": True,
+            "finished": False,
+            "note": "Continue with command tools, then call respond when done.",
+        }
+        return (
+            LLMMessage(
+                role="tool",
+                name=call.name,
+                content=json.dumps(payload, ensure_ascii=True),
+                tool_call_id=call.id,
+            ),
+            None,
         )
 
     def _handle_batch_tool_calls(self, tool_calls: list[ToolCall]) -> list[LLMMessage]:

@@ -74,5 +74,41 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "respond",
+            "description": (
+                "Send a message to the user and explicitly declare whether work on the "
+                "current request is finished. You must call this tool to communicate with "
+                "the user—plain assistant text is not shown."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "User-facing message. When finished=true, provide the complete "
+                            "answer. When finished=false, optional brief internal status."
+                        ),
+                    },
+                    "finished": {
+                        "type": "boolean",
+                        "description": (
+                            "True only when the user's request is fully complete and no "
+                            "further tools are needed. False if you will continue with "
+                            "more run_command or run_commands calls."
+                        ),
+                    },
+                },
+                "required": ["message", "finished"],
+            },
+        },
+    },
 ]
 
+SCHEMA_NUDGE = (
+    "Use the respond tool to communicate with the user. "
+    "Set finished=true only when the request is fully complete."
+)

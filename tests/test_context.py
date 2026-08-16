@@ -30,6 +30,8 @@ def test_system_prompt_includes_runtime_platform() -> None:
     assert r"C:\Users\Admin\Desktop\Repos\AI-agent" in prompt
     assert "run_command" in prompt
     assert "run_commands" in prompt
+    assert "respond" in prompt
+    assert "finished" in prompt
     assert "docker, cat, grep" in prompt
     assert "Do NOT assume Ubuntu" in prompt
     assert "use tools first" in prompt.lower()
