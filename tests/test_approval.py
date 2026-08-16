@@ -50,3 +50,39 @@ def test_reversible_requires_confirmation_in_balanced_mode() -> None:
         )
         is True
     )
+
+
+def test_permissive_mode_auto_allows_read_only() -> None:
+    session = ApprovalSession()
+    assert (
+        risk_requires_confirmation(
+            RiskLevel.READ_ONLY,
+            ConfirmationMode.PERMISSIVE,
+            session,
+        )
+        is False
+    )
+
+
+def test_permissive_mode_auto_allows_reversible() -> None:
+    session = ApprovalSession()
+    assert (
+        risk_requires_confirmation(
+            RiskLevel.REVERSIBLE,
+            ConfirmationMode.PERMISSIVE,
+            session,
+        )
+        is False
+    )
+
+
+def test_permissive_mode_requires_destructive_confirmation() -> None:
+    session = ApprovalSession()
+    assert (
+        risk_requires_confirmation(
+            RiskLevel.DESTRUCTIVE,
+            ConfirmationMode.PERMISSIVE,
+            session,
+        )
+        is True
+    )

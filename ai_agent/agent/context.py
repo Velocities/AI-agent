@@ -53,11 +53,13 @@ def platform_guidance(context: RuntimeContext) -> str:
         return (
             "- This host is Windows. Do NOT assume Ubuntu, WSL, or systemd unless a tool verifies it.\n"
             "- Linux-only tools (systemctl, journalctl, ls, cat, df) are usually unavailable.\n"
-            "- For directory listings use PowerShell:\n"
+            "- For directory listings use PowerShell (no pipes; use cmdlet flags only):\n"
             '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Name"]}\n'
+            '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Recurse","-Name"]}\n'
             "- For reading files use PowerShell:\n"
             '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-Content","-LiteralPath","C:\\\\path\\\\to\\\\file","-TotalCount","200"]}\n'
-            "- Do NOT use dir, cmd.exe, or unconstrained PowerShell scripts.\n"
+            "- Do NOT use pipes (|), dir, cmd.exe, or shell-style PowerShell strings.\n"
+            "- Prefer run_commands to batch multiple READ_ONLY inspections in one step.\n"
             "- docker works only when Docker Desktop is running.\n"
             "- If a command fails, report the error honestly and try another allowed approach."
         )

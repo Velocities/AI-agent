@@ -31,11 +31,6 @@ class ApprovalPrompter:
     def should_auto_run(self, decision: PolicyDecision) -> bool:
         if not decision.allowed:
             return False
-        if decision.effective_risk == RiskLevel.READ_ONLY:
-            if self.mode == ConfirmationMode.BALANCED:
-                return True
-            if self.session.has_read_only_auto():
-                return True
         if self.session.has_grant(decision.effective_risk, "global"):
             return True
         return not risk_requires_confirmation(
@@ -50,15 +45,15 @@ class ApprovalPrompter:
         *,
         reason: str | None = None,
     ) -> ApprovalResult:
-        self._print_header(decision, reason=reason)
         if not decision.allowed:
+            self._print_header(decision, reason=reason)
             self.console.print("[red]This command is forbidden by policy.[/red]")
             return ApprovalResult(approved=False)
 
         if self.should_auto_run(decision):
-            self.console.print("[green]Auto-approved (READ_ONLY / session grant).[/green]")
             return ApprovalResult(approved=True)
 
+        self._print_header(decision, reason=reason)
         return self._prompt_yes_no(decision)
 
     def prompt_batch(self, pending: list[PendingCommand]) -> ApprovalResult:
@@ -130,10 +125,19 @@ class ApprovalPrompter:
             self.console.print(summarize_segments(decision))
 
     def _prompt_yes_no(self, decision: PolicyDecision) -> ApprovalResult:
-        response = input(
-            "\nApprove? [y/N/a=allow REVERSIBLE this session]: "
-        ).strip().lower()
-        if response in {"a", "allow"} and decision.effective_risk == RiskLevel.REVERSIBLE:
-            self.session.add_grant(RiskLevel.REVERSIBLE, "global")
-            return ApprovalResult(approved=True, grant_scope="reversible_session")
+        if decision.effective_risk == RiskLevel.REVERSIBLE:
+            prompt = "\nApprove? [y/N/a=allow REVERSIBLE this session]: "
+        elif decision.effective_risk == RiskLevel.READ_ONLY:
+            prompt = "\nApprove? [y/N/a=allow READ_ONLY this session]: "
+        else:
+            prompt = "\nApprove? [y/N]: "
+
+        response = input(prompt).strip().lower()
+        if response in {"a", "allow"}:
+            if decision.effective_risk == RiskLevel.REVERSIBLE:
+                self.session.add_grant(RiskLevel.REVERSIBLE, "global")
+                return ApprovalResult(approved=True, grant_scope="reversible_session")
+            if decision.effective_risk == RiskLevel.READ_ONLY:
+                self.session.enable_read_only_auto()
+                return ApprovalResult(approved=True, grant_scope="read_only_session")
         return ApprovalResult(approved=response in {"y", "yes"})

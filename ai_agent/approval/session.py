@@ -64,9 +64,11 @@ def risk_requires_confirmation(
     if risk == RiskLevel.READ_ONLY:
         if session.has_read_only_auto():
             return False
-        if mode == ConfirmationMode.PARANOID:
-            return True
-        return mode != ConfirmationMode.BALANCED
-    if mode == ConfirmationMode.PERMISSIVE:
-        return risk.value >= RiskLevel.DESTRUCTIVE.value
+        if mode in {ConfirmationMode.BALANCED, ConfirmationMode.PERMISSIVE}:
+            return False
+        return mode == ConfirmationMode.PARANOID
+    if risk == RiskLevel.REVERSIBLE:
+        if mode == ConfirmationMode.PERMISSIVE:
+            return False
+        return True
     return True
