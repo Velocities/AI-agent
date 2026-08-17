@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
-import sys
+import time
 from getpass import getuser
 from pathlib import Path
 
@@ -17,6 +16,8 @@ from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
 from ai_agent.llm.ollama import OllamaProvider
 from ai_agent.policy.engine import PolicyEngine
+
+logger = logging.getLogger(__name__)
 
 
 def configure_logging(level: str) -> None:
@@ -54,6 +55,29 @@ def build_agent(console: Console | None = None) -> AgentLoop:
     )
 
 
+def warmup_agent(agent: AgentLoop, console: Console) -> bool:
+    healthy, message = agent.llm.healthcheck()
+    if not healthy:
+        console.print(f"[yellow]Warning:[/yellow] {message}")
+
+    with console.status(
+        f"[bold cyan]Loading {agent.settings.ollama_model}[/bold cyan] "
+        "[dim](warming up GPU with agent context)[/dim]",
+        spinner="dots",
+    ):
+        ok, detail, duration = agent.warmup()
+
+    if ok:
+        console.print(
+            f"[green]✓[/green] Model ready in [bold]{duration:.1f}s[/bold] "
+            "[dim](system prompt + tools loaded)[/dim]\n"
+        )
+        return True
+
+    console.print(f"[yellow]Warning:[/yellow] Model warmup failed: {detail}\n")
+    return False
+
+
 def main() -> None:
     console = Console()
     settings = Settings()
@@ -66,12 +90,8 @@ def main() -> None:
     )
     console.print("Type 'exit' or 'quit' to leave.\n")
 
-    llm = OllamaProvider(settings.ollama_host, settings.ollama_model)
-    healthy, message = llm.healthcheck()
-    if not healthy:
-        console.print(f"[yellow]Warning:[/yellow] {message}")
-
     agent = build_agent(console)
+    warmup_agent(agent, console)
 
     while True:
         try:

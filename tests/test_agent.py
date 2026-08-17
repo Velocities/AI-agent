@@ -223,3 +223,34 @@ def test_plain_text_without_respond_retries_then_fails(agent_parts) -> None:
     result = agent.run("hello")
     assert result.error == "missing_respond"
     assert llm.chat.call_count == 2
+
+
+def test_warmup_uses_system_prompt_and_tools(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content="", tool_calls=[])
+    )
+
+    ok, detail, duration = agent.warmup()
+
+    assert ok is True
+    assert detail == "ready"
+    assert duration >= 0
+    llm.chat.assert_called_once()
+    messages, kwargs = llm.chat.call_args
+    assert messages[0][0].role == "system"
+    assert kwargs.get("tools") is not None
+    assert len(agent.messages) == 1
+
+
+def test_warmup_failure(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content=""),
+        error="Ollama is unavailable.",
+    )
+
+    ok, detail, _duration = agent.warmup()
+
+    assert ok is False
+    assert "Ollama" in detail

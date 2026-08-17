@@ -50,6 +50,40 @@ class AgentLoop:
             LLMMessage(role="system", content=system_prompt)
         ]
 
+    def warmup(self) -> tuple[bool, str, float]:
+        """Load the model with the agent system prompt and tool schema."""
+        import time
+
+        logger.info(
+            "Warming up model with agent context (system prompt + %d tools)",
+            len(TOOL_DEFINITIONS),
+        )
+        start = time.perf_counter()
+        response = self.llm.chat(
+            [
+                self.messages[0],
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "Startup warmup. Call respond with finished=true and "
+                        'message="ready".'
+                    ),
+                ),
+            ],
+            tools=TOOL_DEFINITIONS,
+        )
+        duration = time.perf_counter() - start
+
+        if response.error:
+            logger.warning("Model warmup failed after %.1fs: %s", duration, response.error)
+            return False, response.error, duration
+
+        logger.info(
+            "Model warmup complete in %.1fs (loaded with agent context)",
+            duration,
+        )
+        return True, "ready", duration
+
     def run(self, user_input: str) -> AgentRunResult:
         self.messages.append(LLMMessage(role="user", content=user_input))
 
