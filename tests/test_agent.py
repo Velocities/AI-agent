@@ -214,14 +214,25 @@ def test_respond_finished_false_continues(agent_parts) -> None:
     assert llm.chat.call_count == 2
 
 
-def test_plain_text_without_respond_retries_then_fails(agent_parts) -> None:
+def test_plain_text_is_the_final_answer(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content="Plain text answer.")
+    )
+    result = agent.run("hello")
+    assert result.final_message == "Plain text answer."
+    assert result.error is None
+    assert llm.chat.call_count == 1
+
+
+def test_empty_response_retries_then_fails(agent_parts) -> None:
     agent, llm, _ = agent_parts
     agent.settings.agent_max_iterations = 2
     llm.chat.return_value = LLMResponse(
-        message=LLMMessage(role="assistant", content="Plain text only.")
+        message=LLMMessage(role="assistant", content="   ")
     )
     result = agent.run("hello")
-    assert result.error == "missing_respond"
+    assert result.error == "empty_response"
     assert llm.chat.call_count == 2
 
 

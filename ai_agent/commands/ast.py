@@ -96,6 +96,12 @@ class _CommandExprAdapter(BaseModel):
 
     @classmethod
     def validate_python(cls, data: dict) -> CommandExpr:
+        if not isinstance(data, dict):
+            raise ValueError(
+                "command expression must be a JSON object such as "
+                '{"type": "single", "argv": ["docker", "ps"]}, '
+                f"got {type(data).__name__}"
+            )
         if data.get("type") == "pipe" and "right" in data and "right_argv" not in data:
             data = {**data, "right_argv": data["right"]}
         if data.get("type") == "pipe" and isinstance(data.get("right"), dict):

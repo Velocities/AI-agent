@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="qwen3:14b", alias="OLLAMA_MODEL")
 
     agent_log_level: str = Field(default="INFO", alias="AGENT_LOG_LEVEL")
+    agent_stream_responses: bool = Field(default=True, alias="AGENT_STREAM_RESPONSES")
     agent_max_iterations: int = Field(default=15, alias="AGENT_MAX_ITERATIONS")
     agent_tool_timeout: int = Field(default=60, alias="AGENT_TOOL_TIMEOUT")
     agent_confirmation_mode: ConfirmationMode = Field(

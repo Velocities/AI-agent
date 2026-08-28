@@ -1,4 +1,4 @@
-from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse, ToolCall
+from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse, StreamChunk, ToolCall
 from ai_agent.llm.ollama import OllamaProvider
 
 __all__ = [
@@ -6,5 +6,6 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "OllamaProvider",
+    "StreamChunk",
     "ToolCall",
 ]

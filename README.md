@@ -243,6 +243,7 @@ See [`.env.example`](.env.example):
 | `OLLAMA_HOST` | Ollama API base URL |
 | `OLLAMA_MODEL` | Model name |
 | `AGENT_LOG_LEVEL` | Logging level |
+| `AGENT_STREAM_RESPONSES` | Stream assistant text to the terminal as it is generated (`true` / `false`) |
 | `AGENT_MAX_ITERATIONS` | Max tool-call loop iterations |
 | `AGENT_TOOL_TIMEOUT` | Per-command timeout (seconds) |
 | `AGENT_CONFIRMATION_MODE` | `paranoid` / `balanced` / `permissive` |
@@ -250,6 +251,38 @@ See [`.env.example`](.env.example):
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+
+---
+
+## Streaming responses
+
+When `AGENT_STREAM_RESPONSES=true` (the default), the CLI prints the model's answer as Ollama generates it, instead of waiting for the full reply.
+
+### How it works
+
+Final answers are written as **ordinary assistant text**. Ollama streams that content token-by-token over `/api/chat` with `stream: true`, and the CLI writes each chunk as it arrives.
+
+Tool iterations (command execution, approvals, audit events) are not streamed. Only the user-facing answer text is.
+
+Progress notes from the optional `respond` tool (`finished=false`) appear as dim status lines above the answer, not mixed into the streamed text.
+
+### Limitations
+
+**Tool-call arguments are not streamed incrementally.** Ollama typically delivers a complete tool call in one chunk when generation finishes, rather than streaming the JSON argument payload character by character.
+
+That matters if a model puts its final answer inside `respond(message=...)` instead of writing plain assistant text. In that case the user still sees one flush at the end, not a live typewriter effect.
+
+The system prompt steers models toward plain text for final answers, but smaller or less instruction-following models may ignore that and use `respond` anyway. If streaming feels like a blob, try a different model or check that the model is answering as prose rather than wrapping the reply in a tool call.
+
+To disable streaming entirely, set `AGENT_STREAM_RESPONSES=false` in `.env`.
+
+For a quick manual check against a live Ollama instance:
+
+```bash
+python scripts/stream_smoke_test.py "explain database migrations in three sentences"
+```
+
+The script prints chunk timing so you can confirm incremental output.
 
 ---
 

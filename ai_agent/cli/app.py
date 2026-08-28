@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import time
+import sys
 from getpass import getuser
 from pathlib import Path
 
@@ -15,9 +15,22 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
 from ai_agent.llm.ollama import OllamaProvider
+from ai_agent.llm.streaming import sanitize_terminal_text
 from ai_agent.policy.engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
+
+
+def configure_stdio_encoding() -> None:
+    """Keep terminal output alive on consoles that cannot encode UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            logger.debug("Could not switch %s to UTF-8", stream, exc_info=True)
 
 
 def configure_logging(level: str) -> None:
@@ -25,6 +38,8 @@ def configure_logging(level: str) -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def build_agent(console: Console | None = None) -> AgentLoop:
@@ -79,6 +94,7 @@ def warmup_agent(agent: AgentLoop, console: Console) -> bool:
 
 
 def main() -> None:
+    configure_stdio_encoding()
     console = Console()
     settings = Settings()
     configure_logging(settings.agent_log_level)
@@ -106,10 +122,49 @@ def main() -> None:
             console.print("Goodbye.")
             break
 
-        result = agent.run(user_input)
         console.print()
-        console.print("[bold green]AI:[/bold green]")
-        console.print(Markdown(result.final_message))
+        streamed = False
+        status = console.status("[dim]Thinking...[/dim]", spinner="dots")
+        status.start()
+
+        def on_stream_chunk(text: str) -> None:
+            nonlocal streamed
+            safe_text = sanitize_terminal_text(text)
+            if not safe_text:
+                return
+            if not streamed:
+                status.stop()
+                console.print("[bold green]AI:[/bold green] ", end="")
+                streamed = True
+            console.file.write(safe_text)
+            console.file.flush()
+
+        def on_iteration(iteration: int) -> None:
+            if iteration > 1 and not streamed:
+                status.update(f"[dim]Working (step {iteration})...[/dim]")
+
+        def on_notice(text: str) -> None:
+            if streamed:
+                return
+            status.stop()
+            console.print(f"[dim]· {text}[/dim]")
+            status.start()
+
+        try:
+            result = agent.run(
+                user_input,
+                stream_callback=on_stream_chunk,
+                iteration_callback=on_iteration,
+                notice_callback=on_notice,
+            )
+        finally:
+            status.stop()
+
+        if streamed:
+            console.print()
+        else:
+            console.print("[bold green]AI:[/bold green]")
+            console.print(Markdown(result.final_message))
         if result.error == "max_iterations":
             console.print("[yellow]Agent stopped at iteration limit.[/yellow]")
         console.print()
