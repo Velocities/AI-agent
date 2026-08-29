@@ -17,6 +17,8 @@ cp .env.example .env
 ai-agent
 ```
 
+To split the model and the agent into two terminals, see [Two-window workflow](#two-window-workflow-same-machine) (`ai-agent-llm`, then paste the printed URL into `OLLAMA_HOST`).
+
 Requirements:
 
 - Python 3.11+
@@ -242,7 +244,10 @@ See [`.env.example`](.env.example):
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_HOST` | Ollama API base URL (localhost or another machine, e.g. `http://home-server:11434`) |
+| `OLLAMA_HOST` | URL the **agent** uses (Ollama itself, or the `ai-agent-llm` facade URL) |
+| `OLLAMA_UPSTREAM` | Real Ollama URL used by **`ai-agent-llm`** only |
+| `LLM_BIND_HOST` | Address the facade listens on (default `127.0.0.1`) |
+| `LLM_BIND_PORT` | Facade port (`0` = pick a free port and print it) |
 | `OLLAMA_MODEL` | Model name |
 | `OLLAMA_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
 | `OLLAMA_NUM_CTX` | Context window; Ollama's 4096 default truncates long answers |
@@ -284,6 +289,39 @@ OLLAMA_HOST=http://home-server:11434
 On the Ollama machine, bind beyond loopback if clients are remote (for example `OLLAMA_HOST=0.0.0.0` in Ollama's environment — that is Ollama's own setting, not this project's). Restrict that port with a firewall. The API is unauthenticated HTTP; do not expose it to the internet.
 
 Command execution does not use `OLLAMA_HOST`. A future SSH execution target will be a separate config.
+
+### Two-window workflow (same machine)
+
+Use this to run the model process and the agent as separate layers. Ollama must already be running at `OLLAMA_UPSTREAM` (default `http://localhost:11434`).
+
+**Window 1 — model / facade**
+
+```bat
+ai-agent-llm
+```
+
+It healthchecks the upstream Ollama, warms the model with the same system prompt and tools the agent uses, then listens on `127.0.0.1` (port `LLM_BIND_PORT`, or an OS-chosen port if `0`). When ready it prints a URL, for example:
+
+```text
+Endpoint: http://127.0.0.1:52341
+
+Copy this into .env, then start ai-agent in another terminal:
+  OLLAMA_HOST=http://127.0.0.1:52341
+```
+
+Leave that window open.
+
+**Window 2 — agent**
+
+Set `OLLAMA_HOST` to the printed URL (`.env` or the environment), then:
+
+```bat
+ai-agent
+```
+
+The agent still uses `OllamaProvider` and `LlmHttpSession`. It talks to the local facade; the facade forwards `/api/chat` and `/api/tags` to real Ollama. `OLLAMA_UPSTREAM` stays pointed at Ollama so restarting `ai-agent-llm` after you change `OLLAMA_HOST` does not loop the facade onto itself.
+
+This is a same-machine split for testing layers. A GPU box on the LAN is still configured with `OLLAMA_HOST` or `OLLAMA_UPSTREAM` set to that machine. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
 
 ### Connection errors
 
@@ -450,7 +488,7 @@ ai_agent/
   audit/          # Audit logging
   cli/            # Terminal interface (`ai-agent`) and error policy
   commands/       # CommandExpr AST, render, executor
-  llm/            # LLMProvider, factory, HTTP session, Ollama provider
+  llm/            # LLMProvider, factory, HTTP session, Ollama provider, local facade
   policy/         # Risk levels, policy engine, default_policy.yaml
 tests/
 ```
@@ -459,7 +497,6 @@ tests/
 
 ## Roadmap (not yet implemented)
 
-- Dedicated LLM process that warms the model and prints a bind URL
 - SSH tunnel transport for the LLM session
 - Remote command execution (`ExecutionBackend` / named targets)
 - Web UI with the same approval token model

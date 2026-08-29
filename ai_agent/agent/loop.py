@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
 from ai_agent.agent.tools import CONTINUE_NUDGE, SCHEMA_NUDGE, TOOL_DEFINITIONS
+from ai_agent.agent.warmup import warmup_llm
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -66,34 +67,7 @@ class AgentLoop:
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
-        import time
-
-        logger.info(
-            "Warming up model with agent context (system prompt + %d tools)",
-            len(TOOL_DEFINITIONS),
-        )
-        start = time.perf_counter()
-        response = self.llm.chat(
-            [
-                self.messages[0],
-                LLMMessage(
-                    role="user",
-                    content="Startup warmup. Reply with the single word: ready",
-                ),
-            ],
-            tools=TOOL_DEFINITIONS,
-        )
-        duration = time.perf_counter() - start
-
-        if response.error:
-            logger.warning("Model warmup failed after %.1fs: %s", duration, response.error)
-            return False, response.error, duration
-
-        logger.info(
-            "Model warmup complete in %.1fs (loaded with agent context)",
-            duration,
-        )
-        return True, "ready", duration
+        return warmup_llm(self.llm, self.messages[0].content)
 
     def run(
         self,

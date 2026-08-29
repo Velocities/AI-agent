@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 ai-agent = "ai_agent.cli.app:main"
+ai-agent-llm = "ai_agent.cli.llm_serve:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
