@@ -111,3 +111,10 @@ SCHEMA_NUDGE = (
     "Answer the user now as ordinary assistant text, or call run_command / "
     "run_commands if you still need to inspect this machine."
 )
+
+CONTINUE_NUDGE = (
+    "Your answer was cut off mid-sentence at the end of the assistant message "
+    "above. Resume from that exact point so the two parts read as one continuous "
+    "answer. Do not add a heading, preamble, apology, or summary of what you "
+    "already wrote, and do not start the answer over."
+)

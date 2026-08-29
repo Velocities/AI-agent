@@ -33,6 +33,22 @@ def configure_stdio_encoding() -> None:
             logger.debug("Could not switch %s to UTF-8", stream, exc_info=True)
 
 
+def run_error_notice(error: str | None) -> str | None:
+    """Short status line for a run that did not finish cleanly."""
+    if not error:
+        return None
+    if error == "max_iterations":
+        return "Agent stopped at the tool iteration limit."
+    if error == "truncated":
+        return (
+            "Answer stopped early after repeated cutoffs. Raise OLLAMA_NUM_CTX or "
+            "AGENT_MAX_CONTINUATIONS, or ask for a smaller piece at a time."
+        )
+    if error == "empty_response":
+        return "The model returned no answer."
+    return f"LLM error: {error}"
+
+
 def configure_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
@@ -57,7 +73,13 @@ def build_agent(console: Console | None = None) -> AgentLoop:
     audit = AuditLogger(log_path=audit_path, user=getuser())
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, console)
-    llm = OllamaProvider(settings.ollama_host, settings.ollama_model)
+    llm = OllamaProvider(
+        settings.ollama_host,
+        settings.ollama_model,
+        timeout=settings.ollama_timeout,
+        num_predict=settings.ollama_num_predict,
+        num_ctx=settings.ollama_num_ctx,
+    )
 
     return AgentLoop(
         settings=settings,
@@ -165,8 +187,12 @@ def main() -> None:
         else:
             console.print("[bold green]AI:[/bold green]")
             console.print(Markdown(result.final_message))
-        if result.error == "max_iterations":
-            console.print("[yellow]Agent stopped at iteration limit.[/yellow]")
+
+        # A streamed answer hides result.final_message, so failures need saying.
+        if streamed or result.error in {"max_iterations", "truncated"}:
+            notice = run_error_notice(result.error)
+            if notice:
+                console.print(f"[yellow]{notice}[/yellow]")
         console.print()
 
 

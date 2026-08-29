@@ -242,6 +242,11 @@ See [`.env.example`](.env.example):
 |----------|-------------|
 | `OLLAMA_HOST` | Ollama API base URL |
 | `OLLAMA_MODEL` | Model name |
+| `OLLAMA_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
+| `OLLAMA_NUM_CTX` | Context window; Ollama's 4096 default truncates long answers |
+| `OLLAMA_NUM_PREDICT` | Optional hard cap on reply tokens (unset = uncapped) |
+| `AGENT_MAX_CONTINUATIONS` | How many times one answer may resume after being cut off |
+| `AGENT_CONTINUATION_TAIL` | Characters of the partial answer resent when resuming |
 | `AGENT_LOG_LEVEL` | Logging level |
 | `AGENT_STREAM_RESPONSES` | Stream assistant text to the terminal as it is generated (`true` / `false`) |
 | `AGENT_MAX_ITERATIONS` | Max tool-call loop iterations |
@@ -283,6 +288,42 @@ python scripts/stream_smoke_test.py "explain database migrations in three senten
 ```
 
 The script prints chunk timing so you can confirm incremental output.
+
+---
+
+## Long answers and resuming
+
+The agent finishes a turn when **it** decides it is done — by writing a complete plain-text answer, or by calling `respond(finished=true)`. Hitting a model or transport limit is not a decision, so those cases are resumed instead of ending the turn.
+
+An answer is resumed when Ollama reports `done_reason: "length"`, or when the stream drops after partial output. Only the tail of the partial answer is resent, and text the model restates is trimmed so the output reads as one continuous answer. Trimming is deliberately conservative — it would rather leave a small seam at the join than delete content the model actually wrote.
+
+To watch the resume path directly:
+
+```bash
+python scripts/resume_smoke_test.py
+```
+
+It reports chunk count, how many resumes happened, and the final length. Forcing `OLLAMA_NUM_PREDICT` low (for example `180`) makes resumes easy to observe.
+
+### Why answers used to stop mid-sentence
+
+Ollama's default context window is **4096 tokens**, shared between prompt and reply. A large system prompt plus a long answer exhausts it, which surfaces as `done_reason: "length"`. Resuming by appending the partial answer to the history made it worse — each attempt had less room than the last, until the model lost the beginning and started over.
+
+Two things prevent that now:
+
+- `OLLAMA_NUM_CTX` defaults to **16384** instead of Ollama's 4096
+- Resume prompts are a fixed size: system prompt + request + last `AGENT_CONTINUATION_TAIL` characters
+
+### Tuning
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `OLLAMA_NUM_CTX` | `16384` | Context window. Raise for longer answers, lower if VRAM is tight |
+| `OLLAMA_NUM_PREDICT` | unset | Hard cap on reply tokens. Leave unset for uncapped replies |
+| `AGENT_MAX_CONTINUATIONS` | `8` | How many times one answer may resume |
+| `AGENT_CONTINUATION_TAIL` | `2000` | Characters of the partial answer resent when resuming |
+
+If resumes are exhausted, the answer produced so far is kept and the CLI prints a note rather than truncating silently.
 
 ---
 

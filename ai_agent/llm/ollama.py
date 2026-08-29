@@ -18,10 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(self, host: str, model: str, timeout: float = 120.0):
+    def __init__(
+        self,
+        host: str,
+        model: str,
+        timeout: float = 600.0,
+        num_predict: int | None = None,
+        num_ctx: int | None = None,
+    ):
         self.host = host.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.num_predict = num_predict
+        self.num_ctx = num_ctx
 
     def chat(
         self,
@@ -61,12 +70,21 @@ class OllamaProvider(LLMProvider):
         }
         if tools:
             payload["tools"] = tools
+        options = self._options()
+        if options:
+            payload["options"] = options
 
         accumulator = _StreamAccumulator()
         model: str | None = None
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=self.timeout,
+            write=10.0,
+            pool=10.0,
+        )
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=timeout) as client:
                 with client.stream(
                     "POST",
                     f"{self.host}/api/chat",
@@ -104,7 +122,10 @@ class OllamaProvider(LLMProvider):
                             yield StreamChunk(content_delta=content_delta)
 
                         if data.get("done"):
-                            llm_response = accumulator.build_response(model=model)
+                            llm_response = accumulator.build_response(
+                                model=model,
+                                stop_reason=data.get("done_reason"),
+                            )
                             yield StreamChunk(done=True, response=llm_response)
                             return
 
@@ -153,6 +174,14 @@ class OllamaProvider(LLMProvider):
                 error=error,
             )
         return StreamChunk(done=True, response=response, error=error)
+
+    def _options(self) -> dict:
+        options: dict = {}
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        if self.num_predict is not None:
+            options["num_predict"] = self.num_predict
+        return options
 
     @staticmethod
     def _serialize_message(message: LLMMessage) -> dict:
@@ -280,6 +309,7 @@ class _StreamAccumulator:
         *,
         model: str | None = None,
         error: str | None = None,
+        stop_reason: str | None = None,
     ) -> LLMResponse:
         tool_calls = [item.to_tool_call() for item in self._tool_calls]
         return LLMResponse(
@@ -291,4 +321,5 @@ class _StreamAccumulator:
             done=True,
             model=model,
             error=error,
+            stop_reason=stop_reason,
         )

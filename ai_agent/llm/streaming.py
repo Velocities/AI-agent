@@ -28,12 +28,18 @@ class RespondMessageStreamer:
         self._streamed_length = len(message)
         return new_text
 
-    def flush_message(self, complete_message: str) -> str:
+    def flush_message(self, complete_message: str | None = None) -> str:
         """Emit any respond message text not yet streamed."""
-        if not isinstance(complete_message, str):
+        candidates: list[str] = []
+        if isinstance(complete_message, str) and complete_message:
+            candidates.append(complete_message)
+        if self._FINISHED_TRUE.search(self._arguments):
+            candidates.append(self._extract_message())
+        if not candidates:
             return ""
-        remaining = complete_message[self._streamed_length :]
-        self._streamed_length = len(complete_message)
+        best = max(candidates, key=len)
+        remaining = best[self._streamed_length :]
+        self._streamed_length = len(best)
         return remaining
 
     def _extract_message(self) -> str:
@@ -41,6 +47,76 @@ class RespondMessageStreamer:
         if not match:
             return ""
         return _decode_partial_json_string(self._arguments, match.end())
+
+
+RESUME_SCAN_WINDOW = 400
+RESUME_MIN_OVERLAP = 24
+_RESUME_OVERLAP_FLOOR = 8
+
+
+def trim_resume_overlap(
+    previous_tail: str,
+    text: str,
+    *,
+    min_overlap: int = RESUME_MIN_OVERLAP,
+    scan_window: int = RESUME_SCAN_WINDOW,
+) -> str:
+    """Drop text a resumed generation repeats from the end of the previous part.
+
+    Models often restate the last sentence (sometimes after a fresh heading)
+    when asked to continue. The repeat is located within the opening window so
+    the answer reads as one continuous piece.
+    """
+    if not previous_tail or not text:
+        return text
+    window = text[:scan_window]
+    largest = min(len(previous_tail), len(window))
+    smallest = max(_RESUME_OVERLAP_FLOOR, min(min_overlap, len(previous_tail)))
+    for size in range(largest, smallest - 1, -1):
+        index = window.find(previous_tail[-size:])
+        if index != -1:
+            return text[index + size :]
+    return text
+
+
+class ResumeOverlapTrimmer:
+    """Incremental `trim_resume_overlap` for text on its way to the terminal."""
+
+    def __init__(
+        self,
+        previous_tail: str,
+        *,
+        min_overlap: int = RESUME_MIN_OVERLAP,
+        scan_window: int = RESUME_SCAN_WINDOW,
+    ) -> None:
+        self._previous_tail = previous_tail
+        self._min_overlap = min_overlap
+        self._scan_window = scan_window
+        self._buffer = ""
+        self._resolved = not previous_tail
+
+    def feed(self, text: str) -> str:
+        if self._resolved:
+            return text
+        self._buffer += text
+        if len(self._buffer) < self._scan_window:
+            return ""
+        return self._resolve()
+
+    def flush(self) -> str:
+        if self._resolved:
+            return ""
+        return self._resolve()
+
+    def _resolve(self) -> str:
+        self._resolved = True
+        buffered, self._buffer = self._buffer, ""
+        return trim_resume_overlap(
+            self._previous_tail,
+            buffered,
+            min_overlap=self._min_overlap,
+            scan_window=self._scan_window,
+        )
 
 
 def _decode_partial_json_string(raw: str, start: int) -> str:

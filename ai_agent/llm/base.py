@@ -27,6 +27,7 @@ class LLMResponse:
     done: bool = True
     model: str | None = None
     error: str | None = None
+    stop_reason: str | None = None
 
 
 @dataclass

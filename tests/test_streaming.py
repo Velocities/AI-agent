@@ -13,7 +13,12 @@ from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
 from ai_agent.llm.base import LLMMessage, LLMResponse, StreamChunk, ToolCall
 from ai_agent.llm.ollama import OllamaProvider
-from ai_agent.llm.streaming import RespondMessageStreamer, sanitize_terminal_text
+from ai_agent.llm.streaming import (
+    RespondMessageStreamer,
+    ResumeOverlapTrimmer,
+    sanitize_terminal_text,
+    trim_resume_overlap,
+)
 from ai_agent.policy.engine import PolicyEngine
 
 
@@ -59,8 +64,65 @@ def test_respond_streamer_flush_message_emits_remainder() -> None:
     assert streamer.flush_message("Hello world") == " world"
 
 
+def test_respond_streamer_flush_message_uses_partial_json() -> None:
+    streamer = RespondMessageStreamer()
+    assert streamer.feed('{"finished": true, "message": "Hello wo') == "Hello wo"
+    assert streamer.flush_message("") == ""
+
+
+def test_respond_streamer_flush_message_prefers_longest_source() -> None:
+    streamer = RespondMessageStreamer()
+    assert streamer.feed('{"finished": true, "message": "Hello wo') == "Hello wo"
+    assert streamer.flush_message("Hello world") == "rld"
+
+
 def test_sanitize_terminal_text_replaces_lone_surrogates() -> None:
     assert sanitize_terminal_text("hello\ud83eworld") == "hello\ufffdworld"
+
+
+def test_trim_resume_overlap_removes_restated_tail() -> None:
+    tail = "Common mistakes include catching overly broad"
+    text = "Common mistakes include catching overly broad exceptions."
+    assert trim_resume_overlap(tail, text) == " exceptions."
+
+
+def test_trim_resume_overlap_skips_repeat_after_new_heading() -> None:
+    tail = "Common mistakes include catching overly broad"
+    text = "# Continuing\n\nCommon mistakes include catching overly broad exceptions."
+    assert trim_resume_overlap(tail, text) == " exceptions."
+
+
+def test_trim_resume_overlap_ignores_short_repeats() -> None:
+    # Short matches are left alone: a visible seam beats deleting real content.
+    tail = "try:\n    result = 10 / denominator\nexcept"
+    text = " except ZeroDivisionError:"
+    assert trim_resume_overlap(tail, text) == text
+
+
+def test_trim_resume_overlap_keeps_clean_continuation() -> None:
+    tail = "Common mistakes include catching overly broad"
+    text = " exceptions that hide real bugs."
+    assert trim_resume_overlap(tail, text) == text
+
+
+def test_trim_resume_overlap_ignores_tiny_tails() -> None:
+    assert trim_resume_overlap("ab", "abcdef") == "abcdef"
+
+
+def test_resume_overlap_trimmer_streams_after_scan_window() -> None:
+    tail = "Common mistakes include catching overly broad"
+    trimmer = ResumeOverlapTrimmer(tail)
+
+    assert trimmer.feed("Common mistakes include catching overly broad") == ""
+    assert trimmer.feed(" exceptions.") == ""
+    assert trimmer.flush() == " exceptions."
+    assert trimmer.feed(" More text.") == " More text."
+
+
+def test_resume_overlap_trimmer_passes_through_without_tail() -> None:
+    trimmer = ResumeOverlapTrimmer("")
+    assert trimmer.feed("hello") == "hello"
+    assert trimmer.flush() == ""
 
 
 class _MockStream:
@@ -168,6 +230,60 @@ def test_ollama_chat_stream_yields_tool_argument_deltas(monkeypatch) -> None:
         "finished": True,
         "message": "Hello",
     }
+
+
+def test_ollama_chat_stream_sends_context_options(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _CapturingClient(_MockClient):
+        def stream(self, method: str, url: str, json: dict):
+            captured.update(json)
+            return _MockStream(self._lines, self._status_code)
+
+    lines = [
+        json.dumps(
+            {
+                "model": "test-model",
+                "message": {"role": "assistant", "content": "hi"},
+                "done": True,
+                "done_reason": "stop",
+            }
+        )
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: _CapturingClient(lines))
+
+    provider = OllamaProvider(
+        "http://localhost:11434",
+        "test-model",
+        num_ctx=16384,
+        num_predict=4096,
+    )
+    chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
+
+    assert captured["options"] == {"num_ctx": 16384, "num_predict": 4096}
+    assert chunks[-1].response is not None
+    assert chunks[-1].response.stop_reason == "stop"
+
+
+def test_ollama_chat_stream_reports_length_stop_reason(monkeypatch) -> None:
+    lines = [
+        json.dumps(
+            {
+                "model": "test-model",
+                "message": {"role": "assistant", "content": "partial"},
+                "done": True,
+                "done_reason": "length",
+            }
+        )
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: _MockClient(lines))
+
+    provider = OllamaProvider("http://localhost:11434", "test-model")
+    chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
+
+    assert chunks[-1].response is not None
+    assert chunks[-1].response.stop_reason == "length"
+    assert chunks[-1].response.error is None
 
 
 def test_ollama_chat_stream_handles_interrupted_stream(monkeypatch) -> None:
@@ -314,6 +430,127 @@ def test_agent_streams_answer_after_tool_call(agent_parts) -> None:
 
     assert streamed == ["Docker ", "is running."]
     assert result.final_message == "Docker is running."
+
+
+def test_agent_streams_resumed_answer_as_one_flow(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    tail = "Common mistakes include catching overly broad"
+
+    def cut_off_stream(messages, tools=None):
+        yield StreamChunk(content_delta=tail)
+        yield StreamChunk(
+            done=True,
+            response=LLMResponse(
+                message=LLMMessage(role="assistant", content=tail),
+                stop_reason="length",
+            ),
+        )
+
+    def resumed_stream(messages, tools=None):
+        text = f"# Continuing\n\n{tail} exceptions."
+        yield StreamChunk(content_delta=text)
+        yield StreamChunk(
+            done=True,
+            response=LLMResponse(
+                message=LLMMessage(role="assistant", content=text)
+            ),
+        )
+
+    stream_calls = iter([cut_off_stream, resumed_stream])
+    llm.chat_stream = MagicMock(
+        side_effect=lambda messages, tools=None: next(stream_calls)(messages, tools)
+    )
+
+    streamed: list[str] = []
+    result = agent.run("explain error handling", stream_callback=streamed.append)
+
+    assert "".join(streamed) == f"{tail} exceptions."
+    assert result.final_message == f"{tail} exceptions."
+    assert result.error is None
+
+
+def test_agent_flushes_plain_content_not_seen_in_deltas(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+
+    def fake_chat_stream(messages, tools=None):
+        yield StreamChunk(content_delta="Hello")
+        yield StreamChunk(
+            done=True,
+            response=LLMResponse(
+                message=LLMMessage(role="assistant", content="Hello world")
+            ),
+        )
+
+    llm.chat_stream = MagicMock(side_effect=fake_chat_stream)
+    streamed: list[str] = []
+    result = agent.run("hello", stream_callback=streamed.append)
+
+    assert "".join(streamed) == "Hello world"
+    assert result.final_message == "Hello world"
+
+
+def test_agent_flushes_respond_tail_after_interrupted_json(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    agent.settings.agent_max_iterations = 5
+
+    def interrupted_stream(messages, tools=None):
+        yield StreamChunk(
+            tool_name="respond",
+            tool_arguments_delta='{"finished": true, "message": "Hello wo',
+        )
+        yield StreamChunk(
+            done=True,
+            response=LLMResponse(
+                message=LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="1",
+                            name="respond",
+                            arguments={
+                                "_malformed": '{"finished": true, "message": "Hello wo',
+                            },
+                        )
+                    ],
+                ),
+                error="Ollama stream was interrupted.",
+            ),
+            error="Ollama stream was interrupted.",
+        )
+
+    def completed_stream(messages, tools=None):
+        yield StreamChunk(
+            tool_name="respond",
+            tool_arguments_delta='{"finished": true, "message": "rld."}',
+        )
+        yield StreamChunk(
+            done=True,
+            response=LLMResponse(
+                message=LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="2",
+                            name="respond",
+                            arguments={"finished": True, "message": "rld."},
+                        )
+                    ],
+                )
+            ),
+        )
+
+    stream_calls = iter([interrupted_stream, completed_stream])
+    llm.chat_stream = MagicMock(
+        side_effect=lambda messages, tools=None: next(stream_calls)(messages, tools)
+    )
+    streamed: list[str] = []
+    result = agent.run("hello", stream_callback=streamed.append)
+
+    assert streamed == ["Hello wo", "rld."]
+    assert result.final_message == "rld."
+    assert llm.chat_stream.call_count == 2
 
 
 def test_agent_stream_callback_receives_final_respond_message(agent_parts) -> None:
