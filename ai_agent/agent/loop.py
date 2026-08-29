@@ -13,7 +13,7 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse, ToolCall
+from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMProvider, LLMResponse, ToolCall
 from ai_agent.llm.streaming import (
     RespondMessageStreamer,
     ResumeOverlapTrimmer,
@@ -24,10 +24,10 @@ from ai_agent.policy.risk import RiskLevel
 
 logger = logging.getLogger(__name__)
 
-_RECOVERABLE_TRUNCATION_ERRORS = frozenset(
+_RECOVERABLE_TRUNCATION_KINDS = frozenset(
     {
-        "Ollama stream was interrupted.",
-        "Ollama stream ended before completion.",
+        LLMErrorKind.STREAM_INTERRUPTED,
+        LLMErrorKind.STREAM_INCOMPLETE,
     }
 )
 
@@ -224,6 +224,7 @@ class AgentLoop:
             # A cut-off stream is reported through stop_reason, not as an error,
             # so an exhausted resume budget keeps the text produced so far.
             error=None if cut_short else response.error,
+            error_kind=None if cut_short else response.error_kind,
             stop_reason="length" if cut_short else response.stop_reason,
         )
 
@@ -629,7 +630,7 @@ class AgentLoop:
         """True when generation stopped for a limit rather than being finished."""
         if response.stop_reason == "length":
             return AgentLoop._has_generation_output(response.message)
-        if response.error in _RECOVERABLE_TRUNCATION_ERRORS:
+        if response.error_kind in _RECOVERABLE_TRUNCATION_KINDS:
             return AgentLoop._has_generation_output(response.message)
         return False
 

@@ -11,7 +11,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMMessage, LLMResponse, ToolCall
+from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMResponse, ToolCall
 from ai_agent.policy.engine import PolicyEngine
 
 
@@ -67,15 +67,16 @@ def test_max_iterations(agent_parts) -> None:
     assert result.iterations == 3
 
 
-def test_ollama_failure(agent_parts) -> None:
+def test_llm_unavailable_failure(agent_parts) -> None:
     agent, llm, _ = agent_parts
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content=""),
-        error="Ollama is unavailable. Check OLLAMA_HOST.",
+        error="LLM endpoint is unavailable.",
+        error_kind=LLMErrorKind.UNAVAILABLE,
     )
     result = agent.run("hello")
     assert result.error is not None
-    assert "Ollama" in result.final_message
+    assert "unavailable" in result.final_message
 
 
 def test_audit_log_written(agent_parts) -> None:
@@ -300,7 +301,8 @@ def test_agent_resumes_after_recoverable_stream_error(agent_parts) -> None:
     llm.chat.side_effect = [
         LLMResponse(
             message=LLMMessage(role="assistant", content="Errors happen when a value"),
-            error="Ollama stream was interrupted.",
+            error="LLM stream was interrupted.",
+            error_kind=LLMErrorKind.STREAM_INTERRUPTED,
         ),
         LLMResponse(
             message=LLMMessage(role="assistant", content=" is missing."),
@@ -323,14 +325,15 @@ def test_agent_keeps_partial_answer_when_resume_fails_hard(agent_parts) -> None:
         ),
         LLMResponse(
             message=LLMMessage(role="assistant", content=""),
-            error="Ollama is unavailable. Check OLLAMA_HOST.",
+            error="LLM endpoint is unavailable.",
+            error_kind=LLMErrorKind.UNAVAILABLE,
         ),
     ]
 
     result = agent.run("explain something long")
 
     assert result.final_message == "Errors happen when a value"
-    assert result.error == "Ollama is unavailable. Check OLLAMA_HOST."
+    assert result.error == "LLM endpoint is unavailable."
 
 
 def test_agent_reports_truncation_after_repeated_stream_interruptions(
@@ -340,7 +343,8 @@ def test_agent_reports_truncation_after_repeated_stream_interruptions(
     agent.settings.agent_max_continuations = 1
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content="chunk "),
-        error="Ollama stream was interrupted.",
+        error="LLM stream was interrupted.",
+        error_kind=LLMErrorKind.STREAM_INTERRUPTED,
     )
 
     result = agent.run("explain something endless")
@@ -368,12 +372,13 @@ def test_unrecoverable_llm_error_still_fails(agent_parts) -> None:
     agent, llm, _ = agent_parts
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content=""),
-        error="Ollama is unavailable. Check OLLAMA_HOST.",
+        error="LLM endpoint is unavailable.",
+        error_kind=LLMErrorKind.UNAVAILABLE,
     )
 
     result = agent.run("hello")
 
-    assert result.error == "Ollama is unavailable. Check OLLAMA_HOST."
+    assert result.error == "LLM endpoint is unavailable."
     assert llm.chat.call_count == 1
 
 

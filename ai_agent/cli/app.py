@@ -14,7 +14,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.ollama import OllamaProvider
+from ai_agent.llm import create_llm_provider
 from ai_agent.llm.streaming import sanitize_terminal_text
 from ai_agent.policy.engine import PolicyEngine
 
@@ -73,13 +73,7 @@ def build_agent(console: Console | None = None) -> AgentLoop:
     audit = AuditLogger(log_path=audit_path, user=getuser())
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, console)
-    llm = OllamaProvider(
-        settings.ollama_host,
-        settings.ollama_model,
-        timeout=settings.ollama_timeout,
-        num_predict=settings.ollama_num_predict,
-        num_ctx=settings.ollama_num_ctx,
-    )
+    llm = create_llm_provider(settings)
 
     return AgentLoop(
         settings=settings,
@@ -122,13 +116,13 @@ def main() -> None:
     configure_logging(settings.agent_log_level)
 
     console.print("[bold]AI Server Assistant[/bold]")
+    agent = build_agent(console)
     console.print(
-        f"Model: {settings.ollama_model} @ {settings.ollama_host} | "
+        f"Model: {settings.ollama_model} @ {agent.llm.endpoint or settings.ollama_host} | "
         f"Confirmation: {settings.agent_confirmation_mode.value}"
     )
     console.print("Type 'exit' or 'quit' to leave.\n")
 
-    agent = build_agent(console)
     warmup_agent(agent, console)
 
     while True:
