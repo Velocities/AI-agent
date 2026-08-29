@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 
@@ -26,6 +27,19 @@ class LLMResponse:
     done: bool = True
     model: str | None = None
     error: str | None = None
+    stop_reason: str | None = None
+
+
+@dataclass
+class StreamChunk:
+    """Incremental data from a streaming LLM response."""
+
+    content_delta: str | None = None
+    tool_name: str | None = None
+    tool_arguments_delta: str | None = None
+    done: bool = False
+    response: LLMResponse | None = None
+    error: str | None = None
 
 
 class LLMProvider(ABC):
@@ -36,3 +50,12 @@ class LLMProvider(ABC):
         tools: list[dict] | None = None,
     ) -> LLMResponse:
         raise NotImplementedError
+
+    def chat_stream(
+        self,
+        messages: list[LLMMessage],
+        tools: list[dict] | None = None,
+    ) -> Iterator[StreamChunk]:
+        """Stream a chat completion. Default implementation wraps batch chat."""
+        response = self.chat(messages, tools)
+        yield StreamChunk(done=True, response=response, error=response.error)

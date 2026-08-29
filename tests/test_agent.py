@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.tools import CONTINUE_NUDGE
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -214,14 +215,176 @@ def test_respond_finished_false_continues(agent_parts) -> None:
     assert llm.chat.call_count == 2
 
 
-def test_plain_text_without_respond_retries_then_fails(agent_parts) -> None:
+def test_plain_text_is_the_final_answer(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content="Plain text answer.")
+    )
+    result = agent.run("hello")
+    assert result.final_message == "Plain text answer."
+    assert result.error is None
+    assert llm.chat.call_count == 1
+
+
+def test_agent_resumes_after_length_limit(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.side_effect = [
+        LLMResponse(
+            message=LLMMessage(role="assistant", content="Errors happen when a value"),
+            stop_reason="length",
+        ),
+        LLMResponse(
+            message=LLMMessage(role="assistant", content=" is missing."),
+        ),
+    ]
+
+    result = agent.run("explain something long")
+
+    assert result.final_message == "Errors happen when a value is missing."
+    assert result.error is None
+    assert llm.chat.call_count == 2
+    assert result.iterations == 1
+
+
+def test_agent_resume_prompt_stays_bounded(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    agent.settings.agent_continuation_tail = 20
+    llm.chat.side_effect = [
+        LLMResponse(
+            message=LLMMessage(role="assistant", content="x" * 500),
+            stop_reason="length",
+        ),
+        LLMResponse(message=LLMMessage(role="assistant", content="done.")),
+    ]
+
+    agent.run("explain something long")
+
+    resume_messages = llm.chat.call_args_list[1][0][0]
+    assert resume_messages[-1].content == CONTINUE_NUDGE
+    assert resume_messages[-2].role == "assistant"
+    assert resume_messages[-2].content == "x" * 20
+    # The partial answer is not committed to history until the turn completes.
+    assert len(resume_messages) == len(agent.messages) + 1
+
+
+def test_agent_resume_drops_repeated_text(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.side_effect = [
+        LLMResponse(
+            message=LLMMessage(
+                role="assistant",
+                content="Common mistakes include catching overly broad",
+            ),
+            stop_reason="length",
+        ),
+        LLMResponse(
+            message=LLMMessage(
+                role="assistant",
+                content=(
+                    "# Continuing\n\nCommon mistakes include catching overly broad "
+                    "exceptions."
+                ),
+            ),
+        ),
+    ]
+
+    result = agent.run("explain error handling")
+
+    assert result.final_message == (
+        "Common mistakes include catching overly broad exceptions."
+    )
+
+
+def test_agent_resumes_after_recoverable_stream_error(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.side_effect = [
+        LLMResponse(
+            message=LLMMessage(role="assistant", content="Errors happen when a value"),
+            error="Ollama stream was interrupted.",
+        ),
+        LLMResponse(
+            message=LLMMessage(role="assistant", content=" is missing."),
+        ),
+    ]
+
+    result = agent.run("explain something long")
+
+    assert result.final_message == "Errors happen when a value is missing."
+    assert result.error is None
+    assert llm.chat.call_count == 2
+
+
+def test_agent_keeps_partial_answer_when_resume_fails_hard(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.side_effect = [
+        LLMResponse(
+            message=LLMMessage(role="assistant", content="Errors happen when a value"),
+            stop_reason="length",
+        ),
+        LLMResponse(
+            message=LLMMessage(role="assistant", content=""),
+            error="Ollama is unavailable. Check OLLAMA_HOST.",
+        ),
+    ]
+
+    result = agent.run("explain something long")
+
+    assert result.final_message == "Errors happen when a value"
+    assert result.error == "Ollama is unavailable. Check OLLAMA_HOST."
+
+
+def test_agent_reports_truncation_after_repeated_stream_interruptions(
+    agent_parts,
+) -> None:
+    agent, llm, _ = agent_parts
+    agent.settings.agent_max_continuations = 1
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content="chunk "),
+        error="Ollama stream was interrupted.",
+    )
+
+    result = agent.run("explain something endless")
+
+    assert result.error == "truncated"
+    assert result.final_message == "chunk chunk"
+
+
+def test_agent_stops_after_continuation_budget(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    agent.settings.agent_max_continuations = 2
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content="chunk "),
+        stop_reason="length",
+    )
+
+    result = agent.run("explain something endless")
+
+    assert result.error == "truncated"
+    assert result.final_message == "chunk chunk chunk"
+    assert llm.chat.call_count == 3
+
+
+def test_unrecoverable_llm_error_still_fails(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    llm.chat.return_value = LLMResponse(
+        message=LLMMessage(role="assistant", content=""),
+        error="Ollama is unavailable. Check OLLAMA_HOST.",
+    )
+
+    result = agent.run("hello")
+
+    assert result.error == "Ollama is unavailable. Check OLLAMA_HOST."
+    assert llm.chat.call_count == 1
+
+
+def test_empty_response_retries_then_fails(agent_parts) -> None:
     agent, llm, _ = agent_parts
     agent.settings.agent_max_iterations = 2
     llm.chat.return_value = LLMResponse(
-        message=LLMMessage(role="assistant", content="Plain text only.")
+        message=LLMMessage(role="assistant", content="   ")
     )
     result = agent.run("hello")
-    assert result.error == "missing_respond"
+    assert result.error == "empty_response"
     assert llm.chat.call_count == 2
 
 

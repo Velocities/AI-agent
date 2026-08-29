@@ -79,20 +79,13 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "respond",
             "description": (
-                "Send a message to the user and explicitly declare whether work on the "
-                "current request is finished. You must call this tool to communicate with "
-                "the user—plain assistant text is not shown."
+                "Optional. Send a short progress note while you are still working, using "
+                "finished=false. Do not use this for your final answer: write the final "
+                "answer as ordinary assistant text so it streams to the user as you type it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": (
-                            "User-facing message. When finished=true, provide the complete "
-                            "answer. When finished=false, optional brief internal status."
-                        ),
-                    },
                     "finished": {
                         "type": "boolean",
                         "description": (
@@ -101,14 +94,27 @@ TOOL_DEFINITIONS = [
                             "more run_command or run_commands calls."
                         ),
                     },
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "Brief status note describing what you are doing next."
+                        ),
+                    },
                 },
-                "required": ["message", "finished"],
+                "required": ["finished", "message"],
             },
         },
     },
 ]
 
 SCHEMA_NUDGE = (
-    "Use the respond tool to communicate with the user. "
-    "Set finished=true only when the request is fully complete."
+    "Answer the user now as ordinary assistant text, or call run_command / "
+    "run_commands if you still need to inspect this machine."
+)
+
+CONTINUE_NUDGE = (
+    "Your answer was cut off mid-sentence at the end of the assistant message "
+    "above. Resume from that exact point so the two parts read as one continuous "
+    "answer. Do not add a heading, preamble, apology, or summary of what you "
+    "already wrote, and do not start the answer over."
 )

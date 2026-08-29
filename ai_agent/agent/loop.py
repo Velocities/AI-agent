@@ -2,21 +2,34 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
-from ai_agent.agent.tools import SCHEMA_NUDGE, TOOL_DEFINITIONS
+from ai_agent.agent.tools import CONTINUE_NUDGE, SCHEMA_NUDGE, TOOL_DEFINITIONS
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMMessage, LLMProvider, ToolCall
+from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse, ToolCall
+from ai_agent.llm.streaming import (
+    RespondMessageStreamer,
+    ResumeOverlapTrimmer,
+    trim_resume_overlap,
+)
 from ai_agent.policy.engine import PolicyEngine
 from ai_agent.policy.risk import RiskLevel
 
 logger = logging.getLogger(__name__)
+
+_RECOVERABLE_TRUNCATION_ERRORS = frozenset(
+    {
+        "Ollama stream was interrupted.",
+        "Ollama stream ended before completion.",
+    }
+)
 
 
 @dataclass
@@ -64,10 +77,7 @@ class AgentLoop:
                 self.messages[0],
                 LLMMessage(
                     role="user",
-                    content=(
-                        "Startup warmup. Call respond with finished=true and "
-                        'message="ready".'
-                    ),
+                    content="Startup warmup. Reply with the single word: ready",
                 ),
             ],
             tools=TOOL_DEFINITIONS,
@@ -84,33 +94,61 @@ class AgentLoop:
         )
         return True, "ready", duration
 
-    def run(self, user_input: str) -> AgentRunResult:
+    def run(
+        self,
+        user_input: str,
+        *,
+        stream_callback: Callable[[str], None] | None = None,
+        iteration_callback: Callable[[int], None] | None = None,
+        notice_callback: Callable[[str], None] | None = None,
+    ) -> AgentRunResult:
         self.messages.append(LLMMessage(role="user", content=user_input))
 
         for iteration in range(1, self.settings.agent_max_iterations + 1):
-            response = self.llm.chat(self.messages, tools=TOOL_DEFINITIONS)
+            if iteration_callback is not None:
+                iteration_callback(iteration)
+            response = self._generate_assistant_turn(stream_callback, notice_callback)
+
+            assistant = response.message
+            partial = (assistant.content or "").strip()
+
             if response.error:
                 return AgentRunResult(
-                    final_message=f"LLM error: {response.error}",
+                    final_message=partial or f"LLM error: {response.error}",
                     iterations=iteration,
                     error=response.error,
                 )
 
-            assistant = response.message
             self.messages.append(assistant)
 
+            if self._was_cut_short(response):
+                return AgentRunResult(
+                    final_message=partial,
+                    iterations=iteration,
+                    error="truncated",
+                )
+
             if not assistant.tool_calls:
+                answer = (assistant.content or "").strip()
+                if answer:
+                    return AgentRunResult(
+                        final_message=answer,
+                        iterations=iteration,
+                    )
                 if iteration < self.settings.agent_max_iterations:
                     self.messages.append(LLMMessage(role="user", content=SCHEMA_NUDGE))
                     continue
                 return AgentRunResult(
                     final_message=(
-                        "The model stopped without calling respond(finished=true). "
+                        "The model produced no answer and called no tools. "
                         "Try again or narrow the request."
                     ),
                     iterations=iteration,
-                    error="missing_respond",
+                    error="empty_response",
                 )
+
+            if stream_callback is not None and (assistant.content or "").strip():
+                stream_callback("\n\n")
 
             final_message = self._process_tool_calls(assistant.tool_calls)
             if final_message is not None:
@@ -127,6 +165,166 @@ class AgentLoop:
             iterations=self.settings.agent_max_iterations,
             error="max_iterations",
         )
+
+    def _generate_assistant_turn(
+        self,
+        stream_callback: Callable[[str], None] | None,
+        notice_callback: Callable[[str], None] | None,
+    ) -> LLMResponse:
+        """Produce one complete assistant turn, resuming if the model is cut off.
+
+        Being cut off by a token or context limit is an infrastructure event, not
+        the model deciding it is done, so the answer is resumed transparently.
+        """
+        streaming = stream_callback is not None and self.settings.agent_stream_responses
+        attempts = max(1, self.settings.agent_max_continuations + 1)
+        fragments: list[str] = []
+        response = LLMResponse(
+            message=LLMMessage(role="assistant", content=""),
+            error="LLM produced no response.",
+        )
+        cut_short = False
+
+        for _attempt in range(attempts):
+            produced = "".join(fragments)
+            resume_tail = produced[-self.settings.agent_continuation_tail :]
+            messages = self._resume_messages(resume_tail) if produced else self.messages
+
+            if streaming:
+                response = self._chat_with_stream(
+                    messages,
+                    stream_callback,
+                    notice_callback,
+                    resume_tail=resume_tail,
+                )
+            else:
+                response = self.llm.chat(messages, tools=TOOL_DEFINITIONS)
+
+            content = response.message.content or ""
+            if resume_tail:
+                content = trim_resume_overlap(resume_tail, content)
+            fragments.append(content)
+
+            cut_short = self._was_cut_short(response)
+            if not cut_short:
+                break
+            logger.debug(
+                "Resuming answer cut short by %s",
+                response.stop_reason or response.error,
+            )
+
+        return LLMResponse(
+            message=LLMMessage(
+                role="assistant",
+                content="".join(fragments),
+                tool_calls=response.message.tool_calls,
+            ),
+            done=response.done,
+            model=response.model,
+            # A cut-off stream is reported through stop_reason, not as an error,
+            # so an exhausted resume budget keeps the text produced so far.
+            error=None if cut_short else response.error,
+            stop_reason="length" if cut_short else response.stop_reason,
+        )
+
+    def _resume_messages(self, resume_tail: str) -> list[LLMMessage]:
+        """Prompt for resuming a cut-off answer.
+
+        Only the tail of the partial answer is resent so the prompt stays a
+        constant size; regrowing it each attempt is what exhausts the context
+        window and makes the model restart from the beginning.
+        """
+        return [
+            *self.messages,
+            LLMMessage(role="assistant", content=resume_tail),
+            LLMMessage(role="user", content=CONTINUE_NUDGE),
+        ]
+
+    def _chat_with_stream(
+        self,
+        messages: list[LLMMessage],
+        stream_callback: Callable[[str], None],
+        notice_callback: Callable[[str], None] | None = None,
+        *,
+        resume_tail: str = "",
+    ) -> LLMResponse:
+        streamer = RespondMessageStreamer()
+        trimmer = ResumeOverlapTrimmer(resume_tail)
+        response: LLMResponse | None = None
+        active_tool_name: str | None = None
+        streamed_content = ""
+
+        def emit(text: str) -> None:
+            visible = trimmer.feed(text)
+            if visible:
+                stream_callback(visible)
+
+        for chunk in self.llm.chat_stream(messages, tools=TOOL_DEFINITIONS):
+            if chunk.content_delta:
+                emit(chunk.content_delta)
+                streamed_content += chunk.content_delta
+            if chunk.tool_name:
+                active_tool_name = chunk.tool_name
+            if chunk.tool_arguments_delta and active_tool_name == "respond":
+                text = streamer.feed(chunk.tool_arguments_delta)
+                if text:
+                    emit(text)
+            if chunk.done and chunk.response is not None:
+                response = chunk.response
+
+        if response is not None:
+            self._emit_unstreamed_content(response, streamed_content, emit)
+
+            for call in response.message.tool_calls:
+                if call.name != "respond":
+                    continue
+                message = call.arguments.get("message", "")
+                if not isinstance(message, str):
+                    message = ""
+                if call.arguments.get("finished") is True:
+                    remaining = streamer.flush_message(message)
+                    if remaining:
+                        emit(remaining)
+                elif message and notice_callback is not None:
+                    notice_callback(message)
+
+            trailing = streamer.flush_message()
+            if trailing:
+                emit(trailing)
+
+        buffered = trimmer.flush()
+        if buffered:
+            stream_callback(buffered)
+
+        if response is None:
+            return LLMResponse(
+                message=LLMMessage(role="assistant", content=""),
+                error="LLM stream ended without a response.",
+            )
+        return response
+
+    @staticmethod
+    def _emit_unstreamed_content(
+        response: LLMResponse,
+        streamed_content: str,
+        emit: Callable[[str], None],
+    ) -> None:
+        """Show content that arrived only in the final chunk.
+
+        Providers that cannot stream deliver the whole answer at the end. The
+        prefix check keeps that from reprinting text already streamed when a
+        provider's final content does not match the deltas exactly.
+        """
+        final_content = response.message.content or ""
+        if not final_content or final_content == streamed_content:
+            return
+        if not streamed_content:
+            emit(final_content)
+            return
+        if final_content.startswith(streamed_content):
+            emit(final_content[len(streamed_content) :])
+            return
+        logger.debug("Final content diverged from streamed deltas; skipping flush")
 
     def _process_tool_calls(self, tool_calls: list[ToolCall]) -> str | None:
         final_message: str | None = None
@@ -206,8 +404,14 @@ class AgentLoop:
 
         for call in tool_calls:
             if call.name == "run_commands":
-                for command_data in call.arguments.get("commands", []):
-                    expr = parse_command_expr(command_data)
+                commands = call.arguments.get("commands", [])
+                if not isinstance(commands, list):
+                    return [self._handle_tool_call(item) for item in tool_calls]
+                for command_data in commands:
+                    try:
+                        expr = parse_command_expr(command_data)
+                    except Exception:
+                        return [self._handle_tool_call(item) for item in tool_calls]
                     decision = self.policy.evaluate(expr)
                     pending.append(
                         PendingCommand(
@@ -218,7 +422,10 @@ class AgentLoop:
                     )
                     call_map.append((call, expr))
             elif call.name == "run_command":
-                expr = parse_command_expr(call.arguments.get("command", {}))
+                try:
+                    expr = parse_command_expr(call.arguments.get("command", {}))
+                except Exception:
+                    return [self._handle_tool_call(item) for item in tool_calls]
                 decision = self.policy.evaluate(expr)
                 pending.append(
                     PendingCommand(
@@ -258,30 +465,50 @@ class AgentLoop:
     def _handle_tool_call(self, call: ToolCall) -> LLMMessage:
         if call.name == "run_commands":
             commands = call.arguments.get("commands", [])
+            if not isinstance(commands, list):
+                payload = {
+                    "success": False,
+                    "error": "commands must be an array of command expressions",
+                }
+                return LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                )
+
+            parsed: list[object | str] = []
             pending = []
-            exprs = []
             for command_data in commands:
-                expr = parse_command_expr(command_data)
-                decision = self.policy.evaluate(expr)
+                try:
+                    expr = parse_command_expr(command_data)
+                except Exception as exc:
+                    parsed.append(f"Invalid command expression: {exc}")
+                    continue
+                parsed.append(expr)
                 pending.append(
                     PendingCommand(
                         expr=expr,
-                        decision=decision,
+                        decision=self.policy.evaluate(expr),
                         reason=call.arguments.get("reason"),
                     )
                 )
-                exprs.append(expr)
 
-            approval = self.prompter.prompt_batch(pending)
+            approval = self.prompter.prompt_batch(pending) if pending else None
             payloads = []
-            for expr, item in zip(exprs, pending, strict=True):
+            pending_iter = iter(pending)
+            for item in parsed:
+                if isinstance(item, str):
+                    payloads.append({"success": False, "error": item})
+                    continue
+                pending_item = next(pending_iter)
                 payloads.append(
                     self._execute_with_audit(
                         tool_name=call.name,
                         arguments=call.arguments,
-                        expr=expr,
-                        decision=item.decision,
-                        approved=approval.approved,
+                        expr=item,
+                        decision=pending_item.decision,
+                        approved=approval.approved if approval else False,
                     )
                 )
             return LLMMessage(
@@ -396,3 +623,25 @@ class AgentLoop:
             result=payload,
         )
         return payload
+
+    @staticmethod
+    def _was_cut_short(response: LLMResponse) -> bool:
+        """True when generation stopped for a limit rather than being finished."""
+        if response.stop_reason == "length":
+            return AgentLoop._has_generation_output(response.message)
+        if response.error in _RECOVERABLE_TRUNCATION_ERRORS:
+            return AgentLoop._has_generation_output(response.message)
+        return False
+
+    @staticmethod
+    def _has_generation_output(message: LLMMessage) -> bool:
+        if (message.content or "").strip():
+            return True
+        for call in message.tool_calls:
+            if call.name != "respond":
+                continue
+            if call.arguments.get("message"):
+                return True
+            if call.arguments.get("_malformed"):
+                return True
+        return False
