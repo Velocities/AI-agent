@@ -245,6 +245,59 @@ def remote_provider_env_values(
     }
 
 
+def is_host_key_failure(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "host key verification failed" in lowered
+        or "no ed25519 host key is known" in lowered
+        or "no ecdsa host key is known" in lowered
+        or "no rsa host key is known" in lowered
+        or "not known and you have requested strict checking" in lowered
+    )
+
+
+def parse_keyscan_lines(output: str) -> list[str]:
+    lines: list[str] = []
+    for raw in output.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        lines.append(line)
+    return lines
+
+
+def scan_host_keys(
+    hostname: str,
+    port: int = 22,
+    *,
+    ssh_keyscan: str = "ssh-keyscan",
+) -> list[str]:
+    result = subprocess.run(
+        [ssh_keyscan, "-T", "5", "-p", str(port), hostname],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    lines = parse_keyscan_lines(result.stdout)
+    if not lines:
+        detail = (result.stderr or result.stdout or "no keys returned").strip()
+        raise RuntimeError(f"ssh-keyscan failed for {hostname}:{port}. {detail}")
+    return lines
+
+
+def append_known_hosts(known_hosts: Path, entries: list[str]) -> None:
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
+    existing = ""
+    if known_hosts.is_file():
+        existing = known_hosts.read_text(encoding="utf-8")
+    new_lines = [line for line in entries if line not in existing]
+    if not new_lines:
+        return
+    prefix = "" if not existing or existing.endswith("\n") else "\n"
+    with known_hosts.open("a", encoding="utf-8") as handle:
+        handle.write(prefix + "\n".join(new_lines) + "\n")
+
+
 def disable_remote_provider_env(env_path: Path) -> None:
     upsert_env_values(
         env_path,

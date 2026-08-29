@@ -9,15 +9,18 @@ from rich.panel import Panel
 from ai_agent.config import Settings
 from ai_agent.llm.ssh_sandbox import (
     ResolvedSshHost,
+    append_known_hosts,
     copy_identity_into_sandbox,
     default_sandbox_dir,
     disable_remote_provider_env,
     generate_ed25519_key,
     gpu_setup_instructions,
+    is_host_key_failure,
     list_ssh_host_aliases,
     read_public_key,
     remote_provider_env_values,
     resolve_user_ssh_host,
+    scan_host_keys,
     upsert_env_values,
     write_sandbox_host_config,
 )
@@ -59,7 +62,37 @@ def cmd_disable(console: Console, env_path: Path) -> int:
     return 0
 
 
-def cmd_test(console: Console, settings: Settings) -> int:
+def _trust_host_key(console: Console, settings: Settings) -> bool:
+    """Fetch the GPU host key into the sandbox known_hosts after confirmation."""
+    try:
+        resolved = resolve_user_ssh_host(
+            settings.ollama_ssh_host.strip(),
+            user_config=settings.ollama_ssh_config,
+        )
+    except Exception as exc:
+        console.print(f"[red]Could not read sandbox SSH config:[/red] {exc}")
+        return False
+    console.print(
+        f"Fetching SSH host key for [bold]{resolved.hostname}:{resolved.port}[/bold] "
+        "(this is the GPU PC's sshd key, not Ollama)."
+    )
+    try:
+        entries = scan_host_keys(resolved.hostname, resolved.port)
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        return False
+    console.print("Host key(s) offered by that machine:")
+    for line in entries:
+        console.print(f"  {line}")
+    if not _confirm(console, "Trust these keys and save them in .ai-agent/ssh/known_hosts"):
+        return False
+    known_hosts = settings.ollama_ssh_config.parent / "known_hosts"
+    append_known_hosts(known_hosts, entries)
+    console.print(f"Saved {len(entries)} key(s) to {known_hosts}")
+    return True
+
+
+def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) -> int:
     if settings.ollama_transport.value != "ssh":
         console.print("[yellow]OLLAMA_TRANSPORT is not ssh. Nothing to test.[/yellow]")
         return 1
@@ -68,6 +101,14 @@ def cmd_test(console: Console, settings: Settings) -> int:
         tunnel = start_ssh_tunnel(settings)
     except Exception as exc:
         console.print(f"[red]SSH tunnel failed:[/red] {exc}")
+        if is_host_key_failure(str(exc)) and not _retried:
+            console.print(
+                "\nThe sandbox [bold]known_hosts[/bold] file does not trust this PC yet. "
+                "That is expected the first time. It is not an Ollama or ai-agent-llm problem."
+            )
+            if _confirm(console, "Fetch and trust the SSH host key now"):
+                if _trust_host_key(console, settings):
+                    return cmd_test(console, settings, _retried=True)
         return 1
     try:
         from ai_agent.llm.factory import create_llm_provider
@@ -178,6 +219,11 @@ def cmd_remote_provider(
         identity = generate_ed25519_key(sandbox / "id_ed25519", passphrase=passphrase)
 
     write_sandbox_host_config(sandbox, host, identity)
+    if _confirm(console, "Fetch and trust the GPU PC's SSH host key now"):
+        settings_preview = Settings()
+        settings_preview.ollama_ssh_config = sandbox / "config"
+        settings_preview.ollama_ssh_host = host.alias
+        _trust_host_key(console, settings_preview)
     public_key = read_public_key(identity)
     gpu_os = _prompt(console, "GPU machine OS (windows/linux)", "windows").lower()
     if gpu_os not in {"windows", "linux"}:
@@ -227,8 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     remote.add_argument(
         "action",
         nargs="?",
-        choices=["test", "disable"],
-        help="test the tunnel, or switch .env back to local HTTP.",
+        choices=["test", "disable", "trust-host"],
+        help="test the tunnel, switch .env back to local HTTP, or trust the SSH host key.",
     )
     sub.add_parser("show", help="Print the current LLM transport settings.")
 
@@ -247,6 +293,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "remote-provider":
         if args.action == "test":
             return cmd_test(console, settings)
+        if args.action == "trust-host":
+            return 0 if _trust_host_key(console, settings) else 1
         if args.action == "disable":
             return cmd_disable(console, env_path)
         return cmd_remote_provider(

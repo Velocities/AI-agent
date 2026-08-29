@@ -313,6 +313,11 @@ Then:
 
 ```bat
 ai-agent config remote-provider test
+```
+
+The first test asks you to trust the GPU PC's **sshd** host key and saves it in `.ai-agent/ssh/known_hosts` (not `~/.ssh`). That is required: the sandbox starts empty on purpose. You can also run `ai-agent config remote-provider trust-host` first.
+
+```bat
 ai-agent
 ```
 

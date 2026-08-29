@@ -9,16 +9,39 @@ from ai_agent.llm.factory import create_http_session
 from ai_agent.llm.session import LlmHttpSession, LlmSessionError
 from ai_agent.llm.ssh_sandbox import (
     ResolvedSshHost,
+    append_known_hosts,
     copy_identity_into_sandbox,
     disable_remote_provider_env,
     gpu_setup_instructions,
+    is_host_key_failure,
     list_ssh_host_aliases,
+    parse_keyscan_lines,
     parse_ssh_g,
     remote_provider_env_values,
     upsert_env_values,
     write_sandbox_host_config,
 )
 from ai_agent.llm.ssh_tunnel import SshTunnel, build_ssh_forward_command, parse_remote_bind
+
+
+def test_host_key_failure_detection() -> None:
+    message = (
+        "SSH tunnel exited before it was ready. "
+        "No ED25519 host key is known for 192.168.1.10 and you have requested "
+        "strict checking.\nHost key verification failed."
+    )
+    assert is_host_key_failure(message) is True
+    assert is_host_key_failure("Connection refused") is False
+
+
+def test_parse_and_append_known_hosts(tmp_path: Path) -> None:
+    raw = "# comment\n192.168.1.10 ssh-ed25519 AAAA\n\n"
+    lines = parse_keyscan_lines(raw)
+    assert lines == ["192.168.1.10 ssh-ed25519 AAAA"]
+    known = tmp_path / "known_hosts"
+    append_known_hosts(known, lines)
+    append_known_hosts(known, lines)
+    assert known.read_text(encoding="utf-8").count("ssh-ed25519") == 1
 
 
 def test_list_ssh_host_aliases_skips_wildcards(tmp_path: Path) -> None:
