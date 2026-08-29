@@ -17,9 +17,9 @@ def main() -> int:
     agent = build_agent()
     configure_logging("WARNING")
 
-    healthy, detail = agent.llm.healthcheck()
-    if not healthy:
-        print(f"Ollama not usable: {detail}")
+    health = agent.llm.healthcheck()
+    if not health.ok:
+        print(f"Ollama not usable: {health.message}")
         return 1
 
     start = time.perf_counter()

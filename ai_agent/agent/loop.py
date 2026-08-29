@@ -37,6 +37,7 @@ class AgentRunResult:
     final_message: str
     iterations: int
     error: str | None = None
+    error_kind: LLMErrorKind | None = None
 
 
 class AgentLoop:
@@ -117,6 +118,7 @@ class AgentLoop:
                     final_message=partial or f"LLM error: {response.error}",
                     iterations=iteration,
                     error=response.error,
+                    error_kind=response.error_kind,
                 )
 
             self.messages.append(assistant)

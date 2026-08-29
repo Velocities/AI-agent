@@ -8,10 +8,11 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.loop import AgentLoop, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
+from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
 from ai_agent.llm import create_llm_provider
@@ -87,9 +88,11 @@ def build_agent(console: Console | None = None) -> AgentLoop:
 
 
 def warmup_agent(agent: AgentLoop, console: Console) -> bool:
-    healthy, message = agent.llm.healthcheck()
-    if not healthy:
-        console.print(f"[yellow]Warning:[/yellow] {message}")
+    health = agent.llm.healthcheck()
+    if not health.ok:
+        logger.error("LLM healthcheck failed: %s", health.message)
+        console.print(f"[red]LLM endpoint unavailable:[/red] {health.message}")
+        return not startup_should_exit(healthy=False, warmup_ok=True)
 
     with console.status(
         f"[bold cyan]Loading {agent.settings.ollama_model}[/bold cyan] "
@@ -105,11 +108,46 @@ def warmup_agent(agent: AgentLoop, console: Console) -> bool:
         )
         return True
 
-    console.print(f"[yellow]Warning:[/yellow] Model warmup failed: {detail}\n")
+    logger.error("Model warmup failed: %s", detail)
+    console.print(f"[red]LLM warmup failed:[/red] {detail}")
+    return not startup_should_exit(healthy=True, warmup_ok=False)
+
+
+def present_turn_result(
+    console: Console,
+    result: AgentRunResult,
+    *,
+    streamed: bool,
+) -> bool:
+    """Show the turn outcome. Return True when the process should exit."""
+    if result.error:
+        logger.warning(
+            "Turn ended with error (%s): %s",
+            result.error_kind.value if result.error_kind else "none",
+            result.error,
+        )
+
+    if streamed:
+        console.print()
+    else:
+        console.print("[bold green]AI:[/bold green]")
+        console.print(Markdown(result.final_message))
+
+    if turn_should_exit(result.error_kind):
+        logger.error("LLM session closed: %s", result.error)
+        console.print(
+            f"[red]{result.error or 'LLM session is gone.'}[/red] Exiting."
+        )
+        return True
+
+    if streamed or result.error in {"max_iterations", "truncated"}:
+        notice = run_error_notice(result.error)
+        if notice:
+            console.print(f"[yellow]{notice}[/yellow]")
     return False
 
 
-def main() -> None:
+def main() -> int:
     configure_stdio_encoding()
     console = Console()
     settings = Settings()
@@ -123,72 +161,67 @@ def main() -> None:
     )
     console.print("Type 'exit' or 'quit' to leave.\n")
 
-    warmup_agent(agent, console)
+    try:
+        if not warmup_agent(agent, console):
+            return 1
 
-    while True:
-        try:
-            user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\nGoodbye.")
-            break
+        while True:
+            try:
+                user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\nGoodbye.")
+                return 0
 
-        if not user_input:
-            continue
-        if user_input.lower() in {"exit", "quit"}:
-            console.print("Goodbye.")
-            break
+            if not user_input:
+                continue
+            if user_input.lower() in {"exit", "quit"}:
+                console.print("Goodbye.")
+                return 0
 
-        console.print()
-        streamed = False
-        status = console.status("[dim]Thinking...[/dim]", spinner="dots")
-        status.start()
-
-        def on_stream_chunk(text: str) -> None:
-            nonlocal streamed
-            safe_text = sanitize_terminal_text(text)
-            if not safe_text:
-                return
-            if not streamed:
-                status.stop()
-                console.print("[bold green]AI:[/bold green] ", end="")
-                streamed = True
-            console.file.write(safe_text)
-            console.file.flush()
-
-        def on_iteration(iteration: int) -> None:
-            if iteration > 1 and not streamed:
-                status.update(f"[dim]Working (step {iteration})...[/dim]")
-
-        def on_notice(text: str) -> None:
-            if streamed:
-                return
-            status.stop()
-            console.print(f"[dim]· {text}[/dim]")
+            console.print()
+            streamed = False
+            status = console.status("[dim]Thinking...[/dim]", spinner="dots")
             status.start()
 
-        try:
-            result = agent.run(
-                user_input,
-                stream_callback=on_stream_chunk,
-                iteration_callback=on_iteration,
-                notice_callback=on_notice,
-            )
-        finally:
-            status.stop()
+            def on_stream_chunk(text: str) -> None:
+                nonlocal streamed
+                safe_text = sanitize_terminal_text(text)
+                if not safe_text:
+                    return
+                if not streamed:
+                    status.stop()
+                    console.print("[bold green]AI:[/bold green] ", end="")
+                    streamed = True
+                console.file.write(safe_text)
+                console.file.flush()
 
-        if streamed:
+            def on_iteration(iteration: int) -> None:
+                if iteration > 1 and not streamed:
+                    status.update(f"[dim]Working (step {iteration})...[/dim]")
+
+            def on_notice(text: str) -> None:
+                if streamed:
+                    return
+                status.stop()
+                console.print(f"[dim]· {text}[/dim]")
+                status.start()
+
+            try:
+                result = agent.run(
+                    user_input,
+                    stream_callback=on_stream_chunk,
+                    iteration_callback=on_iteration,
+                    notice_callback=on_notice,
+                )
+            finally:
+                status.stop()
+
+            if present_turn_result(console, result, streamed=streamed):
+                return 1
             console.print()
-        else:
-            console.print("[bold green]AI:[/bold green]")
-            console.print(Markdown(result.final_message))
-
-        # A streamed answer hides result.final_message, so failures need saying.
-        if streamed or result.error in {"max_iterations", "truncated"}:
-            notice = run_error_notice(result.error)
-            if notice:
-                console.print(f"[yellow]{notice}[/yellow]")
-        console.print()
+    finally:
+        agent.llm.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

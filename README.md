@@ -30,13 +30,13 @@ Requirements:
 User (CLI)
     |
     v
-Agent Loop  <-------------------->  Ollama / LLM
+Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
     |
     +--> Policy Engine (validate CommandExpr)
     |
     +--> Approval UX (confirm / batch preview / session grants)
     |
-    +--> Executor (execve-style, no /bin/sh -c)
+    +--> Executor (local argv; independent of the LLM host)
     |
     +--> Audit Logger
     |
@@ -44,11 +44,13 @@ Agent Loop  <-------------------->  Ollama / LLM
 Linux (permissions of `ai` user)
 ```
 
+The agent and the model do not have to share a machine. Set `OLLAMA_HOST` to any reachable Ollama HTTP URL. Command execution stays on the agent host and is not tied to that URL.
+
 ### Responsibilities stay separate
 
 | Layer | Role |
 |-------|------|
-| LLM | Reasoning and proposing structured commands |
+| LLM | Reasoning and proposing structured commands. Talked to only through `LLMProvider`. |
 | Agent | Policy, approval, execution, logging |
 | Linux | Final permission boundary |
 | Human | Approves consequential operations |
@@ -240,7 +242,7 @@ See [`.env.example`](.env.example):
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_HOST` | Ollama API base URL |
+| `OLLAMA_HOST` | Ollama API base URL (localhost or another machine, e.g. `http://home-server:11434`) |
 | `OLLAMA_MODEL` | Model name |
 | `OLLAMA_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
 | `OLLAMA_NUM_CTX` | Context window; Ollama's 4096 default truncates long answers |
@@ -256,6 +258,44 @@ See [`.env.example`](.env.example):
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+
+---
+
+## LLM host (local or remote)
+
+Inference goes through `LLMProvider`. The CLI builds the provider with `create_llm_provider(settings)` and never talks to Ollama types directly.
+
+| Piece | Role |
+|-------|------|
+| `LLMProvider` | Interface: `chat`, `chat_stream`, `healthcheck`, `close` |
+| `OllamaProvider` | Ollama `/api/chat` and `/api/tags` (the only implementation today) |
+| `LlmHttpSession` | HTTP client and transport errors. SSH tunnels can plug in later without changing the loop. |
+
+Local and remote Ollama use the same provider. Only the host URL changes:
+
+```env
+# Same machine as the agent
+OLLAMA_HOST=http://localhost:11434
+
+# GPU box on the LAN (Ollama must listen on that interface)
+OLLAMA_HOST=http://home-server:11434
+```
+
+On the Ollama machine, bind beyond loopback if clients are remote (for example `OLLAMA_HOST=0.0.0.0` in Ollama's environment — that is Ollama's own setting, not this project's). Restrict that port with a firewall. The API is unauthenticated HTTP; do not expose it to the internet.
+
+Command execution does not use `OLLAMA_HOST`. A future SSH execution target will be a separate config.
+
+### Connection errors
+
+| When | What you see | What the CLI does |
+|------|----------------|-------------------|
+| Startup healthcheck fails (host down, refused, timeout, HTTP/protocol error) | `LLM endpoint unavailable: …` | Logs the error and **exits** (no REPL) |
+| Startup: model name not present on that host | `Model '…' not found at …` | Logs the error and **exits** |
+| Startup warmup fails after a passing healthcheck | `LLM warmup failed: …` | Logs the error and **exits** |
+| Mid-chat: connect, timeout, HTTP, or bad JSON | Yellow `LLM error: …` (and any partial text) | Logs a warning and **stays in the REPL** so you can retry or quit |
+| Mid-chat: session gone (reserved for a managed tunnel later) | Red message and `Exiting.` | Logs the error and **exits** |
+
+The agent loop classifies failures with `LLMErrorKind` (`unavailable`, `timeout`, `http`, `protocol`, `model_not_found`, …), not vendor-specific strings.
 
 ---
 
@@ -408,9 +448,9 @@ ai_agent/
   agent/          # Agent loop and tool schemas
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
-  cli/            # Terminal interface (`ai-agent`)
+  cli/            # Terminal interface (`ai-agent`) and error policy
   commands/       # CommandExpr AST, render, executor
-  llm/            # Ollama provider abstraction
+  llm/            # LLMProvider, factory, HTTP session, Ollama provider
   policy/         # Risk levels, policy engine, default_policy.yaml
 tests/
 ```
@@ -419,6 +459,9 @@ tests/
 
 ## Roadmap (not yet implemented)
 
+- Dedicated LLM process that warms the model and prints a bind URL
+- SSH tunnel transport for the LLM session
+- Remote command execution (`ExecutionBackend` / named targets)
 - Web UI with the same approval token model
 - AppArmor / Landlock profiles
 - OS-level network restrictions for `ai` user

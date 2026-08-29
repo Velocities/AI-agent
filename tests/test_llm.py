@@ -1,6 +1,8 @@
+from unittest.mock import MagicMock
+
 from ai_agent.config import Settings
 from ai_agent.llm import LLMProvider, OllamaProvider, create_llm_provider
-from ai_agent.llm.base import LLMErrorKind
+from ai_agent.llm.base import LLMErrorKind, LLMHealthcheck
 from ai_agent.llm.session import LlmHttpSession, LlmSessionError
 
 
@@ -41,3 +43,48 @@ def test_session_maps_connect_error(monkeypatch) -> None:
         raise AssertionError("expected LlmSessionError")
     finally:
         session.close()
+
+
+def _provider_with_session(session) -> OllamaProvider:
+    return OllamaProvider(session, "test-model")
+
+
+def test_healthcheck_maps_session_unavailable() -> None:
+    session = MagicMock()
+    session.get_json.side_effect = LlmSessionError(
+        LLMErrorKind.UNAVAILABLE,
+        "LLM endpoint is unavailable: http://127.0.0.1:9",
+    )
+    session.base_url = "http://127.0.0.1:9"
+    result = _provider_with_session(session).healthcheck()
+    assert result == LLMHealthcheck(
+        ok=False,
+        message="LLM endpoint is unavailable: http://127.0.0.1:9",
+        error_kind=LLMErrorKind.UNAVAILABLE,
+    )
+
+
+def test_healthcheck_reports_missing_model() -> None:
+    session = MagicMock()
+    session.get_json.return_value = {"models": [{"name": "other:latest"}]}
+    session.base_url = "http://localhost:11434"
+    result = _provider_with_session(session).healthcheck()
+    assert result.ok is False
+    assert result.error_kind == LLMErrorKind.MODEL_NOT_FOUND
+    assert "test-model" in result.message
+
+
+def test_healthcheck_reports_protocol_error() -> None:
+    session = MagicMock()
+    session.get_json.return_value = ["not", "an", "object"]
+    result = _provider_with_session(session).healthcheck()
+    assert result.ok is False
+    assert result.error_kind == LLMErrorKind.PROTOCOL
+
+
+def test_healthcheck_ok_when_model_present() -> None:
+    session = MagicMock()
+    session.get_json.return_value = {"models": [{"name": "test-model:latest"}]}
+    result = _provider_with_session(session).healthcheck()
+    assert result.ok is True
+    assert result.error_kind is None

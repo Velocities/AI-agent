@@ -17,6 +17,7 @@ class LLMErrorKind(str, Enum):
     STREAM_INCOMPLETE = "stream_incomplete"
     EMPTY = "empty"
     MODEL_NOT_FOUND = "model_not_found"
+    SESSION_CLOSED = "session_closed"
 
 
 @dataclass
@@ -58,6 +59,13 @@ class StreamChunk:
     error_kind: LLMErrorKind | None = None
 
 
+@dataclass(frozen=True)
+class LLMHealthcheck:
+    ok: bool
+    message: str
+    error_kind: LLMErrorKind | None = None
+
+
 class LLMProvider(ABC):
     @property
     def endpoint(self) -> str:
@@ -87,7 +95,7 @@ class LLMProvider(ABC):
         )
 
     @abstractmethod
-    def healthcheck(self) -> tuple[bool, str]:
+    def healthcheck(self) -> LLMHealthcheck:
         """Return whether the endpoint is usable, plus a short status message."""
         raise NotImplementedError
 

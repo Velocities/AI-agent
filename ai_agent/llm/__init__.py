@@ -1,5 +1,6 @@
 from ai_agent.llm.base import (
     LLMErrorKind,
+    LLMHealthcheck,
     LLMMessage,
     LLMProvider,
     LLMResponse,
@@ -12,6 +13,7 @@ from ai_agent.llm.session import LlmHttpSession, LlmSessionError
 
 __all__ = [
     "LLMErrorKind",
+    "LLMHealthcheck",
     "LLMMessage",
     "LLMProvider",
     "LLMResponse",

@@ -379,6 +379,7 @@ def test_unrecoverable_llm_error_still_fails(agent_parts) -> None:
     result = agent.run("hello")
 
     assert result.error == "LLM endpoint is unavailable."
+    assert result.error_kind == LLMErrorKind.UNAVAILABLE
     assert llm.chat.call_count == 1
 
 

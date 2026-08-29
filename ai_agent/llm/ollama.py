@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 from ai_agent.llm.base import (
     LLMErrorKind,
+    LLMHealthcheck,
     LLMMessage,
     LLMProvider,
     LLMResponse,
@@ -218,22 +219,30 @@ class OllamaProvider(LLMProvider):
             payload["name"] = message.name
         return payload
 
-    def healthcheck(self) -> tuple[bool, str]:
+    def healthcheck(self) -> LLMHealthcheck:
         try:
             payload = self.session.get_json("/api/tags", timeout=5.0)
         except LlmSessionError as exc:
-            return False, exc.message
+            return LLMHealthcheck(ok=False, message=exc.message, error_kind=exc.kind)
 
         if not isinstance(payload, dict):
-            return False, "LLM healthcheck returned an unexpected payload."
+            return LLMHealthcheck(
+                ok=False,
+                message="LLM healthcheck returned an unexpected payload.",
+                error_kind=LLMErrorKind.PROTOCOL,
+            )
 
         models = payload.get("models", [])
         names = {item.get("name") for item in models if isinstance(item, dict)}
         if self.model not in names and not any(
             name.startswith(f"{self.model}:") for name in names if name
         ):
-            return False, f"Model '{self.model}' not found at {self.endpoint}."
-        return True, "ok"
+            return LLMHealthcheck(
+                ok=False,
+                message=f"Model '{self.model}' not found at {self.endpoint}.",
+                error_kind=LLMErrorKind.MODEL_NOT_FOUND,
+            )
+        return LLMHealthcheck(ok=True, message="ok")
 
 
 class _ToolCallAccumulator:
