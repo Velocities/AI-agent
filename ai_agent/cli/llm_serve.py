@@ -8,7 +8,7 @@ from ai_agent.agent.context import build_system_prompt, gather_runtime_context
 from ai_agent.agent.warmup import warmup_llm
 from ai_agent.cli.app import configure_logging, configure_stdio_encoding
 from ai_agent.cli.errors import startup_should_exit
-from ai_agent.config import Settings
+from ai_agent.config import LlmTransport, Settings
 from ai_agent.llm.base import LLMProvider
 from ai_agent.llm.factory import create_http_session, create_llm_provider
 from ai_agent.llm.server import LlmFacade, bind_llm_server, public_url
@@ -28,7 +28,10 @@ def prepare_upstream(
     settings: Settings,
     console: Console,
 ) -> tuple[LLMProvider, LlmHttpSession] | None:
-    session = create_http_session(settings, base_url=settings.ollama_upstream)
+    if settings.ollama_transport == LlmTransport.SSH:
+        session = create_http_session(settings)
+    else:
+        session = create_http_session(settings, base_url=settings.ollama_upstream)
     provider = create_llm_provider(settings, session=session)
     health = provider.healthcheck()
     if not health.ok:

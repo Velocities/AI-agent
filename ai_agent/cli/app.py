@@ -147,7 +147,16 @@ def present_turn_result(
     return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] == "config":
+        from ai_agent.cli.config_cmd import main as config_main
+
+        return config_main(args[1:])
+    return run_repl()
+
+
+def run_repl() -> int:
     configure_stdio_encoding()
     console = Console()
     settings = Settings()

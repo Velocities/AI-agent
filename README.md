@@ -244,8 +244,12 @@ See [`.env.example`](.env.example):
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_HOST` | URL the **agent** uses (Ollama itself, or the `ai-agent-llm` facade URL) |
-| `OLLAMA_UPSTREAM` | Real Ollama URL used by **`ai-agent-llm`** only |
+| `OLLAMA_HOST` | URL the **agent** uses (Ollama, the facade, or the local end of an SSH tunnel) |
+| `OLLAMA_UPSTREAM` | Real Ollama URL used by **`ai-agent-llm`** when transport is HTTP |
+| `OLLAMA_TRANSPORT` | `http` (default) or `ssh` |
+| `OLLAMA_SSH_HOST` | Host alias in the sandboxed SSH config |
+| `OLLAMA_SSH_CONFIG` | Path to `.ai-agent/ssh/config` |
+| `OLLAMA_SSH_REMOTE` | Ollama bind on the GPU box (default `127.0.0.1:11434`) |
 | `LLM_BIND_HOST` | Address the facade listens on (default `127.0.0.1`) |
 | `LLM_BIND_PORT` | Facade port (`0` = pick a free port and print it) |
 | `OLLAMA_MODEL` | Model name |
@@ -274,7 +278,8 @@ Inference goes through `LLMProvider`. The CLI builds the provider with `create_l
 |-------|------|
 | `LLMProvider` | Interface: `chat`, `chat_stream`, `healthcheck`, `close` |
 | `OllamaProvider` | Ollama `/api/chat` and `/api/tags` (the only implementation today) |
-| `LlmHttpSession` | HTTP client and transport errors. SSH tunnels can plug in later without changing the loop. |
+| `LlmHttpSession` | HTTP client and transport errors |
+| SSH sandbox / tunnel | Optional: `ai-agent config remote-provider` writes `.ai-agent/ssh/` and the factory starts `ssh -L` |
 
 Local and remote Ollama use the same provider. Only the host URL changes:
 
@@ -289,6 +294,31 @@ OLLAMA_HOST=http://home-server:11434
 On the Ollama machine, bind beyond loopback if clients are remote (for example `OLLAMA_HOST=0.0.0.0` in Ollama's environment — that is Ollama's own setting, not this project's). Restrict that port with a firewall. The API is unauthenticated HTTP; do not expose it to the internet.
 
 Command execution does not use `OLLAMA_HOST`. A future SSH execution target will be a separate config.
+
+### SSH remote provider
+
+Prefer this over exposing Ollama on the LAN. Ollama stays on `127.0.0.1:11434` on the GPU PC. The agent opens a local port-forward with a **project-local** SSH config and keys (not `~/.ssh` at runtime).
+
+```bat
+ai-agent config remote-provider
+```
+
+The wizard prints GPU-box steps (Windows or Linux), can write `.env`, and never edits your user SSH config. To import an existing `Host` from `~/.ssh/config` it **copies** that host's key into `.ai-agent/ssh/` after a warning:
+
+```bat
+ai-agent config remote-provider --read-existing-ssh-hosts
+```
+
+Then:
+
+```bat
+ai-agent config remote-provider test
+ai-agent
+```
+
+`ai-agent config show` prints the current transport. `ai-agent config remote-provider disable` sets transport back to local HTTP.
+
+The GPU Windows box needs OpenSSH Server and Ollama. Admin accounts often need `C:\ProgramData\ssh\administrators_authorized_keys`. Tailscale/WireGuard is optional: use that hostname as the SSH target.
 
 ### Two-window workflow (same machine)
 
@@ -331,7 +361,7 @@ This is a same-machine split for testing layers. A GPU box on the LAN is still c
 | Startup: model name not present on that host | `Model '…' not found at …` | Logs the error and **exits** |
 | Startup warmup fails after a passing healthcheck | `LLM warmup failed: …` | Logs the error and **exits** |
 | Mid-chat: connect, timeout, HTTP, or bad JSON | Yellow `LLM error: …` (and any partial text) | Logs a warning and **stays in the REPL** so you can retry or quit |
-| Mid-chat: session gone (reserved for a managed tunnel later) | Red message and `Exiting.` | Logs the error and **exits** |
+| Mid-chat: SSH tunnel process died | Red message and `Exiting.` | Logs the error and **exits** |
 
 The agent loop classifies failures with `LLMErrorKind` (`unavailable`, `timeout`, `http`, `protocol`, `model_not_found`, …), not vendor-specific strings.
 
@@ -486,9 +516,9 @@ ai_agent/
   agent/          # Agent loop and tool schemas
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
-  cli/            # Terminal interface (`ai-agent`) and error policy
+  cli/            # Terminal (`ai-agent`, `ai-agent config`, `ai-agent-llm`)
   commands/       # CommandExpr AST, render, executor
-  llm/            # LLMProvider, factory, HTTP session, Ollama provider, local facade
+  llm/            # Provider, session, Ollama, facade, SSH sandbox/tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
 tests/
 ```
@@ -497,7 +527,6 @@ tests/
 
 ## Roadmap (not yet implemented)
 
-- SSH tunnel transport for the LLM session
 - Remote command execution (`ExecutionBackend` / named targets)
 - Web UI with the same approval token model
 - AppArmor / Landlock profiles

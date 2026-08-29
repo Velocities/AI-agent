@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from ai_agent.config import Settings
+from ai_agent.config import LlmTransport, Settings
 from ai_agent.llm import LLMProvider, OllamaProvider, create_llm_provider
 from ai_agent.llm.base import LLMErrorKind, LLMHealthcheck
 from ai_agent.llm.session import LlmHttpSession, LlmSessionError
@@ -8,6 +8,7 @@ from ai_agent.llm.session import LlmHttpSession, LlmSessionError
 
 def test_factory_returns_provider_interface() -> None:
     settings = Settings()
+    settings.ollama_transport = LlmTransport.HTTP
     provider = create_llm_provider(settings)
     try:
         assert isinstance(provider, LLMProvider)

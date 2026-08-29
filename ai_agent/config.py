@@ -11,6 +11,11 @@ class ConfirmationMode(str, Enum):
     PERMISSIVE = "permissive"
 
 
+class LlmTransport(str, Enum):
+    HTTP = "http"
+    SSH = "ssh"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -32,6 +37,25 @@ class Settings(BaseSettings):
         default=0,
         alias="LLM_BIND_PORT",
         description="Facade listen port. 0 lets the OS pick a free port.",
+    )
+    ollama_transport: LlmTransport = Field(
+        default=LlmTransport.HTTP,
+        alias="OLLAMA_TRANSPORT",
+    )
+    ollama_ssh_config: Path = Field(
+        default=Path(".ai-agent/ssh/config"),
+        alias="OLLAMA_SSH_CONFIG",
+    )
+    ollama_ssh_host: str = Field(default="", alias="OLLAMA_SSH_HOST")
+    ollama_ssh_remote: str = Field(
+        default="127.0.0.1:11434",
+        alias="OLLAMA_SSH_REMOTE",
+        description="Ollama bind on the far side of the SSH tunnel.",
+    )
+    ollama_ssh_local_port: int = Field(
+        default=0,
+        alias="OLLAMA_SSH_LOCAL_PORT",
+        description="Local tunnel port. 0 picks a free port.",
     )
     ollama_model: str = Field(default="qwen3:14b", alias="OLLAMA_MODEL")
     ollama_timeout: float = Field(
