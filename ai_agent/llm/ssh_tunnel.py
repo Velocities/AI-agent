@@ -11,7 +11,7 @@ from pathlib import Path
 from ai_agent.config import Settings
 from ai_agent.llm.base import LLMErrorKind
 from ai_agent.llm.session import LlmSessionError
-from ai_agent.llm.ssh_sandbox import sandbox_identity_file, ssh_path_for_config
+from ai_agent.llm.ssh_sandbox import ssh_path_for_config
 
 logger = logging.getLogger(__name__)
 
@@ -108,18 +108,13 @@ def build_ssh_forward_command(
             "OLLAMA_SSH_HOST is empty. Run: ai-agent config remote-provider",
         )
     known_hosts = config.parent / "known_hosts"
-    identity = sandbox_identity_file(settings)
     return [
         ssh_bin,
         "-N",
         "-F",
         str(config),
-        "-i",
-        str(identity),
         "-o",
         "BatchMode=yes",
-        "-o",
-        "PreferredAuthentications=publickey",
         "-o",
         "ExitOnForwardFailure=yes",
         "-o",

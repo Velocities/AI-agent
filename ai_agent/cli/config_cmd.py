@@ -105,10 +105,7 @@ def cmd_show_key(console: Console, settings: Settings) -> int:
         "unless you imported and we copied that one).\n"
         "Append the entire line on the GPU PC, then retry the test.\n"
     )
-    line_file = Path(settings.ollama_ssh_config).expanduser().resolve().parent / "authorized_keys.line"
-    line_file.write_text(public_key + "\n", encoding="utf-8")
     console.print(public_key)
-    console.print(f"\nSame line written to {line_file} (copy that file to avoid wrapped lines).")
     console.print()
     console.print(gpu_setup_instructions(gpu_os="windows", public_key=public_key))
     return 0
@@ -133,14 +130,12 @@ def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) ->
                     return cmd_test(console, settings, _retried=True)
         elif is_auth_failure(str(exc)):
             console.print(
-                "\nThe GPU PC accepted TCP but rejected the sandbox key.\n"
-                "If this Windows account is an Administrator, "
-                "C:\\Users\\...\\.ssh\\authorized_keys is ignored — use\n"
-                "C:\\ProgramData\\ssh\\administrators_authorized_keys, fix ACLs, "
-                "then Restart-Service sshd.\n"
-                "The key must be one line. If you set a passphrase on the "
-                "sandbox key, BatchMode cannot unlock it; re-run the wizard "
-                "with an empty passphrase.\n"
+                "\nThe GPU PC accepted the TCP connection but rejected the "
+                "[bold]sandbox[/bold] key. A working `ssh user@host` from this "
+                "laptop uses ~/.ssh; the agent only uses .ai-agent/ssh/.\n"
+                "Append this exact line on the desktop (Administrators often "
+                "need C:\\ProgramData\\ssh\\administrators_authorized_keys), "
+                "then run the test again.\n"
             )
             cmd_show_key(console, settings)
         return 1

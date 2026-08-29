@@ -119,17 +119,13 @@ def test_windows_gpu_instructions_mention_admin_keys() -> None:
 
 def test_build_ssh_forward_command_uses_sandbox(tmp_path: Path) -> None:
     config = tmp_path / "config"
-    key = tmp_path / "id_ed25519"
-    key.write_text("PRIVATE", encoding="utf-8")
-    config.write_text(f"Host gpu-box\n    IdentityFile {key.as_posix()}\n", encoding="utf-8")
+    config.write_text("Host gpu-box\n", encoding="utf-8")
     settings = Settings()
     settings.ollama_ssh_config = config
     settings.ollama_ssh_host = "gpu-box"
     settings.ollama_ssh_remote = "127.0.0.1:11434"
     command = build_ssh_forward_command(settings, local_port=23456, ssh_bin="ssh")
     assert command[:4] == ["ssh", "-N", "-F", str(config)]
-    assert "-i" in command
-    assert str(key) in command
     assert "127.0.0.1:23456:127.0.0.1:11434" in command
     assert "gpu-box" in command
     assert "BatchMode=yes" in command

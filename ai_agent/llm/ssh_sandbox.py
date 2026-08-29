@@ -190,14 +190,12 @@ def gpu_setup_instructions(*, gpu_os: str, public_key: str) -> str:
             "   If the account is in Administrators, Windows often requires\n"
             "   C:\\ProgramData\\ssh\\administrators_authorized_keys instead.\n\n"
             f"   {public_key}\n\n"
-            "3. The key must be one single line. Do not wrap it.\n"
-            "4. If this account is in Administrators, the user authorized_keys\n"
-            "   file is ignored. Use administrators_authorized_keys, then:\n"
-            "   icacls C:\\ProgramData\\ssh\\administrators_authorized_keys /inheritance:r\n"
-            "   icacls C:\\ProgramData\\ssh\\administrators_authorized_keys "
-            "/grant SYSTEM:(F) \"BUILTIN\\Administrators:(F)\"\n"
-            "   Restart-Service sshd\n"
-            "5. Allow inbound TCP 22 (or only on your VPN/Tailscale interface).\n"
+            "3. Restrict ACLs so only that user (and SYSTEM) can read the file.\n"
+            "   Example for a user key file:\n"
+            "   icacls %USERPROFILE%\\.ssh\\authorized_keys /inheritance:r\n"
+            "   icacls %USERPROFILE%\\.ssh\\authorized_keys "
+            "/grant:r \"%USERNAME%:(R)\"\n"
+            "4. Allow inbound TCP 22 (or only on your VPN/Tailscale interface).\n"
         )
     return (
         "On the Linux GPU machine:\n\n"
@@ -254,38 +252,22 @@ def is_auth_failure(message: str) -> bool:
     )
 
 
-def sandbox_identity_file(settings) -> Path:
-    """Private key from our sandbox only — not ~/.ssh defaults from `ssh -G`."""
-    sandbox = Path(settings.ollama_ssh_config).expanduser().resolve().parent
-    config = sandbox / "config"
-    if config.is_file():
-        for raw in config.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line.lower().startswith("identityfile "):
-                continue
-            path = Path(line.split(None, 1)[1].strip().strip('"')).expanduser()
-            if path.is_file():
-                return path
-    privates = [
-        path
-        for path in sandbox.iterdir()
-        if path.is_file()
-        and path.name.startswith("id_")
-        and not path.name.endswith(".pub")
-    ]
-    if not privates:
-        raise FileNotFoundError(
-            f"No sandbox private key in {sandbox}. Run: ai-agent config remote-provider"
-        )
-    return privates[0]
-
-
 def sandbox_public_key_text(settings) -> str:
-    identity = sandbox_identity_file(settings)
-    pub = Path(str(identity) + ".pub")
-    if not pub.is_file():
-        raise FileNotFoundError(f"Public key not found: {pub}")
-    return pub.read_text(encoding="utf-8").strip()
+    resolved = resolve_user_ssh_host(
+        settings.ollama_ssh_host.strip(),
+        user_config=settings.ollama_ssh_config,
+    )
+    for identity in resolved.identity_files:
+        pub = Path(str(identity) + ".pub")
+        if pub.is_file():
+            return pub.read_text(encoding="utf-8").strip()
+        sibling = identity.with_name(identity.name + ".pub")
+        if sibling.is_file():
+            return sibling.read_text(encoding="utf-8").strip()
+    raise FileNotFoundError(
+        "No public key found next to the sandbox IdentityFile. "
+        "Re-run: ai-agent config remote-provider"
+    )
 
 
 def is_host_key_failure(message: str) -> bool:
