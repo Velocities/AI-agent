@@ -12,7 +12,7 @@ from ai_agent.llm.ssh_sandbox import (
     append_known_hosts,
     copy_identity_into_sandbox,
     disable_remote_provider_env,
-    gpu_setup_instructions,
+    host_setup_next_steps,
     is_host_key_failure,
     list_ssh_host_aliases,
     parse_keyscan_lines,
@@ -104,12 +104,13 @@ def test_upsert_env_preserves_other_keys(tmp_path: Path) -> None:
     assert "OLLAMA_TRANSPORT=http" in text
 
 
-def test_windows_gpu_instructions_mention_admin_keys() -> None:
-    text = gpu_setup_instructions(gpu_os="windows", public_key="ssh-ed25519 AAAA x")
-    assert "administrators_authorized_keys" in text
-    assert "ssh-ed25519 AAAA x" in text
-    linux = gpu_setup_instructions(gpu_os="linux", public_key="ssh-ed25519 AAAA x")
-    assert "chmod 600" in linux
+def test_host_setup_next_steps_point_at_wrapper() -> None:
+    key = Path("host-setup.pub")
+    text = host_setup_next_steps(key_file=key, linux=False)
+    assert "ai-agent host-setup" in text
+    assert "host-setup.pub" in text
+    linux = host_setup_next_steps(key_file=key, linux=True)
+    assert "--linux" in linux
 
 
 def test_build_ssh_forward_command_uses_sandbox(tmp_path: Path) -> None:

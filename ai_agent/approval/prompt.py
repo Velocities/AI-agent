@@ -91,7 +91,7 @@ class ApprovalPrompter:
                     f"  {index}. {render_command(item.expr)}  "
                     f"[dim][{item.decision.effective_risk.label()}][/dim]"
                 )
-            response = input("\nProceed with batch? [Y/n/a=allow READ_ONLY this session]: ").strip().lower()
+            response = input("\nProceed with batch? (y/n/a) ").strip().lower()
             if response in {"a", "allow"}:
                 self.session.enable_read_only_auto()
                 return ApprovalResult(approved=True, grant_scope="read_only_session")
@@ -111,7 +111,7 @@ class ApprovalPrompter:
                 f"  {index}. {render_command(item.expr)}  "
                 f"[{item.decision.effective_risk.label()}]"
             )
-        response = input("\nProceed with batch? [y/N]: ").strip().lower()
+        response = input("\nProceed with batch? (y/n) ").strip().lower()
         return ApprovalResult(approved=response in {"y", "yes"})
 
     def _print_header(self, decision: PolicyDecision, *, reason: str | None) -> None:
@@ -125,12 +125,11 @@ class ApprovalPrompter:
             self.console.print(summarize_segments(decision))
 
     def _prompt_yes_no(self, decision: PolicyDecision) -> ApprovalResult:
-        if decision.effective_risk == RiskLevel.REVERSIBLE:
-            prompt = "\nApprove? [y/N/a=allow REVERSIBLE this session]: "
-        elif decision.effective_risk == RiskLevel.READ_ONLY:
-            prompt = "\nApprove? [y/N/a=allow READ_ONLY this session]: "
+        if decision.effective_risk in {RiskLevel.REVERSIBLE, RiskLevel.READ_ONLY}:
+            self.console.print("[dim]a = allow this risk for the rest of the session[/dim]")
+            prompt = "\nApprove? (y/n/a) "
         else:
-            prompt = "\nApprove? [y/N]: "
+            prompt = "\nApprove? (y/n) "
 
         response = input(prompt).strip().lower()
         if response in {"a", "allow"}:

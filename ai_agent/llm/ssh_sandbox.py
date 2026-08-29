@@ -180,31 +180,14 @@ def read_public_key(identity_file: Path) -> str:
     return pub.read_text(encoding="utf-8").strip()
 
 
-def gpu_setup_instructions(*, gpu_os: str, public_key: str) -> str:
-    if gpu_os == "windows":
-        return (
-            "On the Windows GPU PC (OpenSSH Server must be running):\n\n"
-            "1. Keep Ollama listening on 127.0.0.1:11434 only. Do not expose 11434.\n"
-            "2. If this account is a normal user, append this line to\n"
-            "   C:\\Users\\<you>\\.ssh\\authorized_keys\n"
-            "   If the account is in Administrators, Windows often requires\n"
-            "   C:\\ProgramData\\ssh\\administrators_authorized_keys instead.\n\n"
-            f"   {public_key}\n\n"
-            "3. Restrict ACLs so only that user (and SYSTEM) can read the file.\n"
-            "   Example for a user key file:\n"
-            "   icacls %USERPROFILE%\\.ssh\\authorized_keys /inheritance:r\n"
-            "   icacls %USERPROFILE%\\.ssh\\authorized_keys "
-            "/grant:r \"%USERNAME%:(R)\"\n"
-            "4. Allow inbound TCP 22 (or only on your VPN/Tailscale interface).\n"
-        )
+def host_setup_next_steps(*, key_file: Path, linux: bool) -> str:
+    extra = " --linux" if linux else ""
+    admin = "" if linux else "   (Administrator PowerShell if this Windows account is an admin)\n"
     return (
-        "On the Linux GPU machine:\n\n"
-        "1. Keep Ollama listening on 127.0.0.1:11434 only. Do not expose 11434.\n"
-        "2. Append this line to ~/.ssh/authorized_keys:\n\n"
-        f"   {public_key}\n\n"
-        "3. Then:\n"
-        "   mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
-        "   chmod 600 ~/.ssh/authorized_keys\n"
+        "On the GPU PC (same repo + venv, OpenSSH Server already installed):\n"
+        f"{admin}"
+        f"  ai-agent host-setup --public-key-file {key_file}{extra}\n"
+        "That installs the key, restarts sshd, and checks Ollama on 127.0.0.1:11434.\n"
     )
 
 

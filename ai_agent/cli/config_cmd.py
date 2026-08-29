@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ai_agent.config import Settings
+from ai_agent.cli.confirm import confirm
 from ai_agent.llm.ssh_sandbox import (
     ResolvedSshHost,
     append_known_hosts,
@@ -14,7 +15,7 @@ from ai_agent.llm.ssh_sandbox import (
     default_sandbox_dir,
     disable_remote_provider_env,
     generate_ed25519_key,
-    gpu_setup_instructions,
+    host_setup_next_steps,
     is_host_key_failure,
     list_ssh_host_aliases,
     read_public_key,
@@ -37,11 +38,6 @@ def _prompt(console: Console, label: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
     value = console.input(f"{label}{suffix}: ").strip()
     return value or default
-
-
-def _confirm(console: Console, question: str) -> bool:
-    answer = console.input(f"{question} [y/N]: ").strip().lower()
-    return answer in {"y", "yes"}
 
 
 def cmd_show(console: Console, settings: Settings) -> int:
@@ -84,7 +80,7 @@ def _trust_host_key(console: Console, settings: Settings) -> bool:
     console.print("Host key(s) offered by that machine:")
     for line in entries:
         console.print(f"  {line}")
-    if not _confirm(console, "Trust these keys and save them in .ai-agent/ssh/known_hosts"):
+    if not confirm(console, "Trust these keys and save them in .ai-agent/ssh/known_hosts"):
         return False
     known_hosts = settings.ollama_ssh_config.parent / "known_hosts"
     append_known_hosts(known_hosts, entries)
@@ -106,7 +102,7 @@ def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) ->
                 "\nThe sandbox [bold]known_hosts[/bold] file does not trust this PC yet. "
                 "That is expected the first time. It is not an Ollama or ai-agent-llm problem."
             )
-            if _confirm(console, "Fetch and trust the SSH host key now"):
+            if confirm(console, "Fetch and trust the SSH host key now"):
                 if _trust_host_key(console, settings):
                     return cmd_test(console, settings, _retried=True)
         return 1
@@ -182,7 +178,7 @@ def cmd_remote_provider(
         return 1
 
     console.print(Panel(COPY_WARNING, title="SSH sandbox", border_style="yellow"))
-    if not _confirm(console, "Continue"):
+    if not confirm(console, "Continue"):
         console.print("Cancelled.")
         return 1
 
@@ -219,7 +215,7 @@ def cmd_remote_provider(
         identity = generate_ed25519_key(sandbox / "id_ed25519", passphrase=passphrase)
 
     write_sandbox_host_config(sandbox, host, identity)
-    if _confirm(console, "Fetch and trust the GPU PC's SSH host key now"):
+    if confirm(console, "Fetch and trust the GPU PC's SSH host key now"):
         settings_preview = Settings()
         settings_preview.ollama_ssh_config = sandbox / "config"
         settings_preview.ollama_ssh_host = host.alias
@@ -230,8 +226,10 @@ def cmd_remote_provider(
         gpu_os = "windows"
     remote = _prompt(console, "Ollama on the GPU box", "127.0.0.1:11434")
 
+    key_file = sandbox / "host-setup.pub"
+    key_file.write_text(public_key + "\n", encoding="utf-8")
     console.print()
-    console.print(gpu_setup_instructions(gpu_os=gpu_os, public_key=public_key))
+    console.print(host_setup_next_steps(key_file=key_file, linux=gpu_os == "linux"))
     console.print(f"Sandbox config: {sandbox / 'config'}")
     console.print(f"Copied/generated key: {identity}")
 
@@ -244,12 +242,12 @@ def cmd_remote_provider(
     for key, value in values.items():
         console.print(f"  {key}={value}")
 
-    if _confirm(console, f"Write these values to {env_path}"):
+    if confirm(console, f"Write these values to {env_path}"):
         upsert_env_values(env_path, values)
         console.print(f"Updated {env_path}")
 
     console.print(
-        "\nWhen authorized_keys is in place, run:\n"
+        "\nAfter host-setup succeeds on the GPU PC, run:\n"
         "  ai-agent config remote-provider test"
     )
     return 0

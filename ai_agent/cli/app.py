@@ -153,6 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.config_cmd import main as config_main
 
         return config_main(args[1:])
+    if args and args[0] == "host-setup":
+        from ai_agent.cli.host_setup import main as host_setup_main
+
+        return host_setup_main(args[1:])
     return run_repl()
 
 

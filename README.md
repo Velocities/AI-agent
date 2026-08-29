@@ -198,7 +198,7 @@ AI wants to execute:
   Segments:
     1. systemctl restart nginx  [REVERSIBLE]
 
-Approve? [y/N/a=allow REVERSIBLE this session]:
+Approve? (y/n/a)
 ```
 
 ### Batch preview (READ_ONLY inspections)
@@ -211,7 +211,7 @@ AI wants to run these READ_ONLY checks:
   2. docker ps  [READ_ONLY]
   3. journalctl -u nginx -n 100 --no-pager | grep -i error  [READ_ONLY]
 
-Proceed with batch? [Y/n/a=allow READ_ONLY this session]:
+Proceed with batch? (y/n/a)
 ```
 
 This reduces prompt fatigue while keeping mutations gated.
@@ -323,7 +323,13 @@ ai-agent
 
 `ai-agent config show` prints the current transport. `ai-agent config remote-provider disable` sets transport back to local HTTP.
 
-The GPU Windows box needs OpenSSH Server and Ollama. Admin accounts often need `C:\ProgramData\ssh\administrators_authorized_keys`. Tailscale/WireGuard is optional: use that hostname as the SSH target.
+On the GPU PC (same repo, Administrator PowerShell on Windows), install the printed key with:
+
+```bat
+ai-agent host-setup --public-key-file .ai-agent\ssh\host-setup.pub
+```
+
+That writes the correct authorized_keys file, restarts `sshd`, and checks Ollama on `127.0.0.1:11434`. Linux GPU hosts add `--linux`. Tailscale/WireGuard is optional: use that hostname as the SSH target.
 
 ### Two-window workflow (same machine)
 
@@ -521,7 +527,7 @@ ai_agent/
   agent/          # Agent loop and tool schemas
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
-  cli/            # Terminal (`ai-agent`, `ai-agent config`, `ai-agent-llm`)
+  cli/            # Terminal (`ai-agent`, `config`, `host-setup`, `ai-agent-llm`)
   commands/       # CommandExpr AST, render, executor
   llm/            # Provider, session, Ollama, facade, SSH sandbox/tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
