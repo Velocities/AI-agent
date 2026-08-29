@@ -245,6 +245,31 @@ def remote_provider_env_values(
     }
 
 
+def is_auth_failure(message: str) -> bool:
+    lowered = message.lower()
+    return "permission denied" in lowered and (
+        "publickey" in lowered or "authentication" in lowered or "keyboard-interactive" in lowered
+    )
+
+
+def sandbox_public_key_text(settings) -> str:
+    resolved = resolve_user_ssh_host(
+        settings.ollama_ssh_host.strip(),
+        user_config=settings.ollama_ssh_config,
+    )
+    for identity in resolved.identity_files:
+        pub = Path(str(identity) + ".pub")
+        if pub.is_file():
+            return pub.read_text(encoding="utf-8").strip()
+        sibling = identity.with_name(identity.name + ".pub")
+        if sibling.is_file():
+            return sibling.read_text(encoding="utf-8").strip()
+    raise FileNotFoundError(
+        "No public key found next to the sandbox IdentityFile. "
+        "Re-run: ai-agent config remote-provider"
+    )
+
+
 def is_host_key_failure(message: str) -> bool:
     lowered = message.lower()
     return (

@@ -13,6 +13,7 @@ from ai_agent.llm.ssh_sandbox import (
     copy_identity_into_sandbox,
     disable_remote_provider_env,
     gpu_setup_instructions,
+    is_auth_failure,
     is_host_key_failure,
     list_ssh_host_aliases,
     parse_keyscan_lines,
@@ -32,6 +33,10 @@ def test_host_key_failure_detection() -> None:
     )
     assert is_host_key_failure(message) is True
     assert is_host_key_failure("Connection refused") is False
+    assert is_auth_failure(
+        "Permission denied (publickey,password,keyboard-interactive)."
+    )
+    assert is_auth_failure("Host key verification failed.") is False
 
 
 def test_parse_and_append_known_hosts(tmp_path: Path) -> None:

@@ -15,11 +15,13 @@ from ai_agent.llm.ssh_sandbox import (
     disable_remote_provider_env,
     generate_ed25519_key,
     gpu_setup_instructions,
+    is_auth_failure,
     is_host_key_failure,
     list_ssh_host_aliases,
     read_public_key,
     remote_provider_env_values,
     resolve_user_ssh_host,
+    sandbox_public_key_text,
     scan_host_keys,
     upsert_env_values,
     write_sandbox_host_config,
@@ -92,6 +94,23 @@ def _trust_host_key(console: Console, settings: Settings) -> bool:
     return True
 
 
+def cmd_show_key(console: Console, settings: Settings) -> int:
+    try:
+        public_key = sandbox_public_key_text(settings)
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    console.print(
+        "This is the public key the agent uses (not your usual ~/.ssh key "
+        "unless you imported and we copied that one).\n"
+        "Append the entire line on the GPU PC, then retry the test.\n"
+    )
+    console.print(public_key)
+    console.print()
+    console.print(gpu_setup_instructions(gpu_os="windows", public_key=public_key))
+    return 0
+
+
 def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) -> int:
     if settings.ollama_transport.value != "ssh":
         console.print("[yellow]OLLAMA_TRANSPORT is not ssh. Nothing to test.[/yellow]")
@@ -109,6 +128,16 @@ def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) ->
             if _confirm(console, "Fetch and trust the SSH host key now"):
                 if _trust_host_key(console, settings):
                     return cmd_test(console, settings, _retried=True)
+        elif is_auth_failure(str(exc)):
+            console.print(
+                "\nThe GPU PC accepted the TCP connection but rejected the "
+                "[bold]sandbox[/bold] key. A working `ssh user@host` from this "
+                "laptop uses ~/.ssh; the agent only uses .ai-agent/ssh/.\n"
+                "Append this exact line on the desktop (Administrators often "
+                "need C:\\ProgramData\\ssh\\administrators_authorized_keys), "
+                "then run the test again.\n"
+            )
+            cmd_show_key(console, settings)
         return 1
     try:
         from ai_agent.llm.factory import create_llm_provider
@@ -273,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     remote.add_argument(
         "action",
         nargs="?",
-        choices=["test", "disable", "trust-host"],
+        choices=["test", "disable", "trust-host", "show-key"],
         help="test the tunnel, switch .env back to local HTTP, or trust the SSH host key.",
     )
     sub.add_parser("show", help="Print the current LLM transport settings.")
@@ -295,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_test(console, settings)
         if args.action == "trust-host":
             return 0 if _trust_host_key(console, settings) else 1
+        if args.action == "show-key":
+            return cmd_show_key(console, settings)
         if args.action == "disable":
             return cmd_disable(console, env_path)
         return cmd_remote_provider(
