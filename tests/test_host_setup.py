@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from ai_agent.cli.confirm import confirm
+from ai_agent.cli.host_setup import _read_public_key
 from ai_agent.llm.host_setup import (
     linux_authorized_keys_path,
     merge_authorized_key,
@@ -37,3 +38,14 @@ def test_windows_admin_uses_programdata() -> None:
 
 def test_linux_authorized_keys_under_home() -> None:
     assert linux_authorized_keys_path(Path("/home/ai")) == Path("/home/ai/.ssh/authorized_keys")
+
+
+def test_public_key_file_rejects_a_folder(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    try:
+        _read_public_key(Namespace(public_key_file=str(tmp_path), public_key=None))
+    except ValueError as exc:
+        assert "folder" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

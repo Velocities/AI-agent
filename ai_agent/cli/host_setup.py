@@ -21,7 +21,19 @@ from ai_agent.llm.host_setup import (
 
 def _read_public_key(args: argparse.Namespace) -> str:
     if args.public_key_file:
-        return normalize_public_key(Path(args.public_key_file).read_text(encoding="utf-8"))
+        path = Path(args.public_key_file)
+        if path.is_dir():
+            raise ValueError(
+                f"{path} is a folder, not a key file. Pass the laptop's host-setup.pub, e.g.\n"
+                r"  ai-agent host-setup --public-key-file C:\path\to\host-setup.pub"
+            )
+        if not path.is_file():
+            raise ValueError(
+                f"No such file: {path}\n"
+                "That file is created on the laptop by: ai-agent config remote-provider\n"
+                "Copy host-setup.pub here, then pass its full path."
+            )
+        return normalize_public_key(path.read_text(encoding="utf-8"))
     if args.public_key:
         return normalize_public_key(args.public_key)
     raise ValueError("Pass --public-key-file or --public-key.")
