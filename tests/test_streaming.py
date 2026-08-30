@@ -11,8 +11,9 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMMessage, LLMResponse, StreamChunk, ToolCall
+from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMResponse, StreamChunk, ToolCall
 from ai_agent.llm.ollama import OllamaProvider
+from ai_agent.llm.session import LlmHttpSession
 from ai_agent.llm.streaming import (
     RespondMessageStreamer,
     ResumeOverlapTrimmer,
@@ -209,7 +210,7 @@ def test_ollama_chat_stream_yields_tool_argument_deltas(monkeypatch) -> None:
         lambda timeout: _MockClient(lines),
     )
 
-    provider = OllamaProvider("http://localhost:11434", "test-model")
+    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(
         provider.chat_stream(
             [LLMMessage(role="user", content="hello")],
@@ -253,7 +254,7 @@ def test_ollama_chat_stream_sends_context_options(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "Client", lambda timeout: _CapturingClient(lines))
 
     provider = OllamaProvider(
-        "http://localhost:11434",
+        LlmHttpSession("http://localhost:11434"),
         "test-model",
         num_ctx=16384,
         num_predict=4096,
@@ -278,7 +279,7 @@ def test_ollama_chat_stream_reports_length_stop_reason(monkeypatch) -> None:
     ]
     monkeypatch.setattr(httpx, "Client", lambda timeout: _MockClient(lines))
 
-    provider = OllamaProvider("http://localhost:11434", "test-model")
+    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
 
     assert chunks[-1].response is not None
@@ -322,11 +323,12 @@ def test_ollama_chat_stream_handles_interrupted_stream(monkeypatch) -> None:
         lambda timeout: _BrokenClient(lines),
     )
 
-    provider = OllamaProvider("http://localhost:11434", "test-model")
+    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
 
     assert chunks[-1].done is True
-    assert chunks[-1].error == "Ollama stream was interrupted."
+    assert chunks[-1].error_kind == LLMErrorKind.STREAM_INTERRUPTED
+    assert chunks[-1].error == "LLM stream was interrupted."
     assert chunks[-1].response is not None
     malformed = chunks[-1].response.message.tool_calls[0].arguments.get("_malformed", "")
     assert "Partial" in malformed
@@ -514,9 +516,11 @@ def test_agent_flushes_respond_tail_after_interrupted_json(agent_parts) -> None:
                         )
                     ],
                 ),
-                error="Ollama stream was interrupted.",
+                error="LLM stream was interrupted.",
+                error_kind=LLMErrorKind.STREAM_INTERRUPTED,
             ),
-            error="Ollama stream was interrupted.",
+            error="LLM stream was interrupted.",
+            error_kind=LLMErrorKind.STREAM_INTERRUPTED,
         )
 
     def completed_stream(messages, tools=None):

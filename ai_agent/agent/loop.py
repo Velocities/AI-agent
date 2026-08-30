@@ -7,13 +7,14 @@ from dataclasses import dataclass
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
 from ai_agent.agent.tools import CONTINUE_NUDGE, SCHEMA_NUDGE, TOOL_DEFINITIONS
+from ai_agent.agent.warmup import warmup_llm
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMMessage, LLMProvider, LLMResponse, ToolCall
+from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMProvider, LLMResponse, ToolCall
 from ai_agent.llm.streaming import (
     RespondMessageStreamer,
     ResumeOverlapTrimmer,
@@ -24,10 +25,10 @@ from ai_agent.policy.risk import RiskLevel
 
 logger = logging.getLogger(__name__)
 
-_RECOVERABLE_TRUNCATION_ERRORS = frozenset(
+_RECOVERABLE_TRUNCATION_KINDS = frozenset(
     {
-        "Ollama stream was interrupted.",
-        "Ollama stream ended before completion.",
+        LLMErrorKind.STREAM_INTERRUPTED,
+        LLMErrorKind.STREAM_INCOMPLETE,
     }
 )
 
@@ -37,6 +38,7 @@ class AgentRunResult:
     final_message: str
     iterations: int
     error: str | None = None
+    error_kind: LLMErrorKind | None = None
 
 
 class AgentLoop:
@@ -65,34 +67,7 @@ class AgentLoop:
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
-        import time
-
-        logger.info(
-            "Warming up model with agent context (system prompt + %d tools)",
-            len(TOOL_DEFINITIONS),
-        )
-        start = time.perf_counter()
-        response = self.llm.chat(
-            [
-                self.messages[0],
-                LLMMessage(
-                    role="user",
-                    content="Startup warmup. Reply with the single word: ready",
-                ),
-            ],
-            tools=TOOL_DEFINITIONS,
-        )
-        duration = time.perf_counter() - start
-
-        if response.error:
-            logger.warning("Model warmup failed after %.1fs: %s", duration, response.error)
-            return False, response.error, duration
-
-        logger.info(
-            "Model warmup complete in %.1fs (loaded with agent context)",
-            duration,
-        )
-        return True, "ready", duration
+        return warmup_llm(self.llm, self.messages[0].content)
 
     def run(
         self,
@@ -117,6 +92,7 @@ class AgentLoop:
                     final_message=partial or f"LLM error: {response.error}",
                     iterations=iteration,
                     error=response.error,
+                    error_kind=response.error_kind,
                 )
 
             self.messages.append(assistant)
@@ -224,6 +200,7 @@ class AgentLoop:
             # A cut-off stream is reported through stop_reason, not as an error,
             # so an exhausted resume budget keeps the text produced so far.
             error=None if cut_short else response.error,
+            error_kind=None if cut_short else response.error_kind,
             stop_reason="length" if cut_short else response.stop_reason,
         )
 
@@ -629,7 +606,7 @@ class AgentLoop:
         """True when generation stopped for a limit rather than being finished."""
         if response.stop_reason == "length":
             return AgentLoop._has_generation_output(response.message)
-        if response.error in _RECOVERABLE_TRUNCATION_ERRORS:
+        if response.error_kind in _RECOVERABLE_TRUNCATION_KINDS:
             return AgentLoop._has_generation_output(response.message)
         return False
 

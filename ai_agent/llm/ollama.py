@@ -4,15 +4,16 @@ import json
 import logging
 from collections.abc import Iterator
 
-import httpx
-
 from ai_agent.llm.base import (
+    LLMErrorKind,
+    LLMHealthcheck,
     LLMMessage,
     LLMProvider,
     LLMResponse,
     StreamChunk,
     ToolCall,
 )
+from ai_agent.llm.session import LlmHttpSession, LlmSessionError
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +21,22 @@ logger = logging.getLogger(__name__)
 class OllamaProvider(LLMProvider):
     def __init__(
         self,
-        host: str,
+        session: LlmHttpSession,
         model: str,
-        timeout: float = 600.0,
         num_predict: int | None = None,
         num_ctx: int | None = None,
     ):
-        self.host = host.rstrip("/")
+        self.session = session
         self.model = model
-        self.timeout = timeout
         self.num_predict = num_predict
         self.num_ctx = num_ctx
+
+    @property
+    def endpoint(self) -> str:
+        return self.session.base_url
+
+    def close(self) -> None:
+        self.session.close()
 
     def chat(
         self,
@@ -39,9 +45,11 @@ class OllamaProvider(LLMProvider):
     ) -> LLMResponse:
         response: LLMResponse | None = None
         error: str | None = None
+        error_kind: LLMErrorKind | None = None
         for chunk in self.chat_stream(messages, tools):
             if chunk.error:
                 error = chunk.error
+                error_kind = chunk.error_kind
             if chunk.response is not None:
                 response = chunk.response
         if response is not None:
@@ -51,11 +59,14 @@ class OllamaProvider(LLMProvider):
                     done=response.done,
                     model=response.model,
                     error=error,
+                    error_kind=error_kind,
+                    stop_reason=response.stop_reason,
                 )
             return response
         return LLMResponse(
             message=LLMMessage(role="assistant", content=""),
-            error=error or "Ollama returned no response.",
+            error=error or "LLM returned no response.",
+            error_kind=error_kind or LLMErrorKind.EMPTY,
         )
 
     def chat_stream(
@@ -76,104 +87,106 @@ class OllamaProvider(LLMProvider):
 
         accumulator = _StreamAccumulator()
         model: str | None = None
-        timeout = httpx.Timeout(
-            connect=10.0,
-            read=self.timeout,
-            write=10.0,
-            pool=10.0,
-        )
 
         try:
-            with httpx.Client(timeout=timeout) as client:
-                with client.stream(
-                    "POST",
-                    f"{self.host}/api/chat",
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    for line in response.iter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            yield StreamChunk(
-                                error="Malformed JSON chunk from Ollama.",
-                                done=True,
-                                response=LLMResponse(
-                                    message=LLMMessage(role="assistant", content=""),
-                                    error="Malformed JSON chunk from Ollama.",
-                                ),
-                            )
-                            return
+            with self.session.stream_post("/api/chat", payload) as response:
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        error = "Malformed JSON chunk from LLM."
+                        yield StreamChunk(
+                            error=error,
+                            error_kind=LLMErrorKind.PROTOCOL,
+                            done=True,
+                            response=LLMResponse(
+                                message=LLMMessage(role="assistant", content=""),
+                                error=error,
+                                error_kind=LLMErrorKind.PROTOCOL,
+                            ),
+                        )
+                        return
 
-                        model = data.get("model", model)
-                        message = data.get("message") or {}
-                        content_delta = message.get("content") or None
-                        if content_delta:
-                            accumulator.content += content_delta
+                    model = data.get("model", model)
+                    message = data.get("message") or {}
+                    content_delta = message.get("content") or None
+                    if content_delta:
+                        accumulator.content += content_delta
 
-                        for chunk in accumulator.feed_tool_calls(
-                            message.get("tool_calls") or []
-                        ):
-                            yield chunk
+                    for chunk in accumulator.feed_tool_calls(
+                        message.get("tool_calls") or []
+                    ):
+                        yield chunk
 
-                        if content_delta:
-                            yield StreamChunk(content_delta=content_delta)
+                    if content_delta:
+                        yield StreamChunk(content_delta=content_delta)
 
-                        if data.get("done"):
-                            llm_response = accumulator.build_response(
-                                model=model,
-                                stop_reason=data.get("done_reason"),
-                            )
-                            yield StreamChunk(done=True, response=llm_response)
-                            return
+                    if data.get("done"):
+                        llm_response = accumulator.build_response(
+                            model=model,
+                            stop_reason=data.get("done_reason"),
+                        )
+                        yield StreamChunk(done=True, response=llm_response)
+                        return
 
             if accumulator.has_content():
-                llm_response = accumulator.build_response(model=model)
+                error = "LLM stream ended before completion."
+                llm_response = accumulator.build_response(
+                    model=model,
+                    error=error,
+                    error_kind=LLMErrorKind.STREAM_INCOMPLETE,
+                )
                 yield StreamChunk(
                     done=True,
                     response=llm_response,
-                    error="Ollama stream ended before completion.",
+                    error=error,
+                    error_kind=LLMErrorKind.STREAM_INCOMPLETE,
                 )
                 return
 
+            error = "LLM stream ended with no data."
             yield StreamChunk(
                 done=True,
                 response=LLMResponse(
                     message=LLMMessage(role="assistant", content=""),
-                    error="Ollama stream ended with no data.",
+                    error=error,
+                    error_kind=LLMErrorKind.EMPTY,
                 ),
-                error="Ollama stream ended with no data.",
+                error=error,
+                error_kind=LLMErrorKind.EMPTY,
             )
-        except httpx.ConnectError:
-            error = "Ollama is unavailable. Check OLLAMA_HOST."
-            yield self._error_chunk(error, accumulator, model)
-        except httpx.HTTPStatusError as exc:
-            error = f"Ollama HTTP error: {exc.response.status_code}"
-            yield self._error_chunk(error, accumulator, model)
-        except httpx.TimeoutException:
-            error = "Ollama request timed out."
-            yield self._error_chunk(error, accumulator, model)
-        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.StreamError) as exc:
-            logger.warning("Ollama stream interrupted: %s", exc)
-            error = "Ollama stream was interrupted."
-            yield self._error_chunk(error, accumulator, model)
+        except LlmSessionError as exc:
+            if exc.kind == LLMErrorKind.STREAM_INTERRUPTED:
+                logger.warning("LLM stream interrupted: %s", exc)
+            yield self._error_chunk(exc.message, exc.kind, accumulator, model)
 
     def _error_chunk(
         self,
         error: str,
+        error_kind: LLMErrorKind,
         accumulator: _StreamAccumulator,
         model: str | None,
     ) -> StreamChunk:
         if accumulator.has_content():
-            response = accumulator.build_response(model=model, error=error)
+            response = accumulator.build_response(
+                model=model,
+                error=error,
+                error_kind=error_kind,
+            )
         else:
             response = LLMResponse(
                 message=LLMMessage(role="assistant", content=""),
                 error=error,
+                error_kind=error_kind,
             )
-        return StreamChunk(done=True, response=response, error=error)
+        return StreamChunk(
+            done=True,
+            response=response,
+            error=error,
+            error_kind=error_kind,
+        )
 
     def _options(self) -> dict:
         options: dict = {}
@@ -206,20 +219,30 @@ class OllamaProvider(LLMProvider):
             payload["name"] = message.name
         return payload
 
-    def healthcheck(self) -> tuple[bool, str]:
+    def healthcheck(self) -> LLMHealthcheck:
         try:
-            with httpx.Client(timeout=5.0) as client:
-                response = client.get(f"{self.host}/api/tags")
-                response.raise_for_status()
-                models = response.json().get("models", [])
-                names = {item.get("name") for item in models}
-                if self.model not in names and not any(
-                    name.startswith(f"{self.model}:") for name in names if name
-                ):
-                    return False, f"Model '{self.model}' not found in Ollama."
-                return True, "ok"
-        except httpx.HTTPError as exc:
-            return False, f"Ollama healthcheck failed: {exc}"
+            payload = self.session.get_json("/api/tags", timeout=5.0)
+        except LlmSessionError as exc:
+            return LLMHealthcheck(ok=False, message=exc.message, error_kind=exc.kind)
+
+        if not isinstance(payload, dict):
+            return LLMHealthcheck(
+                ok=False,
+                message="LLM healthcheck returned an unexpected payload.",
+                error_kind=LLMErrorKind.PROTOCOL,
+            )
+
+        models = payload.get("models", [])
+        names = {item.get("name") for item in models if isinstance(item, dict)}
+        if self.model not in names and not any(
+            name.startswith(f"{self.model}:") for name in names if name
+        ):
+            return LLMHealthcheck(
+                ok=False,
+                message=f"Model '{self.model}' not found at {self.endpoint}.",
+                error_kind=LLMErrorKind.MODEL_NOT_FOUND,
+            )
+        return LLMHealthcheck(ok=True, message="ok")
 
 
 class _ToolCallAccumulator:
@@ -309,6 +332,7 @@ class _StreamAccumulator:
         *,
         model: str | None = None,
         error: str | None = None,
+        error_kind: LLMErrorKind | None = None,
         stop_reason: str | None = None,
     ) -> LLMResponse:
         tool_calls = [item.to_tool_call() for item in self._tool_calls]
@@ -321,5 +345,6 @@ class _StreamAccumulator:
             done=True,
             model=model,
             error=error,
+            error_kind=error_kind,
             stop_reason=stop_reason,
         )
