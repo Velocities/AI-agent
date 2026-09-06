@@ -17,6 +17,7 @@ from ai_agent.llm.ssh_sandbox import (
     list_ssh_host_aliases,
     parse_keyscan_lines,
     parse_ssh_g,
+    scan_host_keys,
     remote_provider_env_values,
     upsert_env_values,
     write_sandbox_host_config,
@@ -38,10 +39,45 @@ def test_parse_and_append_known_hosts(tmp_path: Path) -> None:
     raw = "# comment\n192.168.1.10 ssh-ed25519 AAAA\n\n"
     lines = parse_keyscan_lines(raw)
     assert lines == ["192.168.1.10 ssh-ed25519 AAAA"]
+    kex_noise = (
+        "# 10.0.0.1:22 SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.18\n"
+        "choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com\n"
+    )
+    assert parse_keyscan_lines(kex_noise) == []
     known = tmp_path / "known_hosts"
     append_known_hosts(known, lines)
     append_known_hosts(known, lines)
     assert known.read_text(encoding="utf-8").count("ssh-ed25519") == 1
+
+
+def test_scan_host_keys_falls_back_to_ssh_when_keyscan_hits_kex_bug(
+    tmp_path: Path,
+) -> None:
+    keyscan_err = (
+        "# 10.0.0.1:22 SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.18\n"
+        "choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com\n"
+    )
+    recorded = tmp_path / "written"
+
+    def fake_run(argv, **kwargs):
+        result = MagicMock()
+        result.stdout = ""
+        result.stderr = keyscan_err
+        if argv and argv[0] == "ssh-keyscan":
+            return result
+        known = None
+        for item in argv:
+            if item.startswith("UserKnownHostsFile="):
+                known = Path(item.split("=", 1)[1])
+        if known is not None:
+            known.write_text("10.0.0.1 ssh-ed25519 AAAATEST\n", encoding="utf-8")
+            recorded.write_text(str(known), encoding="utf-8")
+        result.stderr = "Permission denied (publickey).\n"
+        return result
+
+    with patch("ai_agent.llm.ssh_sandbox.subprocess.run", side_effect=fake_run):
+        lines = scan_host_keys("10.0.0.1", 22, user="ai")
+    assert lines == ["10.0.0.1 ssh-ed25519 AAAATEST"]
 
 
 def test_list_ssh_host_aliases_skips_wildcards(tmp_path: Path) -> None:

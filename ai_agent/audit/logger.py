@@ -29,6 +29,7 @@ class AuditRecord:
     error: str | None
     stdout_preview: str | None = None
     stderr_preview: str | None = None
+    execution_target: str | None = None
 
 
 class AuditLogger:
@@ -48,6 +49,7 @@ class AuditLogger:
         confirmation_granted: bool | None,
         result: dict | None = None,
         error: str | None = None,
+        execution_target: str | None = None,
     ) -> None:
         record = AuditRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -66,6 +68,8 @@ class AuditLogger:
             error=error,
             stdout_preview=(result or {}).get("stdout", "")[:500] or None,
             stderr_preview=(result or {}).get("stderr", "")[:500] or None,
+            execution_target=execution_target
+            or _target_from_result(result),
         )
         payload = asdict(record)
         redacted = self._redact(payload)
@@ -90,3 +94,14 @@ class AuditLogger:
                 return [scrub(item) for item in value]
             return value
         return scrub(payload)
+
+
+def _target_from_result(result: dict | None) -> str | None:
+    if not result:
+        return None
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get("execution_target")
+        if isinstance(value, str):
+            return value
+    return None

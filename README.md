@@ -38,7 +38,7 @@ Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
     |
     +--> Approval UX (confirm / batch preview / session grants)
     |
-    +--> Executor (local argv; independent of the LLM host)
+    +--> Execution targets (local / SSH / Docker; independent of the LLM host)
     |
     +--> Audit Logger
     |
@@ -46,7 +46,7 @@ Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
 Linux (permissions of `ai` user)
 ```
 
-The agent and the model do not have to share a machine. Set `OLLAMA_HOST` to any reachable Ollama HTTP URL. Command execution stays on the agent host and is not tied to that URL.
+The agent and the model do not have to share a machine. Set `OLLAMA_HOST` to any reachable Ollama HTTP URL. Command execution uses named **execution targets** (this machine, SSH hosts, or Docker containers) and is not tied to that URL.
 
 ### Responsibilities stay separate
 
@@ -267,6 +267,8 @@ See [`.env.example`](.env.example):
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
+| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
 
 ---
 
@@ -293,7 +295,7 @@ OLLAMA_HOST=http://home-server:11434
 
 On the Ollama machine, bind beyond loopback if clients are remote (for example `OLLAMA_HOST=0.0.0.0` in Ollama's environment — that is Ollama's own setting, not this project's). Restrict that port with a firewall. The API is unauthenticated HTTP; do not expose it to the internet.
 
-Command execution does not use `OLLAMA_HOST`. A future SSH execution target will be a separate config.
+Command execution does not use `OLLAMA_HOST`. See [Execution targets](#execution-targets).
 
 ### SSH remote provider
 
@@ -529,6 +531,7 @@ ai_agent/
   audit/          # Audit logging
   cli/            # Terminal (`ai-agent`, `config`, `host-setup`, `ai-agent-llm`)
   commands/       # CommandExpr AST, render, executor
+  execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # Provider, session, Ollama, facade, SSH sandbox/tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
 tests/
@@ -536,9 +539,30 @@ tests/
 
 ---
 
+## Execution targets
+
+Approved commands run on a **named target** from configuration. The model picks a name such as `local` or `home-server`. It cannot supply a hostname, SSH key, or container ID.
+
+| Type | Meaning |
+|------|---------|
+| `local` | This machine (always present). The usual default when the model omits `target`. |
+| `ssh` | Remote host. One generated ed25519 key per target under `.ai-agent/execution-targets/<name>/`. |
+| `docker` | `docker exec` into a configured container. |
+
+This is separate from where the LLM runs (`OLLAMA_HOST` / `remote-provider`).
+
+```bat
+ai-agent config execution-target
+ai-agent config execution-target list
+ai-agent config execution-target trust home-server
+```
+
+The wizard can reuse **host / user / port** from `~/.ssh/config`, then generates a **new** key for the agent. Existing personal keys are not copied and are not used at runtime.
+
+SSH public keys belong in the remote user's `authorized_keys`. Host keys are stored per target (not in `~/.ssh`).
+
 ## Roadmap (not yet implemented)
 
-- Remote command execution (`ExecutionBackend` / named targets)
 - Web UI with the same approval token model
 - AppArmor / Landlock profiles
 - OS-level network restrictions for `ai` user

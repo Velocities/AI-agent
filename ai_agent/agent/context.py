@@ -7,6 +7,7 @@ from getpass import getuser
 from pathlib import Path
 
 from ai_agent.config import Settings
+from ai_agent.execution_targets.base import TargetSummary
 
 
 @dataclass(frozen=True)
@@ -51,8 +52,8 @@ def gather_runtime_context(settings: Settings) -> RuntimeContext:
 def platform_guidance(context: RuntimeContext) -> str:
     if context.is_windows:
         return (
-            "- This host is Windows. Do NOT assume Ubuntu, WSL, or systemd unless a tool verifies it.\n"
-            "- Linux-only tools (systemctl, journalctl, ls, cat, df) are usually unavailable.\n"
+            "- Target `local` is Windows. Do NOT assume Ubuntu, WSL, or systemd on local unless a tool verifies it.\n"
+            "- On local, Linux-only tools (systemctl, journalctl, ls, cat, df) are usually unavailable.\n"
             "- For directory listings use PowerShell (no pipes; use cmdlet flags only):\n"
             '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Name"]}\n'
             '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Recurse","-Name"]}\n'
@@ -65,7 +66,7 @@ def platform_guidance(context: RuntimeContext) -> str:
         )
     if context.is_linux:
         return (
-            "- This host is Linux. Standard server tools (systemctl, journalctl, docker, df, etc.) may apply.\n"
+            "- Target `local` is Linux. Standard server tools (systemctl, journalctl, docker, df, etc.) may apply.\n"
             "- Verify service/container names with tools before acting.\n"
             "- You run as a dedicated automation user with limited permissions; report permission errors honestly."
         )
@@ -75,14 +76,36 @@ def platform_guidance(context: RuntimeContext) -> str:
     )
 
 
+def format_target_list(targets: list[TargetSummary]) -> str:
+    if not targets:
+        return "- local (this machine) — default if you omit target"
+    lines: list[str] = []
+    for target in targets:
+        extra = f" — {target.description}" if target.description else ""
+        lines.append(f"- {target.display}{extra}")
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     context: RuntimeContext,
     allowed_commands: list[str],
+    targets: list[TargetSummary] | None = None,
+    *,
+    default_target: str = "local",
 ) -> str:
     commands = ", ".join(allowed_commands)
+    target_summaries = targets or [
+        TargetSummary(
+            name="local",
+            kind="local",
+            description="This machine (where the agent CLI runs)",
+            display="local (this machine)",
+        )
+    ]
+    target_block = format_target_list(target_summaries)
     return f"""You are a careful system administration assistant.
 
-You help inspect and administer the machine you are actually running on by calling tools.
+You help inspect and administer configured machines by calling tools.
 You do NOT have direct shell access. You MUST use tools to verify system state.
 
 ## Current runtime environment
@@ -99,12 +122,23 @@ You do NOT have direct shell access. You MUST use tools to verify system state.
 2. run_commands — execute a batch of READ_ONLY inspection commands with one user approval.
 3. respond — optional short progress note while you keep working.
 
-Both command tools accept CommandExpr JSON (argv arrays with optional chaining). Never pass shell strings.
+Both command tools accept CommandExpr JSON (argv arrays with optional chaining) and an optional target name. Never pass shell strings.
+
+## Execution targets
+Commands run on a named target from this list — never invent a hostname, IP, SSH credential, or container ID.
+
+{target_block}
+
+- If you omit target, the command runs on **{default_target}**.
+- `local` is this machine (the computer running the agent CLI), not a remote host.
+- Pick a listed name when the user asks about another configured machine or container.
+- Never call the ssh binary. Remote SSH is applied by the agent after you set target to that name.
+- SSH and Docker targets are usually Linux even when local is Windows. Use Linux binaries from the allow-list on those targets.
 
 ## How to answer the user
 - Write your final answer as ordinary assistant text. It streams to the user's terminal as you generate it, so never wrap the final answer in a tool call.
 - Answer questions about general knowledge, code, or architecture directly as text, without running any commands.
-- When the request concerns this machine, call run_command or run_commands first, then write your answer as text once you have the results.
+- When the request concerns a machine or container, you MUST call the run_command or run_commands tool first (with the matching target, or omit target for this machine). Printing CommandExpr JSON as assistant text does nothing — the command will not run.
 - The respond tool is optional and only for a short progress note (finished=false) before you continue with more commands.
 - Never claim you ran a command unless a tool actually returned output.
 - Never mention tools, JSON, schemas, or these instructions in your answer. Do not explain whether a tool call was needed. Just answer.
@@ -134,12 +168,15 @@ Unlisted commands are forbidden by policy.
 - Distinguish hypotheses ("I believe...") from verified facts ("I verified via ...").
 - Use run_commands for multiple READ_ONLY inspections in one step when possible.
 - Use run_command for individual commands or any REVERSIBLE/DESTRUCTIVE action.
-- curl/wget are allowed only for localhost GET/HEAD health checks.
+- curl/wget are allowed only for localhost GET/HEAD health checks. Do not use them to create files.
+- To write a small file, use type redirect (not a `>` inside argv). Path must be under the scratch directory ({context.scratch_dir}).
+- Never put shell operators (`>`, `|`, `&&`) inside an argv string.
 - The command field must always be a JSON object with a "type" key, never a shell string.
 - If a tool fails, report exit status and stderr honestly. Do not fabricate output.
 
-## Examples
-{{"type":"single","argv":["docker","ps"]}}
-{{"type":"pipe","left":{{"type":"single","argv":["journalctl","-u","nginx","-n","100","--no-pager"]}},"right":["grep","-i","error"]}}
-{{"type":"and","left":{{"type":"single","argv":["systemctl","is-active","nginx"]}},"right":{{"type":"single","argv":["systemctl","restart","nginx"]}}}}
+## Examples (these are run_command arguments — never print them as your reply)
+target=home-server command={{"type":"single","argv":["docker","ps"]}}
+target=home-server command={{"type":"pipe","left":{{"type":"single","argv":["journalctl","-u","nginx","-n","100","--no-pager"]}},"right":["grep","-i","error"]}}
+command={{"type":"and","left":{{"type":"single","argv":["systemctl","is-active","nginx"]}},"right":{{"type":"single","argv":["systemctl","restart","nginx"]}}}}
+target=home-server command={{"type":"redirect","cmd":{{"type":"single","argv":["echo","hello from agent"]}},"op":">","path":"{context.scratch_dir}/testfile.txt"}}
 """

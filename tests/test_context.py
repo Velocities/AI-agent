@@ -35,6 +35,11 @@ def test_system_prompt_includes_runtime_platform() -> None:
     assert "docker, cat, grep" in prompt
     assert "Do NOT assume Ubuntu" in prompt
     assert "use tools first" in prompt.lower()
+    assert "omit target" in prompt
+    assert "local (this machine)" in prompt
+    assert "never invent a hostname" in prompt.lower()
+    assert "Never call the ssh binary" in prompt
+    assert "never print them" in prompt.lower() or "MUST call" in prompt
 
 
 def test_platform_guidance_linux() -> None:
@@ -54,6 +59,7 @@ def test_platform_guidance_linux() -> None:
     guidance = platform_guidance(context)
     assert "Linux" in guidance
     assert "systemctl" in guidance
+    assert "local" in guidance
 
 
 def test_gather_runtime_context_uses_current_environment() -> None:

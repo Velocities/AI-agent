@@ -11,6 +11,10 @@ def test_config_show_prints_transport() -> None:
     assert config_main(["show"]) == 0
 
 
+def test_execution_target_list() -> None:
+    assert config_main(["execution-target", "list"]) == 0
+
+
 def test_copy_warning_mentions_sandbox() -> None:
     assert ".ai-agent/ssh" in COPY_WARNING
     assert "copy" in COPY_WARNING.lower()
