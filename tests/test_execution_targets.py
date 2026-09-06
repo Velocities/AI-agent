@@ -125,6 +125,19 @@ def test_docker_target_execs_single_without_shell() -> None:
     assert result.metadata["execution_target"] == "web"
 
 
+def test_docker_target_execs_as_configured_user() -> None:
+    captured: list[list[str]] = []
+    target = DockerExecutionTarget(
+        name="web",
+        container="nginx",
+        executor=_fake_executor(captured),
+        user="root",
+    )
+    target.run(parse_command_expr({"type": "single", "argv": ["whoami"]}))
+    assert captured[0] == ["docker", "exec", "-i", "-u", "root", "nginx", "whoami"]
+    assert target.display() == "web (docker:nginx as root)"
+
+
 def test_docker_target_uses_sh_c_for_pipes() -> None:
     captured: list[list[str]] = []
     target = DockerExecutionTarget(
@@ -170,7 +183,11 @@ def test_load_yaml_and_router(tmp_path: Path) -> None:
                         "identity_file": str(identity),
                         "known_hosts": str(known),
                     },
-                    "web": {"type": "docker", "container": "nginx"},
+                    "web": {
+                        "type": "docker",
+                        "container": "nginx",
+                        "user": "root",
+                    },
                 },
             }
         ),
@@ -181,7 +198,8 @@ def test_load_yaml_and_router(tmp_path: Path) -> None:
     assert set(router.names()) == {"local", "home-server", "web"}
     assert isinstance(router.resolve("local"), LocalExecutionTarget)
     assert router.resolve("home-server").display().startswith("home-server (ssh://")
-    assert router.resolve("web").display() == "web (docker:nginx)"
+    assert router.resolve("web").display() == "web (docker:nginx as root)"
+    assert router.resolve("web").user == "root"
 
 
 def test_file_default_target_is_honored(tmp_path: Path) -> None:

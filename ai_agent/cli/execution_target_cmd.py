@@ -43,6 +43,8 @@ def cmd_list(console: Console, settings: Settings) -> int:
             extra = f" ssh://{record.user}@{record.host}:{record.port}"
         elif record.type == "docker":
             extra = f" docker:{record.container}"
+            if record.user:
+                extra += f" as {record.user}"
         desc = f" — {record.description}" if record.description else ""
         console.print(f"  - {name} ({record.type}){extra}{desc}")
     if not path.is_file():
@@ -246,12 +248,23 @@ def _wizard_docker(console: Console, description: str) -> DockerTargetRecord | N
     if not container:
         console.print("[red]Container is required.[/red]")
         return None
+    console.print(
+        "\nExisting images often have no sudo, or sudo that asks for a password.\n"
+        "The agent uses [bold]docker exec -u[/bold] instead, so it does not need\n"
+        "sudo inside the container."
+    )
+    user = _prompt(
+        console,
+        "Linux user inside the container (root = full control, empty = image USER)",
+        default="root",
+    )
     docker_bin = _prompt(console, "Docker binary", default="docker")
     return DockerTargetRecord(
         type="docker",
         description=description,
         container=container,
         docker_bin=docker_bin or "docker",
+        user=user,
     )
 
 

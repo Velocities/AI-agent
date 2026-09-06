@@ -112,5 +112,6 @@ def _build_target(name: str, record, executor: CommandExecutor) -> ExecutionTarg
             executor=executor,
             description=record.description,
             docker_bin=record.docker_bin,
+            user=record.user,
         )
     raise TargetConfigError(f"Unsupported target record: {type(record)!r}")

@@ -547,7 +547,7 @@ Approved commands run on a **named target** from configuration. The model picks 
 |------|---------|
 | `local` | This machine (always present). The usual default when the model omits `target`. |
 | `ssh` | Remote host. One generated ed25519 key per target under `.ai-agent/execution-targets/<name>/`. |
-| `docker` | `docker exec` into a configured container. |
+| `docker` | `docker exec` into an existing container. Optional `user` (wizard default `root`) maps to `docker exec -u`, so you do not need sudo or a password inside the image. |
 
 This is separate from where the LLM runs (`OLLAMA_HOST` / `remote-provider`).
 

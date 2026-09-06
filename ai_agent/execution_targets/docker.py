@@ -18,29 +18,34 @@ class DockerExecutionTarget(ExecutionTarget):
         executor: CommandExecutor,
         description: str = "",
         docker_bin: str = "docker",
+        user: str = "",
     ):
         self.name = name
         self.description = description
         self.container = container
         self.docker_bin = docker_bin
+        self.user = user.strip()
         self._executor = executor
 
     def display(self) -> str:
+        if self.user:
+            return f"{self.name} (docker:{self.container} as {self.user})"
         return f"{self.name} (docker:{self.container})"
+
+    def _exec_prefix(self, *, cwd: str | None = None) -> list[str]:
+        argv = [self.docker_bin, "exec", "-i"]
+        if self.user:
+            argv.extend(["-u", self.user])
+        if cwd:
+            argv.extend(["-w", cwd])
+        argv.append(self.container)
+        return argv
 
     def docker_argv(self, expr: CommandExpr) -> list[str]:
         if isinstance(expr, SingleCommand):
-            argv = [self.docker_bin, "exec", "-i"]
-            if expr.cwd:
-                argv.extend(["-w", expr.cwd])
-            argv.append(self.container)
-            argv.extend(expr.argv)
-            return argv
+            return [*self._exec_prefix(cwd=expr.cwd), *expr.argv]
         return [
-            self.docker_bin,
-            "exec",
-            "-i",
-            self.container,
+            *self._exec_prefix(),
             "/bin/sh",
             "-c",
             render_posix_script(expr),
@@ -49,5 +54,9 @@ class DockerExecutionTarget(ExecutionTarget):
     def run(self, expr: CommandExpr) -> CommandResult:
         result = self._executor.run(SingleCommand(argv=self.docker_argv(expr)))
         result.rendered = render_command(expr)
-        result.metadata = {**(result.metadata or {}), "execution_target": self.name}
+        result.metadata = {
+            **(result.metadata or {}),
+            "execution_target": self.name,
+            "docker_user": self.user or "container-default",
+        }
         return result

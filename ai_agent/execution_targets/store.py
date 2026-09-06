@@ -42,6 +42,7 @@ class DockerTargetRecord(BaseModel):
     description: str = ""
     container: str
     docker_bin: str = "docker"
+    user: str = ""
 
     @field_validator("container")
     @classmethod
@@ -176,12 +177,15 @@ def _record_to_yaml(name: str, record: TargetRecord, base: Path) -> dict[str, An
             "identity_file": _rel_or_posix(record.identity_file, base),
             "known_hosts": _rel_or_posix(known, base),
         }
-    return {
+    payload = {
         "type": "docker",
         "description": record.description,
         "container": record.container,
         "docker_bin": record.docker_bin,
     }
+    if record.user:
+        payload["user"] = record.user
+    return payload
 
 
 def _rel_or_posix(path: Path, base: Path) -> str:
