@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from getpass import getuser
 from pathlib import Path
@@ -15,6 +16,8 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
+from ai_agent.execution_targets.router import load_router
+from ai_agent.execution_targets.store import TargetConfigError
 from ai_agent.llm import create_llm_provider
 from ai_agent.llm.streaming import sanitize_terminal_text
 from ai_agent.policy.engine import PolicyEngine
@@ -70,6 +73,15 @@ def build_agent(console: Console | None = None) -> AgentLoop:
         output_limit=settings.agent_output_limit,
         scratch_dir=settings.agent_scratch_dir,
     )
+    try:
+        router = load_router(
+            executor,
+            settings.agent_execution_targets_file,
+            default_override=os.environ.get("AGENT_DEFAULT_TARGET"),
+        )
+    except TargetConfigError as exc:
+        console.print(f"[red]Invalid execution target config:[/red] {exc}")
+        raise
     audit_path = Path(settings.agent_audit_log) if settings.agent_audit_log else None
     audit = AuditLogger(log_path=audit_path, user=getuser())
     session = ApprovalSession()
@@ -84,6 +96,7 @@ def build_agent(console: Console | None = None) -> AgentLoop:
         audit=audit,
         prompter=prompter,
         session=session,
+        router=router,
     )
 
 
@@ -171,6 +184,11 @@ def run_repl() -> int:
     console.print(
         f"Model: {settings.ollama_model} @ {agent.llm.endpoint or settings.ollama_host} | "
         f"Confirmation: {settings.agent_confirmation_mode.value}"
+    )
+    target_names = ", ".join(agent.router.names())
+    console.print(
+        f"Execution targets: {target_names} "
+        f"(default: {agent.router.default_name})"
     )
     console.print("Type 'exit' or 'quit' to leave.\n")
 

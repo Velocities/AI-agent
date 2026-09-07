@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent.agent.loop import AgentLoop
-from ai_agent.agent.tools import CONTINUE_NUDGE
+from ai_agent.agent.tools import COMMAND_DUMP_NUDGE, CONTINUE_NUDGE
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -214,6 +214,22 @@ def test_respond_finished_false_continues(agent_parts) -> None:
     result = agent.run("explain something")
     assert result.final_message == "Complete answer."
     assert llm.chat.call_count == 2
+
+
+def test_dumped_command_json_is_nudged_to_use_the_tool(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    dumped = (
+        '{"type":"redirect","cmd":{"type":"single","argv":["echo","hi"]},'
+        '"op":">","path":"/tmp/test.txt"}'
+    )
+    llm.chat.side_effect = [
+        LLMResponse(message=LLMMessage(role="assistant", content=dumped)),
+        LLMResponse(message=LLMMessage(role="assistant", content="Will use the tool.")),
+    ]
+    result = agent.run("write a file on home-server")
+    assert result.final_message == "Will use the tool."
+    assert llm.chat.call_count == 2
+    assert agent.messages[-2].content == COMMAND_DUMP_NUDGE
 
 
 def test_plain_text_is_the_final_answer(agent_parts) -> None:

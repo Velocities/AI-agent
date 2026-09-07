@@ -106,6 +106,29 @@ def test_and_chain_risk_is_max(policy_engine: PolicyEngine) -> None:
     assert decision.effective_risk == RiskLevel.REVERSIBLE
 
 
+def test_echo_redirect_into_scratch_is_reversible(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    engine = PolicyEngine.from_yaml(Settings().policy_path(), scratch)
+    expr = parse_command_expr(
+        {
+            "type": "redirect",
+            "cmd": {"type": "single", "argv": ["echo", "hello from agent"]},
+            "op": ">",
+            "path": str(scratch / "testfile.txt"),
+        }
+    )
+    decision = engine.evaluate(expr)
+    assert decision.allowed
+    assert decision.effective_risk == RiskLevel.REVERSIBLE
+
+
+def test_echo_alone_is_read_only(policy_engine: PolicyEngine) -> None:
+    expr = parse_command_expr({"type": "single", "argv": ["echo", "hello"]})
+    decision = policy_engine.evaluate(expr)
+    assert decision.allowed
+    assert decision.effective_risk == RiskLevel.READ_ONLY
+
+
 def test_redirect_outside_scratch_forbidden(policy_engine: PolicyEngine, tmp_path: Path) -> None:
     engine = PolicyEngine.from_yaml(Settings().policy_path(), tmp_path / "scratch")
     expr = parse_command_expr(

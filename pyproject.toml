@@ -34,3 +34,6 @@ include = ["ai_agent*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "docker: live Docker daemon tests (skipped if docker is unavailable)",
+]

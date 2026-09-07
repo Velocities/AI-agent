@@ -14,6 +14,7 @@ class PendingCommand:
     expr: object
     decision: PolicyDecision
     reason: str | None = None
+    target_display: str | None = None
 
 
 @dataclass
@@ -44,16 +45,19 @@ class ApprovalPrompter:
         decision: PolicyDecision,
         *,
         reason: str | None = None,
+        target_display: str | None = None,
     ) -> ApprovalResult:
         if not decision.allowed:
-            self._print_header(decision, reason=reason)
+            self._print_header(
+                decision, reason=reason, target_display=target_display
+            )
             self.console.print("[red]This command is forbidden by policy.[/red]")
             return ApprovalResult(approved=False)
 
         if self.should_auto_run(decision):
             return ApprovalResult(approved=True)
 
-        self._print_header(decision, reason=reason)
+        self._print_header(decision, reason=reason, target_display=target_display)
         return self._prompt_yes_no(decision)
 
     def prompt_batch(self, pending: list[PendingCommand]) -> ApprovalResult:
@@ -64,7 +68,9 @@ class ApprovalPrompter:
         if forbidden:
             self.console.print("[red]Batch contains forbidden commands; rejected.[/red]")
             for item in forbidden:
-                self.console.print(f"  - {render_command(item.expr)}")
+                self.console.print(
+                    f"  - {render_command(item.expr)}{_target_suffix(item)}"
+                )
                 self.console.print(f"    Reason: {item.decision.reason}")
             return ApprovalResult(approved=False)
 
@@ -79,7 +85,11 @@ class ApprovalPrompter:
                 "falling back to individual approval.[/yellow]"
             )
             for item in non_read_only:
-                result = self.prompt_single(item.decision, reason=item.reason)
+                result = self.prompt_single(
+                    item.decision,
+                    reason=item.reason,
+                    target_display=item.target_display,
+                )
                 if not result.approved:
                     return ApprovalResult(approved=False)
             return ApprovalResult(approved=True)
@@ -89,7 +99,8 @@ class ApprovalPrompter:
             for index, item in enumerate(pending, start=1):
                 self.console.print(
                     f"  {index}. {render_command(item.expr)}  "
-                    f"[dim][{item.decision.effective_risk.label()}][/dim]"
+                    f"[dim][{item.decision.effective_risk.label()}]"
+                    f"{_target_suffix(item)}[/dim]"
                 )
             response = input("\nProceed with batch? (y/n/a) ").strip().lower()
             if response in {"a", "allow"}:
@@ -109,14 +120,22 @@ class ApprovalPrompter:
         for index, item in enumerate(pending, start=1):
             self.console.print(
                 f"  {index}. {render_command(item.expr)}  "
-                f"[{item.decision.effective_risk.label()}]"
+                f"[{item.decision.effective_risk.label()}]{_target_suffix(item)}"
             )
         response = input("\nProceed with batch? (y/n) ").strip().lower()
         return ApprovalResult(approved=response in {"y", "yes"})
 
-    def _print_header(self, decision: PolicyDecision, *, reason: str | None) -> None:
+    def _print_header(
+        self,
+        decision: PolicyDecision,
+        *,
+        reason: str | None,
+        target_display: str | None = None,
+    ) -> None:
         self.console.print("\n[bold]AI wants to execute:[/bold]")
         self.console.print(f"  {render_command(decision.expr)}")
+        if target_display:
+            self.console.print(f"  Target: {target_display}")
         self.console.print(f"  Risk: [bold]{decision.effective_risk.label()}[/bold]")
         if reason:
             self.console.print(f"  Reason: {reason}")
@@ -140,3 +159,9 @@ class ApprovalPrompter:
                 self.session.enable_read_only_auto()
                 return ApprovalResult(approved=True, grant_scope="read_only_session")
         return ApprovalResult(approved=response in {"y", "yes"})
+
+
+def _target_suffix(item: PendingCommand) -> str:
+    if not item.target_display:
+        return ""
+    return f"  [{item.target_display}]"

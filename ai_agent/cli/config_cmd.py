@@ -73,7 +73,9 @@ def _trust_host_key(console: Console, settings: Settings) -> bool:
         "(this is the GPU PC's sshd key, not Ollama)."
     )
     try:
-        entries = scan_host_keys(resolved.hostname, resolved.port)
+        entries = scan_host_keys(
+            resolved.hostname, resolved.port, user=resolved.user
+        )
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         return False
@@ -275,6 +277,21 @@ def main(argv: list[str] | None = None) -> int:
         help="test the tunnel, switch .env back to local HTTP, or trust the SSH host key.",
     )
     sub.add_parser("show", help="Print the current LLM transport settings.")
+    targets = sub.add_parser(
+        "execution-target",
+        help="Add or list named command-execution targets (local / ssh / docker).",
+    )
+    targets.add_argument(
+        "action",
+        nargs="?",
+        choices=["add", "list", "show", "wizard", "trust"],
+        help="add (default) walks through creating a target; list shows names; trust fetches an SSH host key.",
+    )
+    targets.add_argument(
+        "target_name",
+        nargs="?",
+        help="SSH target name for the trust action.",
+    )
 
     args = parser.parse_args(argv)
     console = Console()
@@ -302,5 +319,12 @@ def main(argv: list[str] | None = None) -> int:
             sandbox=sandbox,
             user_ssh_config=user_config,
         )
+    if args.command == "execution-target":
+        from ai_agent.cli.execution_target_cmd import main as targets_main
+
+        forwarded = [args.action or "add"]
+        if getattr(args, "target_name", None):
+            forwarded.append(args.target_name)
+        return targets_main(forwarded)
     parser.print_help()
     return 0

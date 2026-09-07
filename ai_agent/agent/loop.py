@@ -6,7 +6,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
-from ai_agent.agent.tools import CONTINUE_NUDGE, SCHEMA_NUDGE, TOOL_DEFINITIONS
+from ai_agent.agent.tools import (
+    COMMAND_DUMP_NUDGE,
+    CONTINUE_NUDGE,
+    SCHEMA_NUDGE,
+    build_tool_definitions,
+    looks_like_command_dump,
+)
 from ai_agent.agent.warmup import warmup_llm
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
@@ -14,6 +20,8 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
+from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
+from ai_agent.execution_targets.router import ExecutionTargetRouter
 from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMProvider, LLMResponse, ToolCall
 from ai_agent.llm.streaming import (
     RespondMessageStreamer,
@@ -51,23 +59,35 @@ class AgentLoop:
         audit: AuditLogger,
         prompter: ApprovalPrompter,
         session: ApprovalSession,
+        router: ExecutionTargetRouter | None = None,
     ):
         self.settings = settings
         self.llm = llm
         self.policy = policy
         self.executor = executor
+        self.router = router or ExecutionTargetRouter.local_only(executor)
         self.audit = audit
         self.prompter = prompter
         self.session = session
+        self.tool_definitions = build_tool_definitions(self.router.names())
         runtime = gather_runtime_context(settings)
-        system_prompt = build_system_prompt(runtime, policy.allowed_binaries())
+        system_prompt = build_system_prompt(
+            runtime,
+            policy.allowed_binaries(),
+            self.router.summaries(),
+            default_target=self.router.default_name,
+        )
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)
         ]
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
-        return warmup_llm(self.llm, self.messages[0].content)
+        return warmup_llm(
+            self.llm,
+            self.messages[0].content,
+            tools=self.tool_definitions,
+        )
 
     def run(
         self,
@@ -106,6 +126,12 @@ class AgentLoop:
 
             if not assistant.tool_calls:
                 answer = (assistant.content or "").strip()
+                if answer and looks_like_command_dump(answer):
+                    if iteration < self.settings.agent_max_iterations:
+                        self.messages.append(
+                            LLMMessage(role="user", content=COMMAND_DUMP_NUDGE)
+                        )
+                        continue
                 if answer:
                     return AgentRunResult(
                         final_message=answer,
@@ -174,7 +200,7 @@ class AgentLoop:
                     resume_tail=resume_tail,
                 )
             else:
-                response = self.llm.chat(messages, tools=TOOL_DEFINITIONS)
+                response = self.llm.chat(messages, tools=self.tool_definitions)
 
             content = response.message.content or ""
             if resume_tail:
@@ -236,7 +262,7 @@ class AgentLoop:
             if visible:
                 stream_callback(visible)
 
-        for chunk in self.llm.chat_stream(messages, tools=TOOL_DEFINITIONS):
+        for chunk in self.llm.chat_stream(messages, tools=self.tool_definitions):
             if chunk.content_delta:
                 emit(chunk.content_delta)
                 streamed_content += chunk.content_delta
@@ -377,7 +403,7 @@ class AgentLoop:
 
     def _handle_batch_tool_calls(self, tool_calls: list[ToolCall]) -> list[LLMMessage]:
         pending: list[PendingCommand] = []
-        call_map: list[tuple[ToolCall, object]] = []
+        call_map: list[tuple[ToolCall, object, str, ExecutionTarget | None]] = []
 
         for call in tool_calls:
             if call.name == "run_commands":
@@ -389,19 +415,30 @@ class AgentLoop:
                         expr = parse_command_expr(command_data)
                     except Exception:
                         return [self._handle_tool_call(item) for item in tool_calls]
+                    target_name, target, target_error = self._resolve_target(
+                        call.arguments
+                    )
+                    if target_error:
+                        return [self._handle_tool_call(item) for item in tool_calls]
                     decision = self.policy.evaluate(expr)
                     pending.append(
                         PendingCommand(
                             expr=expr,
                             decision=decision,
                             reason=call.arguments.get("reason"),
+                            target_display=target.display() if target else None,
                         )
                     )
-                    call_map.append((call, expr))
+                    call_map.append((call, expr, target_name, target))
             elif call.name == "run_command":
                 try:
                     expr = parse_command_expr(call.arguments.get("command", {}))
                 except Exception:
+                    return [self._handle_tool_call(item) for item in tool_calls]
+                target_name, target, target_error = self._resolve_target(
+                    call.arguments
+                )
+                if target_error:
                     return [self._handle_tool_call(item) for item in tool_calls]
                 decision = self.policy.evaluate(expr)
                 pending.append(
@@ -409,9 +446,10 @@ class AgentLoop:
                         expr=expr,
                         decision=decision,
                         reason=call.arguments.get("reason"),
+                        target_display=target.display() if target else None,
                     )
                 )
-                call_map.append((call, expr))
+                call_map.append((call, expr, target_name, target))
 
         if any(item.decision.effective_risk != RiskLevel.READ_ONLY for item in pending):
             results: list[LLMMessage] = []
@@ -421,13 +459,17 @@ class AgentLoop:
 
         approval = self.prompter.prompt_batch(pending)
         results: list[LLMMessage] = []
-        for (call, expr), item in zip(call_map, pending, strict=True):
+        for (call, expr, target_name, target), item in zip(
+            call_map, pending, strict=True
+        ):
             result_payload = self._execute_with_audit(
                 tool_name=call.name,
                 arguments=call.arguments,
                 expr=expr,
                 decision=item.decision,
                 approved=approval.approved,
+                target_name=target_name,
+                target=target,
             )
             results.append(
                 LLMMessage(
@@ -456,6 +498,15 @@ class AgentLoop:
 
             parsed: list[object | str] = []
             pending = []
+            target_name, target, target_error = self._resolve_target(call.arguments)
+            if target_error:
+                payload = {"success": False, "error": target_error}
+                return LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                )
             for command_data in commands:
                 try:
                     expr = parse_command_expr(command_data)
@@ -468,6 +519,7 @@ class AgentLoop:
                         expr=expr,
                         decision=self.policy.evaluate(expr),
                         reason=call.arguments.get("reason"),
+                        target_display=target.display() if target else None,
                     )
                 )
 
@@ -486,6 +538,8 @@ class AgentLoop:
                         expr=item,
                         decision=pending_item.decision,
                         approved=approval.approved if approval else False,
+                        target_name=target_name,
+                        target=target,
                     )
                 )
             return LLMMessage(
@@ -507,6 +561,16 @@ class AgentLoop:
                     tool_call_id=call.id,
                 )
 
+            target_name, target, target_error = self._resolve_target(call.arguments)
+            if target_error:
+                payload = {"success": False, "error": target_error}
+                return LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                )
+
             decision = self.policy.evaluate(expr)
             auto = self.prompter.should_auto_run(decision)
             if auto:
@@ -515,6 +579,7 @@ class AgentLoop:
                 approval = self.prompter.prompt_single(
                     decision,
                     reason=call.arguments.get("reason"),
+                    target_display=target.display() if target else None,
                 )
                 approval_granted = approval.approved
 
@@ -524,6 +589,8 @@ class AgentLoop:
                 expr=expr,
                 decision=decision,
                 approved=approval_granted,
+                target_name=target_name,
+                target=target,
             )
             return LLMMessage(
                 role="tool",
@@ -540,6 +607,21 @@ class AgentLoop:
             tool_call_id=call.id,
         )
 
+    def _resolve_target(
+        self, arguments: dict
+    ) -> tuple[str, ExecutionTarget | None, str | None]:
+        raw = arguments.get("target")
+        if raw is None or raw == "":
+            name = self.router.default_name
+        elif not isinstance(raw, str):
+            return "", None, "target must be a configured name (string)"
+        else:
+            name = raw
+        try:
+            return name, self.router.resolve(name), None
+        except UnknownExecutionTarget as exc:
+            return name, None, str(exc)
+
     def _execute_with_audit(
         self,
         *,
@@ -548,6 +630,8 @@ class AgentLoop:
         expr,
         decision,
         approved: bool,
+        target_name: str,
+        target: ExecutionTarget | None,
     ) -> dict:
         confirmation_required = not self.prompter.should_auto_run(decision)
         if not decision.allowed:
@@ -565,6 +649,7 @@ class AgentLoop:
                 confirmation_granted=False,
                 result=payload,
                 error=decision.reason,
+                execution_target=target_name,
             )
             return payload
 
@@ -583,10 +668,18 @@ class AgentLoop:
                 confirmation_granted=False,
                 result=payload,
                 error="user_denied",
+                execution_target=target_name,
             )
             return payload
 
-        result = self.executor.run(expr)
+        if target is None:
+            payload = {
+                "success": False,
+                "error": f"Unknown execution target {target_name!r}",
+            }
+            return payload
+
+        result = target.run(expr)
         payload = result.as_tool_payload()
         if result.truncated:
             payload["note"] = "Output was truncated before being returned to the model."
@@ -598,6 +691,7 @@ class AgentLoop:
             confirmation_required=confirmation_required,
             confirmation_granted=True,
             result=payload,
+            execution_target=target_name,
         )
         return payload
 

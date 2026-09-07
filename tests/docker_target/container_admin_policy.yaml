@@ -1,0 +1,47 @@
+# Test-only policy: allow sudo so the agent can exercise passwordless root
+# *inside* the live test container. Do not use this as the default host policy.
+forbidden_patterns:
+  - argv_contains: [";"]
+  - argv_regex: '^(/bin/sh|/usr/bin/sh|bash|/bin/bash)$'
+
+filesystem:
+  readable_paths:
+    - /tmp
+    - /home
+    - /root
+  writable_redirect_paths:
+    - /tmp/ai-agent
+
+network:
+  allowed_hosts:
+    - 127.0.0.1
+    - localhost
+  allowed_methods:
+    - GET
+    - HEAD
+  forbid_upload_flags: []
+  forbid_stdin: true
+
+rules:
+  - binary: echo
+    risk: READ_ONLY
+  - binary: printf
+    risk: READ_ONLY
+  - binary: cat
+    risk: READ_ONLY
+    path_args: true
+  - binary: ls
+    risk: READ_ONLY
+    path_args: true
+  - binary: id
+    risk: READ_ONLY
+  - binary: whoami
+    risk: READ_ONLY
+  - binary: touch
+    risk: REVERSIBLE
+  - binary: sudo
+    risk: REVERSIBLE
+
+fallback:
+  risk: FORBIDDEN
+  reason: "No matching policy rule"

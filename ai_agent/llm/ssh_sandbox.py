@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -239,11 +241,26 @@ def is_host_key_failure(message: str) -> bool:
     )
 
 
+def _looks_like_known_hosts_line(line: str) -> bool:
+    parts = line.split()
+    if len(parts) < 3:
+        return False
+    key_type = parts[1]
+    return (
+        key_type.startswith("ssh-")
+        or key_type.startswith("ecdsa-")
+        or key_type.startswith("sk-ssh-")
+        or key_type.startswith("sk-ecdsa-")
+    )
+
+
 def parse_keyscan_lines(output: str) -> list[str]:
     lines: list[str] = []
     for raw in output.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
+            continue
+        if not _looks_like_known_hosts_line(line):
             continue
         lines.append(line)
     return lines
@@ -254,18 +271,100 @@ def scan_host_keys(
     port: int = 22,
     *,
     ssh_keyscan: str = "ssh-keyscan",
+    ssh_bin: str = "ssh",
+    user: str = "",
+) -> list[str]:
+    """Fetch sshd host keys for the user to confirm.
+
+    Windows OpenSSH's ssh-keyscan often fails against Ubuntu 24.04 (OpenSSH
+    9.6) with ``choose_kex: unsupported KEX method sntrup761…`` even when
+    interactive ``ssh`` to the same host works. ``ssh`` skips unknown KEX
+    methods; ``ssh-keyscan`` does not. We try keyscan first, then learn the
+    key the same way a real SSH connection does (host-key exchange happens
+    before authentication).
+    """
+    lines = _scan_with_keyscan(hostname, port, ssh_keyscan=ssh_keyscan)
+    if lines:
+        return lines
+    lines = _scan_with_ssh(hostname, port, ssh_bin=ssh_bin, user=user)
+    if lines:
+        return lines
+    raise RuntimeError(
+        f"Could not read SSH host keys for {hostname}:{port}. "
+        "ssh-keyscan failed and ssh did not record a host key. "
+        "Check that the host is reachable on this network (including Tailscale)."
+    )
+
+
+def _scan_with_keyscan(
+    hostname: str,
+    port: int,
+    *,
+    ssh_keyscan: str,
 ) -> list[str]:
     result = subprocess.run(
-        [ssh_keyscan, "-T", "5", "-p", str(port), hostname],
+        [
+            ssh_keyscan,
+            "-T",
+            "5",
+            "-p",
+            str(port),
+            "-t",
+            "ed25519,ecdsa,rsa",
+            hostname,
+        ],
         check=False,
         capture_output=True,
         text=True,
     )
-    lines = parse_keyscan_lines(result.stdout)
-    if not lines:
-        detail = (result.stderr or result.stdout or "no keys returned").strip()
-        raise RuntimeError(f"ssh-keyscan failed for {hostname}:{port}. {detail}")
-    return lines
+    # Keys belong on stdout; older Windows builds sometimes mix banners on stderr.
+    return parse_keyscan_lines(f"{result.stdout}\n{result.stderr}")
+
+
+def _scan_with_ssh(
+    hostname: str,
+    port: int,
+    *,
+    ssh_bin: str,
+    user: str,
+) -> list[str]:
+    dest = f"{user}@{hostname}" if user else hostname
+    with tempfile.TemporaryDirectory(prefix="ai-agent-hostkey-") as raw_dir:
+        known_hosts = Path(raw_dir) / "known_hosts"
+        known_hosts.touch()
+        null_hosts = "NUL" if sys.platform == "win32" else "/dev/null"
+        subprocess.run(
+            [
+                ssh_bin,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "UpdateHostKeys=no",
+                "-o",
+                f"UserKnownHostsFile={ssh_path_for_config(known_hosts)}",
+                "-o",
+                f"GlobalKnownHostsFile={null_hosts}",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "PasswordAuthentication=no",
+                "-o",
+                "ConnectTimeout=8",
+                "-p",
+                str(port),
+                dest,
+                "--",
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if not known_hosts.is_file():
+            return []
+        return parse_keyscan_lines(known_hosts.read_text(encoding="utf-8"))
 
 
 def append_known_hosts(known_hosts: Path, entries: list[str]) -> None:

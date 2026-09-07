@@ -11,11 +11,16 @@ logger = logging.getLogger(__name__)
 WARMUP_USER_MESSAGE = "Startup warmup. Reply with the single word: ready"
 
 
-def warmup_llm(llm: LLMProvider, system_prompt: str) -> tuple[bool, str, float]:
+def warmup_llm(
+    llm: LLMProvider,
+    system_prompt: str,
+    tools: list | None = None,
+) -> tuple[bool, str, float]:
     """Load the model with the agent system prompt and tool schema."""
+    tool_defs = tools if tools is not None else TOOL_DEFINITIONS
     logger.info(
         "Warming up model with agent context (system prompt + %d tools)",
-        len(TOOL_DEFINITIONS),
+        len(tool_defs),
     )
     start = time.perf_counter()
     response = llm.chat(
@@ -23,7 +28,7 @@ def warmup_llm(llm: LLMProvider, system_prompt: str) -> tuple[bool, str, float]:
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=WARMUP_USER_MESSAGE),
         ],
-        tools=TOOL_DEFINITIONS,
+        tools=tool_defs,
     )
     duration = time.perf_counter() - start
 

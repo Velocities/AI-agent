@@ -48,6 +48,10 @@ network:
   forbid_stdin: true
 
 rules:
+  - binary: echo
+    risk: READ_ONLY
+  - binary: printf
+    risk: READ_ONLY
   - binary: df
     risk: READ_ONLY
   - binary: free
