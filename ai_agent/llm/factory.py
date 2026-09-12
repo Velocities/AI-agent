@@ -9,9 +9,9 @@ from ai_agent.llm.client.types import LLMProvider
 
 def create_upstream_provider(settings: Settings) -> LLMProvider:
     """Talk to real upstream inference, or to the far side of the SSH tunnel."""
-    if settings.llm_engine.value == "ollama" and settings.ollama_transport == LlmTransport.SSH:
+    if settings.llm_engine.value == "ollama" and settings.llm_transport == LlmTransport.SSH:
         return create_llm_provider(settings)
-    return create_llm_provider(settings, base_url=settings.llm_upstream_url())
+    return create_llm_provider(settings, base_url=settings.llm_upstream)
 
 
 __all__ = [

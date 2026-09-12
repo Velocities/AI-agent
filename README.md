@@ -12,12 +12,12 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Edit OLLAMA_HOST / OLLAMA_MODEL as needed
+# Edit LLM_HOST / LLM_MODEL as needed
 
 ai-agent
 ```
 
-To split the model and the agent into two terminals, see [Two-window workflow](#two-window-workflow-same-machine) (`ai-agent-llm`, then paste the printed URL into `OLLAMA_HOST`).
+To split the model and the agent into two terminals, see [Two-window workflow](#two-window-workflow-same-machine) (`ai-agent-llm`, then paste the printed URL into `LLM_HOST`).
 
 Requirements:
 
@@ -46,7 +46,7 @@ Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
 Linux (permissions of `ai` user)
 ```
 
-The agent and the model do not have to share a machine. Set `OLLAMA_HOST` to any reachable Ollama HTTP URL. Command execution uses named **execution targets** (this machine, SSH hosts, or Docker containers) and is not tied to that URL.
+The agent and the model do not have to share a machine. Set `LLM_HOST` to the LLM facade URL (or a direct server). Command execution uses named **execution targets** (this machine, SSH hosts, or Docker containers) and is not tied to that URL.
 
 ### Responsibilities stay separate
 
@@ -244,18 +244,19 @@ See [`.env.example`](.env.example):
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_HOST` | URL the **agent** uses (Ollama, the facade, or the local end of an SSH tunnel) |
-| `OLLAMA_UPSTREAM` | Real Ollama URL used by **`ai-agent-llm`** when transport is HTTP |
-| `OLLAMA_TRANSPORT` | `http` (default) or `ssh` |
-| `OLLAMA_SSH_HOST` | Host alias in the sandboxed SSH config |
-| `OLLAMA_SSH_CONFIG` | Path to `.ai-agent/ssh/config` |
-| `OLLAMA_SSH_REMOTE` | Ollama bind on the GPU box (default `127.0.0.1:11434`) |
+| `LLM_HOST` | URL the **agent** uses (facade, direct server, or local end of SSH tunnel) |
+| `LLM_MODEL` | Model name/id for the configured `LLM_ENGINE` |
+| `LLM_ENGINE` | Server-side engine for **`ai-agent-llm`**: `ollama` or `vllm` |
+| `LLM_UPSTREAM` | Real inference engine URL for **`ai-agent-llm`** (not the facade URL) |
+| `LLM_TRANSPORT` | `http` (default) or `ssh` (Ollama engine only) |
+| `LLM_SSH_HOST` | Host alias in the sandboxed SSH config |
+| `LLM_SSH_CONFIG` | Path to `.ai-agent/ssh/config` |
+| `LLM_SSH_REMOTE` | Engine bind on the GPU box (default `127.0.0.1:11434`) |
 | `LLM_BIND_HOST` | Address the facade listens on (default `127.0.0.1`) |
 | `LLM_BIND_PORT` | Facade port (`0` = pick a free port and print it) |
-| `OLLAMA_MODEL` | Model name |
-| `OLLAMA_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
-| `OLLAMA_NUM_CTX` | Context window; Ollama's 4096 default truncates long answers |
-| `OLLAMA_NUM_PREDICT` | Optional hard cap on reply tokens (unset = uncapped) |
+| `LLM_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
+| `OLLAMA_NUM_CTX` | Context window (Ollama engine only) |
+| `OLLAMA_NUM_PREDICT` | Optional reply token cap (Ollama engine only) |
 | `AGENT_MAX_CONTINUATIONS` | How many times one answer may resume after being cut off |
 | `AGENT_CONTINUATION_TAIL` | Characters of the partial answer resent when resuming |
 | `AGENT_LOG_LEVEL` | Logging level |
@@ -295,16 +296,29 @@ The agent never chooses Ollama vs vLLM. It connects to the facade and displays
 Point the agent at the facade URL (or a direct server). Only the host URL changes:
 
 ```env
-# Same machine as the agent
-OLLAMA_HOST=http://localhost:11434
+# Same machine as the agent (via ai-agent-llm facade)
+LLM_HOST=http://127.0.0.1:52341
 
-# GPU box on the LAN (Ollama must listen on that interface)
-OLLAMA_HOST=http://home-server:11434
+# Or direct to a remote facade / server
+LLM_HOST=http://home-server:11434
 ```
 
-On the Ollama machine, bind beyond loopback if clients are remote (for example `OLLAMA_HOST=0.0.0.0` in Ollama's environment — that is Ollama's own setting, not this project's). Restrict that port with a firewall. The API is unauthenticated HTTP; do not expose it to the internet.
+Command execution does not use `LLM_HOST`. See [Execution targets](#execution-targets).
 
-Command execution does not use `OLLAMA_HOST`. See [Execution targets](#execution-targets).
+### Upstream engines (start these yourself)
+
+`ai-agent-llm` does **not** launch Ollama or vLLM. It wraps an upstream that must
+already be running:
+
+```bat
+# Ollama
+ollama serve
+
+# vLLM
+vllm serve your-model --host 127.0.0.1 --port 8000
+```
+
+See [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md) for the full client/server split.
 
 ### SSH remote provider
 
@@ -345,7 +359,7 @@ That writes the correct authorized_keys file, restarts `sshd`, and checks Ollama
 ### Two-window workflow (same machine)
 
 Use this to run the model process and the agent as separate layers. The upstream
-engine must be reachable (`OLLAMA_UPSTREAM` for Ollama, `VLLM_UPSTREAM` for vLLM).
+upstream engine must be reachable at `LLM_UPSTREAM` (e.g. `http://localhost:11434` for Ollama, `http://localhost:8000` for vLLM).
 Set `LLM_ENGINE=vllm` to use vLLM instead of Ollama on the server side.
 
 **Window 1 — model / facade**
@@ -362,14 +376,14 @@ an OS-chosen port if `0`). When ready it prints a URL, for example:
 Endpoint: http://127.0.0.1:52341
 
 Copy this into .env, then start ai-agent in another terminal:
-  OLLAMA_HOST=http://127.0.0.1:52341
+  LLM_HOST=http://127.0.0.1:52341
 ```
 
 Leave that window open.
 
 **Window 2 — agent**
 
-Set `OLLAMA_HOST` to the printed URL (`.env` or the environment), then:
+Set `LLM_HOST` to the printed URL (`.env` or the environment), then:
 
 ```bat
 ai-agent
@@ -377,16 +391,16 @@ ai-agent
 
 The agent uses `FacadeLlmClient` against the local facade. The facade delegates to
 the configured engine (`OllamaEngine` or `VLLMEngine`). Upstream URLs
-(`OLLAMA_UPSTREAM` / `VLLM_UPSTREAM`) must not point at the facade URL.
+`LLM_UPSTREAM` must not point at the facade URL.
 
-This is a same-machine split for testing layers. A GPU box on the LAN is still configured with `OLLAMA_HOST` or `OLLAMA_UPSTREAM` set to that machine. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
+This is a same-machine split for testing layers. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
 
 ### Connection errors
 
 | When | What you see | What the CLI does |
 |------|----------------|-------------------|
 | Startup healthcheck fails (host down, refused, timeout, HTTP/protocol error) | `LLM endpoint unavailable: …` | Logs the error and **exits** (no REPL) |
-| Startup: model name not present on that host | `ModelMissingError: the requested model '…' was not available for …` | Logs the error and **exits** |
+| Startup: model name not present on that host | `ModelMissingError: the requested model '…' is not available with Ollama/vLLM …` | Logs the error and **exits** |
 | Startup warmup fails after a passing healthcheck | `LLM warmup failed: …` | Logs the error and **exits** |
 | Mid-chat: connect, timeout, HTTP, or bad JSON | Yellow `LLM error: …` (and any partial text) | Logs a warning and **stays in the REPL** so you can retry or quit |
 | Mid-chat: SSH tunnel process died | Red message and `Exiting.` | Logs the error and **exits** |
@@ -564,7 +578,7 @@ Approved commands run on a **named target** from configuration. The model picks 
 | `ssh` | Remote host. One generated ed25519 key per target under `.ai-agent/execution-targets/<name>/`. |
 | `docker` | `docker exec` into an existing container. Optional `user` (wizard default `root`) maps to `docker exec -u`, so you do not need sudo or a password inside the image. |
 
-This is separate from where the LLM runs (`OLLAMA_HOST` / `remote-provider`).
+This is separate from where the LLM runs (`LLM_HOST` / `remote-provider`).
 
 ```bat
 ai-agent config execution-target

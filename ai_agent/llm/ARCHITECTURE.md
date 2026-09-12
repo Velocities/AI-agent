@@ -11,6 +11,42 @@ Inference is split into two independent packages under `ai_agent/llm/`:
 │                             │         │            ├── OllamaEngine      │
 │                             │         │            └── VLLMEngine        │
 └─────────────────────────────┘         └──────────────────────────────────┘
+                                                    │
+                                                    ▼
+                                          upstream engine process
+                                    (Ollama or vLLM — started separately)
+```
+
+## What `ai-agent-llm` does and does not do
+
+**Does:**
+
+1. Connect to an **already running** upstream engine at `LLM_UPSTREAM`
+2. Healthcheck and warm the model (system prompt + tools)
+3. Bind a local **facade** (`AgentLlmFacade`) on `LLM_BIND_HOST` / `LLM_BIND_PORT`
+4. Print `LLM_HOST=…` for the agent to use
+
+**Does not:**
+
+- Start Ollama or vLLM for you
+- Install models
+- Manage GPU drivers
+
+You must start the upstream engine yourself before running `ai-agent-llm`:
+
+```bat
+# Ollama example
+ollama serve
+ollama pull qwen3:14b
+
+# vLLM example
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
+```
+
+Then in another terminal:
+
+```bat
+ai-agent-llm
 ```
 
 ## Client (`ai_agent/llm/client/`)
@@ -26,40 +62,34 @@ the server facade:
 | `GET /health` | Liveness |
 
 - **`FacadeLlmClient`** — the only `LLMProvider` implementation the agent needs.
-- **`LLMProvider` / message types** — domain objects for the agent loop (`LLMMessage`,
-  `StreamChunk`, …). Not shared with the server package.
-- The client does **not** know whether the server runs Ollama or vLLM. It reads
-  `/api/info` and displays `Engine: … | Model: …` to the user.
+- The client does **not** know whether the server runs Ollama or vLLM.
 
 ## Server (`ai_agent/llm/server/`)
 
 Used by `ai-agent-llm`. Owns model lifecycle (healthcheck, warmup, bind URL).
 
 - **`AgentLlmFacade`** — stable HTTP surface; delegates to the active engine.
-- **`LlmEngine`** — abstract strategy for upstream inference:
-  - **`OllamaEngine`** — native Ollama `/api/chat` passthrough
-  - **`VLLMEngine`** — vLLM OpenAI `/v1/chat/completions`; adapts responses into
-    the canonical NDJSON shape the facade exposes
-- Engine choice is configured with **`LLM_ENGINE=ollama|vllm`** (server-side).
-
-## Shared transport (`ai_agent/llm/http/`)
-
-Minimal HTTP utilities (`LlmHttpSession`, `LLMErrorKind`) used by both packages.
-No domain message types live here.
+- **`LlmEngine`** — abstract strategy: `OllamaEngine`, `VLLMEngine`
+- Engine choice: **`LLM_ENGINE=ollama|vllm`**
 
 ## Configuration
 
 | Variable | Side | Meaning |
 |----------|------|---------|
-| `OLLAMA_HOST` | Client | URL of the agent LLM facade (or direct server) |
+| `LLM_HOST` | Client | URL of the agent LLM facade |
+| `LLM_MODEL` | Both | Model name/id for the configured engine |
+| `LLM_UPSTREAM` | Server | Real engine URL (Ollama, vLLM, …) |
 | `LLM_ENGINE` | Server | `ollama` or `vllm` |
-| `OLLAMA_UPSTREAM` | Server | Real Ollama URL when `LLM_ENGINE=ollama` |
-| `VLLM_UPSTREAM` | Server | Real vLLM URL when `LLM_ENGINE=vllm` |
-| `OLLAMA_MODEL` / `VLLM_MODEL` | Both | Model name (engine-specific id) |
+| `OLLAMA_NUM_CTX` | Server | Ollama engine only |
+
+When `LLM_MODEL` is wrong for the chosen engine, startup reports:
+`ModelMissingError: the requested model '…' is not available with {Ollama|vLLM} at …`
+
+Legacy `OLLAMA_HOST`, `OLLAMA_UPSTREAM`, `VLLM_UPSTREAM`, etc. still work as
+aliases where noted in `config.py`.
 
 ## Two-window workflow
 
-1. **`ai-agent-llm`** — starts engine, warms model, binds `AgentLlmFacade`, prints URL.
-2. **`ai-agent`** — set `OLLAMA_HOST` to the printed URL; `FacadeLlmClient` connects.
-
-The agent never imports server engine types. The server never imports client message types.
+1. Start upstream engine (Ollama or vLLM)
+2. **`ai-agent-llm`** — warms model, binds facade, prints URL
+3. **`ai-agent`** — set `LLM_HOST` to the printed URL

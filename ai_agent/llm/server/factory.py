@@ -15,7 +15,7 @@ def create_upstream_session(
 ) -> LlmHttpSession:
     if base_url is not None:
         return LlmHttpSession(base_url, timeout=settings.llm_timeout)
-    if settings.llm_engine == LlmEngineKind.OLLAMA and settings.ollama_transport == LlmTransport.SSH:
+    if settings.llm_engine == LlmEngineKind.OLLAMA and settings.llm_transport == LlmTransport.SSH:
         tunnel = start_ssh_tunnel(settings)
         return LlmHttpSession(
             tunnel.local_url,
@@ -23,7 +23,7 @@ def create_upstream_session(
             before_request=tunnel.ensure,
             on_close=tunnel.close,
         )
-    return LlmHttpSession(settings.llm_upstream_url(), timeout=settings.llm_timeout)
+    return LlmHttpSession(settings.llm_upstream, timeout=settings.llm_timeout)
 
 
 def create_engine(
@@ -42,6 +42,6 @@ def create_engine(
     return OllamaEngine(
         upstream,
         model=settings.llm_model,
-        num_predict=settings.llm_num_predict,
-        num_ctx=settings.llm_num_ctx,
+        num_predict=settings.ollama_num_predict,
+        num_ctx=settings.ollama_num_ctx,
     )

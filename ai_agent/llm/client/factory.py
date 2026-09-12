@@ -8,7 +8,7 @@ from ai_agent.llm.ssh_tunnel import start_ssh_tunnel
 
 
 def create_http_session(settings: Settings, *, base_url: str | None = None) -> LlmHttpSession:
-    if base_url is None and settings.ollama_transport == LlmTransport.SSH:
+    if base_url is None and settings.llm_transport == LlmTransport.SSH:
         tunnel = start_ssh_tunnel(settings)
         return LlmHttpSession(
             tunnel.local_url,
@@ -33,6 +33,6 @@ def create_llm_provider(
     return FacadeLlmClient(
         http_session,
         model=settings.llm_model,
-        num_predict=settings.llm_num_predict,
-        num_ctx=settings.llm_num_ctx,
+        num_predict=settings.ollama_num_predict,
+        num_ctx=settings.ollama_num_ctx,
     )

@@ -9,7 +9,7 @@ from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 
 def test_factory_returns_provider_interface() -> None:
     settings = Settings()
-    settings.ollama_transport = LlmTransport.HTTP
+    settings.llm_transport = LlmTransport.HTTP
     provider = create_llm_provider(settings)
     try:
         assert isinstance(provider, LLMProvider)
@@ -78,6 +78,7 @@ def test_healthcheck_reports_missing_model() -> None:
     assert result.error_kind == LLMErrorKind.MODEL_NOT_FOUND
     assert "test-model" in result.message
     assert "ModelMissingError" in result.message
+    assert "not available with Ollama" in result.message
 
 
 def test_healthcheck_reports_protocol_error() -> None:

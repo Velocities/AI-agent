@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import httpx
 
-from ai_agent.config import Settings
+from ai_agent.config import LlmEngineKind, Settings
 from ai_agent.llm.client.factory import create_llm_provider
 from ai_agent.llm.factory import create_upstream_provider
 from ai_agent.llm.client.provider import FacadeLlmClient
@@ -22,8 +22,9 @@ def test_public_url_rewrites_wildcard_binds() -> None:
 
 def test_factory_upstream_ignores_ollama_host() -> None:
     settings = Settings()
-    settings.ollama_host = "http://127.0.0.1:9"
-    settings.ollama_upstream = "http://localhost:11434"
+    settings.llm_engine = LlmEngineKind.OLLAMA
+    settings.llm_host = "http://127.0.0.1:9"
+    settings.llm_upstream = "http://localhost:11434"
     provider = create_upstream_provider(settings)
     try:
         assert provider.endpoint == "http://localhost:11434"

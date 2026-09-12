@@ -221,12 +221,12 @@ def remote_provider_env_values(
     remote: str = "127.0.0.1:11434",
 ) -> dict[str, str]:
     return {
-        "OLLAMA_TRANSPORT": "ssh",
-        "OLLAMA_HOST": "http://127.0.0.1:11434",
-        "OLLAMA_UPSTREAM": "http://127.0.0.1:11434",
-        "OLLAMA_SSH_HOST": alias,
-        "OLLAMA_SSH_CONFIG": str(config_path).replace("\\", "/"),
-        "OLLAMA_SSH_REMOTE": remote,
+        "LLM_TRANSPORT": "ssh",
+        "LLM_HOST": "http://127.0.0.1:11434",
+        "LLM_UPSTREAM": "http://127.0.0.1:11434",
+        "LLM_SSH_HOST": alias,
+        "LLM_SSH_CONFIG": str(config_path).replace("\\", "/"),
+        "LLM_SSH_REMOTE": remote,
     }
 
 
@@ -384,8 +384,8 @@ def disable_remote_provider_env(env_path: Path) -> None:
     upsert_env_values(
         env_path,
         {
-            "OLLAMA_TRANSPORT": "http",
-            "OLLAMA_HOST": "http://localhost:11434",
-            "OLLAMA_UPSTREAM": "http://localhost:11434",
+            "LLM_TRANSPORT": "http",
+            "LLM_HOST": "http://localhost:11434",
+            "LLM_UPSTREAM": "http://localhost:11434",
         },
     )

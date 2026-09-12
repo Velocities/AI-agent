@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai_agent.llm.http.model_errors import format_model_missing_message
+
 
 class ModelMissingError(Exception):
     """Raised when the configured model is not available on the connected server."""
@@ -16,10 +18,11 @@ class ModelMissingError(Exception):
         self.engine_name = engine_name
         self.endpoint = endpoint
         self.available = available or []
-        detail = (
-            f"ModelMissingError: the requested model '{model}' was not available "
-            f"for {engine_name} at {endpoint}."
+        super().__init__(
+            format_model_missing_message(
+                model,
+                engine_name,
+                endpoint,
+                available=self.available,
+            )
         )
-        if self.available:
-            detail += f" Available models: {', '.join(self.available)}."
-        super().__init__(detail)

@@ -26,6 +26,7 @@ def test_vllm_healthcheck_reports_missing_model() -> None:
     assert health.ok is False
     assert "ModelMissingError" in health.message
     assert "missing-model" in health.message
+    assert "not available with vLLM" in health.message
 
 
 def test_vllm_chat_lines_emit_canonical_ndjson() -> None:

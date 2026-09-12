@@ -68,7 +68,7 @@ def serve_ready_engine(
     console.print(f"Upstream: {engine.upstream_url}")
     console.print(f"[bold]Endpoint:[/bold] {endpoint}\n")
     console.print("Copy this into .env, then start [bold]ai-agent[/bold] in another terminal:")
-    console.print(f"  OLLAMA_HOST={endpoint}")
+    console.print(f"  LLM_HOST={endpoint}")
     console.print("\n[dim]Leave this window open. Ctrl+C to stop.[/dim]\n")
     try:
         httpd.serve_forever()
@@ -89,7 +89,7 @@ def main() -> int:
     console.print("[bold]AI Agent LLM[/bold]")
     console.print(
         f"Engine: {settings.llm_engine.value} | "
-        f"Model: {settings.llm_model} @ {settings.llm_upstream_url()}\n"
+        f"Model: {settings.llm_model} @ {settings.llm_upstream}\n"
     )
 
     engine = prepare_upstream(settings, console)
