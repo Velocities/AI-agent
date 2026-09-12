@@ -30,9 +30,10 @@ def create_engine(
     settings: Settings,
     *,
     session: LlmHttpSession | None = None,
+    base_url: str | None = None,
 ) -> LlmEngine:
     """Build the configured server-side inference engine."""
-    upstream = session or create_upstream_session(settings)
+    upstream = session or create_upstream_session(settings, base_url=base_url)
     if settings.llm_engine == LlmEngineKind.VLLM:
         return VLLMEngine(
             upstream,

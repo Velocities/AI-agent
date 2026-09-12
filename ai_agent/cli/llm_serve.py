@@ -11,6 +11,8 @@ from ai_agent.config import Settings
 from ai_agent.llm.server.engine.base import LlmEngine
 from ai_agent.llm.server.facade import AgentLlmFacade, bind_llm_server, public_url
 from ai_agent.llm.server.factory import create_engine
+from ai_agent.llm.server.process.base import EngineProcessError
+from ai_agent.llm.server.runtime import managed_engine_process
 from ai_agent.llm.server.warmup import warmup_engine
 from ai_agent.policy.engine import PolicyEngine
 
@@ -26,8 +28,10 @@ def _system_prompt(settings: Settings) -> str:
 def prepare_upstream(
     settings: Settings,
     console: Console,
+    *,
+    upstream_url: str | None = None,
 ) -> LlmEngine | None:
-    engine = create_engine(settings)
+    engine = create_engine(settings, base_url=upstream_url)
     health = engine.healthcheck()
     if not health.ok:
         logger.error("LLM healthcheck failed: %s", health.message)
@@ -92,10 +96,18 @@ def main() -> int:
         f"Model: {settings.llm_model} @ {settings.llm_upstream}\n"
     )
 
-    engine = prepare_upstream(settings, console)
-    if engine is None:
+    try:
+        with managed_engine_process(settings, console) as process:
+            engine = prepare_upstream(
+                settings,
+                console,
+                upstream_url=process.upstream_url,
+            )
+            if engine is None:
+                return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
+            return serve_ready_engine(engine, settings, console)
+    except EngineProcessError:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
-    return serve_ready_engine(engine, settings, console)
 
 
 if __name__ == "__main__":

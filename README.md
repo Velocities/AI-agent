@@ -247,7 +247,9 @@ See [`.env.example`](.env.example):
 | `LLM_HOST` | URL the **agent** uses (facade, direct server, or local end of SSH tunnel) |
 | `LLM_MODEL` | Model name/id for the configured `LLM_ENGINE` |
 | `LLM_ENGINE` | Server-side engine for **`ai-agent-llm`**: `ollama` or `vllm` |
-| `LLM_UPSTREAM` | Real inference engine URL for **`ai-agent-llm`** (not the facade URL) |
+| `LLM_UPSTREAM` | Engine bind URL for **`ai-agent-llm`** (not the facade URL) |
+| `LLM_MANAGE_UPSTREAM` | When `true` (default), **`ai-agent-llm`** starts/stops the engine process |
+| `LLM_STARTUP_TIMEOUT` | Seconds to wait for the engine to accept HTTP (default `180`) |
 | `LLM_TRANSPORT` | `http` (default) or `ssh` (Ollama engine only) |
 | `LLM_SSH_HOST` | Host alias in the sandboxed SSH config |
 | `LLM_SSH_CONFIG` | Path to `.ai-agent/ssh/config` |
@@ -305,18 +307,14 @@ LLM_HOST=http://home-server:11434
 
 Command execution does not use `LLM_HOST`. See [Execution targets](#execution-targets).
 
-### Upstream engines (start these yourself)
+### Upstream engines
 
-`ai-agent-llm` does **not** launch Ollama or vLLM. It wraps an upstream that must
-already be running:
+By default (`LLM_MANAGE_UPSTREAM=true`), **`ai-agent-llm` starts and stops** the
+configured engine (`ollama serve` or `vllm serve …`) at `LLM_UPSTREAM`. Install
+`ollama` or `vllm` on your PATH first.
 
-```bat
-# Ollama
-ollama serve
-
-# vLLM
-vllm serve your-model --host 127.0.0.1 --port 8000
-```
+If the engine is already running at `LLM_UPSTREAM`, `ai-agent-llm` reuses it.
+Set `LLM_MANAGE_UPSTREAM=false` to disable auto-start.
 
 See [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md) for the full client/server split.
 
@@ -359,8 +357,8 @@ That writes the correct authorized_keys file, restarts `sshd`, and checks Ollama
 ### Two-window workflow (same machine)
 
 Use this to run the model process and the agent as separate layers. The upstream
-upstream engine must be reachable at `LLM_UPSTREAM` (e.g. `http://localhost:11434` for Ollama, `http://localhost:8000` for vLLM).
-Set `LLM_ENGINE=vllm` to use vLLM instead of Ollama on the server side.
+Set `LLM_ENGINE=vllm` and `LLM_UPSTREAM=http://localhost:8000` for vLLM. With the
+default `LLM_MANAGE_UPSTREAM=true`, `ai-agent-llm` starts the engine for you.
 
 **Window 1 — model / facade**
 

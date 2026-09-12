@@ -14,36 +14,23 @@ Inference is split into two independent packages under `ai_agent/llm/`:
                                                     │
                                                     ▼
                                           upstream engine process
-                                    (Ollama or vLLM — started separately)
+                                 (started by ai-agent-llm by default)
 ```
 
-## What `ai-agent-llm` does and does not do
+## What `ai-agent-llm` does
 
-**Does:**
-
-1. Connect to an **already running** upstream engine at `LLM_UPSTREAM`
+1. **Start the upstream engine** (`OllamaEngineProcess` or `VLLMEngineProcess`) when
+   `LLM_MANAGE_UPSTREAM=true` (the default)
 2. Healthcheck and warm the model (system prompt + tools)
 3. Bind a local **facade** (`AgentLlmFacade`) on `LLM_BIND_HOST` / `LLM_BIND_PORT`
 4. Print `LLM_HOST=…` for the agent to use
+5. Stop the engine process on exit when it was started by this command
 
-**Does not:**
+If the engine is already listening at `LLM_UPSTREAM`, `ai-agent-llm` attaches to it
+and does not stop it on exit.
 
-- Start Ollama or vLLM for you
-- Install models
-- Manage GPU drivers
-
-You must start the upstream engine yourself before running `ai-agent-llm`:
-
-```bat
-# Ollama example
-ollama serve
-ollama pull qwen3:14b
-
-# vLLM example
-vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
-```
-
-Then in another terminal:
+Set `LLM_MANAGE_UPSTREAM=false` to require a pre-started engine (old behavior).
+SSH remote transport always uses an external engine on the GPU host.
 
 ```bat
 ai-agent-llm

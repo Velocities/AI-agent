@@ -81,9 +81,32 @@ class Settings(BaseSettings):
         default="http://localhost:11434",
         validation_alias=AliasChoices("LLM_UPSTREAM", "OLLAMA_UPSTREAM", "VLLM_UPSTREAM"),
         description=(
-            "Real inference engine URL for ai-agent-llm (Ollama, vLLM, etc.). "
-            "Do not point this at the facade URL printed for LLM_HOST."
+            "Inference engine URL for ai-agent-llm. ai-agent-llm starts the engine "
+            "here when LLM_MANAGE_UPSTREAM=true. Do not point this at the facade URL."
         ),
+    )
+    llm_manage_upstream: bool = Field(
+        default=True,
+        alias="LLM_MANAGE_UPSTREAM",
+        description=(
+            "When true, ai-agent-llm starts and stops the local engine process. "
+            "Set false to attach to an engine you started yourself."
+        ),
+    )
+    llm_startup_timeout: float = Field(
+        default=180.0,
+        alias="LLM_STARTUP_TIMEOUT",
+        description="Seconds to wait for the engine process to accept HTTP requests.",
+    )
+    llm_ollama_binary: str | None = Field(
+        default=None,
+        alias="LLM_OLLAMA_BINARY",
+        description="Optional path to the ollama executable.",
+    )
+    llm_vllm_binary: str | None = Field(
+        default=None,
+        alias="LLM_VLLM_BINARY",
+        description="Optional path to the vllm executable.",
     )
     ollama_num_predict: int | None = Field(
         default=None,
