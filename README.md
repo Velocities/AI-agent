@@ -8,23 +8,202 @@ This project is designed so the LLM is **never given unrestricted shell access**
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Edit LLM_HOST / LLM_MODEL as needed
+# Pick a setup path below and edit the listed variables
 
 ai-agent
 ```
 
-To split the model and the agent into two terminals, see [Two-window workflow](#two-window-workflow-same-machine) (`ai-agent-llm`, then paste the printed URL into `LLM_HOST`).
-
-Requirements:
-
+**Requirements:**
 - Python 3.11+
-- [Ollama](https://ollama.com/) running locally or on your network
-- Ubuntu server (target environment)
-- Dedicated Linux user `ai` **without sudo**
+- an LLM backend (see [Setup guide](#setup-guide))
+- a Linux target user `ai` **without sudo** for command execution.
+
+For the recommended first run on Windows or macOS, use [Path A — Ollama on this machine](#path-a-ollama-on-this-machine-recommended). For split model/agent processes, see [Path B — Two-window workflow](#path-b-two-window-workflow-same-machine).
+
+---
+
+## Setup guide
+
+Copy [`.env.example`](.env.example) to `.env`, pick **one path**, and set only the variables listed for that path. The full variable reference is in [Configuration](#configuration).
+
+### Prerequisites (every path)
+
+| Requirement | Notes |
+|-------------|--------|
+| Python 3.11+ | Project runtime |
+| `pip install -e ".[dev]"` | Installs **ai-agent only** — not Ollama or vLLM |
+| `.env` file | Start from `.env.example` |
+
+**Engine installs are separate:**
+
+| Engine | Install | Typical platform |
+|--------|---------|------------------|
+| **Ollama** | [ollama.com](https://ollama.com/) | Windows, macOS, Linux — **recommended for local dev** |
+| **vLLM** | `pip install vllm` (Linux + NVIDIA CUDA) | Officially **Linux/WSL2**, not native Windows |
+
+When `LLM_MANAGE_UPSTREAM=true` (default), `ai-agent-llm` runs `ollama serve` or `vllm serve` for you. The engine binary or Python package must still be installed on the machine where `ai-agent-llm` runs.
+
+---
+
+### Path A — Ollama on this machine (recommended)
+
+**When:** Local development on Windows, macOS, or Linux. Simplest way to get running.
+
+**1. Install Ollama** from [ollama.com](https://ollama.com/) and pull a model:
+
+```bash
+ollama pull qwen3:14b
+```
+
+**2. Set these in `.env`:**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `LLM_ENGINE` | `ollama` | Server-side engine (for `ai-agent-llm`) |
+| `LLM_MODEL` | `qwen3:14b` | Must match a model Ollama has pulled |
+| `LLM_UPSTREAM` | `http://localhost:11434` | Where Ollama listens |
+| `LLM_HOST` | `http://localhost:11434` | Where **ai-agent** connects (see Path B for facade URL) |
+| `LLM_MANAGE_UPSTREAM` | `true` | `ai-agent-llm` starts `ollama serve` if needed |
+
+Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
+
+**3. Run (single process — agent only):**
+
+If Ollama is already running (Ollama app or `ollama serve`):
+
+```bash
+ai-agent
+```
+
+**Or run the full stack** with [Path B](#path-b-two-window-workflow-same-machine) so `ai-agent-llm` manages Ollama and exposes a stable facade URL.
+
+---
+
+### Path B — Two-window workflow (same machine)
+
+**When:** You want a dedicated model server process (`ai-agent-llm`) and a separate agent CLI, or you want warmup + a stable local URL to paste into `.env`.
+
+**1. Set these in `.env` (before starting):**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `LLM_ENGINE` | `ollama` or `vllm` | Engine `ai-agent-llm` uses |
+| `LLM_MODEL` | `qwen3:14b` | Model name/id for that engine |
+| `LLM_UPSTREAM` | `http://localhost:11434` | Engine bind URL (**not** the facade URL) |
+| `LLM_MANAGE_UPSTREAM` | `true` | Start/stop engine with `ai-agent-llm` |
+| `LLM_BIND_HOST` | `127.0.0.1` | Facade listen address |
+| `LLM_BIND_PORT` | `0` | `0` = OS picks a free port |
+
+Do **not** set `LLM_HOST` yet — Window 1 prints it.
+
+**2. Window 1 — model server:**
+
+```bash
+ai-agent-llm
+```
+
+Wait for `Endpoint: http://127.0.0.1:…` and copy the printed `LLM_HOST=…` line into `.env`.
+
+**3. Window 2 — agent:**
+
+```bash
+ai-agent
+```
+
+The agent reads `LLM_HOST` (facade URL). `LLM_UPSTREAM` stays pointed at the real engine so restarts do not loop the facade onto itself.
+
+Details: [Two-window workflow](#two-window-workflow-details) · Architecture: [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md)
+
+---
+
+### Path C — Remote Ollama over SSH
+
+**When:** Ollama runs on a GPU box; the agent runs on your laptop. Ollama stays on `127.0.0.1:11434` on the remote machine — no LAN exposure.
+
+**1. On the GPU machine:** install Ollama and this repo; run host setup when the wizard tells you to.
+
+**2. On the agent machine:** run the wizard (writes `.env` for you):
+
+```bash
+ai-agent config remote-provider
+ai-agent config remote-provider test
+```
+
+**Variables the wizard sets (or set manually):**
+
+| Variable | Purpose |
+|----------|---------|
+| `LLM_TRANSPORT` | `ssh` |
+| `LLM_ENGINE` | `ollama` (SSH path is Ollama-only today) |
+| `LLM_SSH_HOST` | Host alias in `.ai-agent/ssh/config` |
+| `LLM_SSH_CONFIG` | Path to sandbox SSH config |
+| `LLM_SSH_REMOTE` | Ollama on GPU box (default `127.0.0.1:11434`) |
+| `LLM_HOST` | Local tunnel URL (wizard default `http://127.0.0.1:11434`) |
+| `LLM_MODEL` | Model pulled on the GPU box |
+| `LLM_MANAGE_UPSTREAM` | `false` — engine runs on remote host, not started locally |
+
+**3. Start the agent:**
+
+```bash
+ai-agent
+```
+
+Full walkthrough: [SSH remote provider](#ssh-remote-provider).
+
+---
+
+### Path D — vLLM (Linux / WSL2)
+
+**When:** You need vLLM for fine-tuning throughput or specific Hugging Face models.
+
+**Platform notes:**
+
+- **Linux + NVIDIA GPU:** supported — `pip install vllm`
+- **Windows (native):** vLLM is **not** officially supported; use [Path A (Ollama)](#path-a-ollama-on-this-machine-recommended), [WSL2](https://docs.vllm.ai/en/latest/getting_started/installation/gpu/), or set `LLM_MANAGE_UPSTREAM=false` and point at a remote vLLM server
+- **`pip install -e ".[dev]"` does not install vLLM** — install it separately in the same venv or WSL environment
+
+**Set these in `.env`:**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `LLM_ENGINE` | `vllm` | Use vLLM engine |
+| `LLM_MODEL` | `meta-llama/Llama-3.1-8B-Instruct` | Model id vLLM serves |
+| `LLM_UPSTREAM` | `http://localhost:8000` | vLLM bind URL (default port 8000) |
+| `LLM_MANAGE_UPSTREAM` | `true` | `ai-agent-llm` runs `vllm serve …` |
+| `LLM_STARTUP_TIMEOUT` | `180` | Model load can take minutes |
+| `VLLM_MAX_TOKENS` | optional | Cap reply length |
+
+Optional: `LLM_VLLM_BINARY=/path/to/vllm` if the CLI is not on `PATH`.
+
+Then use [Path B](#path-b-two-window-workflow-same-machine) (`ai-agent-llm` + `ai-agent`).
+
+If vLLM is already running elsewhere:
+
+```env
+LLM_MANAGE_UPSTREAM=false
+LLM_UPSTREAM=http://your-vllm-host:8000
+```
+
+---
+
+### Path E — Attach to an already-running engine
+
+**When:** You start Ollama or vLLM yourself (systemd, Docker, cloud VM) and only want the facade + agent.
+
+| Variable | Value |
+|----------|--------|
+| `LLM_MANAGE_UPSTREAM` | `false` |
+| `LLM_UPSTREAM` | URL where the engine already listens |
+| `LLM_ENGINE` | `ollama` or `vllm` — must match what's running |
+| `LLM_MODEL` | Model available on that engine |
+
+Run `ai-agent-llm` (facade + warmup) or point `LLM_HOST` directly at the engine if you skip the facade.
+
+---
 
 ## Architecture
 
@@ -240,7 +419,69 @@ Secrets are redacted from keys matching `password`, `token`, `secret`, etc.
 
 ## Configuration
 
-See [`.env.example`](.env.example):
+See [`.env.example`](.env.example). Scenario-specific checklists are in the [Setup guide](#setup-guide).
+
+### LLM — agent client (`ai-agent`)
+
+Set these when running the agent. For remote inference, see [Path C](#path-c-remote-ollama-over-ssh).
+
+| Variable | Description |
+|----------|-------------|
+| `LLM_HOST` | URL the agent calls (facade from `ai-agent-llm`, direct Ollama/vLLM, or local end of SSH tunnel) |
+| `LLM_MODEL` | Model name/id — must exist on the configured engine |
+| `LLM_TRANSPORT` | `http` (default) or `ssh` (Ollama over SSH tunnel) |
+| `LLM_SSH_HOST` | Host alias in `.ai-agent/ssh/config` (when `LLM_TRANSPORT=ssh`) |
+| `LLM_SSH_CONFIG` | Path to sandbox SSH config (default `.ai-agent/ssh/config`) |
+| `LLM_SSH_REMOTE` | Ollama bind on the GPU box (default `127.0.0.1:11434`) |
+| `LLM_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
+
+### LLM — model server (`ai-agent-llm`)
+
+Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-same-machine) and [Path E](#path-e-attach-to-an-already-running-engine).
+
+| Variable | Description |
+|----------|-------------|
+| `LLM_ENGINE` | Server-side engine: `ollama` or `vllm` |
+| `LLM_UPSTREAM` | Engine bind URL (**not** the facade URL — do not point this at `LLM_HOST`) |
+| `LLM_MANAGE_UPSTREAM` | When `true` (default), start/stop the engine process with the facade |
+| `LLM_STARTUP_TIMEOUT` | Seconds to wait for the engine to accept HTTP (default `180`) |
+| `LLM_BIND_HOST` | Address the facade listens on (default `127.0.0.1`) |
+| `LLM_BIND_PORT` | Facade port (`0` = pick a free port and print it) |
+| `LLM_OLLAMA_BINARY` | Optional path to `ollama` if not on `PATH` |
+| `LLM_VLLM_BINARY` | Optional path to `vllm` if not on `PATH` |
+
+### LLM — engine-specific options
+
+| Variable | Engine | Description |
+|----------|--------|-------------|
+| `OLLAMA_NUM_CTX` | Ollama | Context window (default `16384`) |
+| `OLLAMA_NUM_PREDICT` | Ollama | Optional reply token cap |
+| `VLLM_MAX_TOKENS` | vLLM | Optional reply token cap |
+
+### Agent behavior
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_MAX_CONTINUATIONS` | How many times one answer may resume after being cut off |
+| `AGENT_CONTINUATION_TAIL` | Characters of the partial answer resent when resuming |
+| `AGENT_LOG_LEVEL` | Logging level |
+| `AGENT_STREAM_RESPONSES` | Stream assistant text to the terminal as it is generated (`true` / `false`) |
+| `AGENT_MAX_ITERATIONS` | Max tool-call loop iterations |
+| `AGENT_TOOL_TIMEOUT` | Per-command timeout (seconds) |
+| `AGENT_CONFIRMATION_MODE` | `paranoid` / `balanced` / `permissive` |
+| `AGENT_OUTPUT_LIMIT` | Max stdout/stderr returned to model |
+| `AGENT_AUDIT_LOG` | Audit log file path |
+| `AGENT_POLICY_FILE` | Override policy YAML path |
+| `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+
+### Command execution (independent of LLM)
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
+| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+
+### Full reference (all variables)
 
 | Variable | Description |
 |----------|-------------|
@@ -257,8 +498,11 @@ See [`.env.example`](.env.example):
 | `LLM_BIND_HOST` | Address the facade listens on (default `127.0.0.1`) |
 | `LLM_BIND_PORT` | Facade port (`0` = pick a free port and print it) |
 | `LLM_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
+| `LLM_OLLAMA_BINARY` | Optional `ollama` binary path |
+| `LLM_VLLM_BINARY` | Optional `vllm` binary path |
 | `OLLAMA_NUM_CTX` | Context window (Ollama engine only) |
 | `OLLAMA_NUM_PREDICT` | Optional reply token cap (Ollama engine only) |
+| `VLLM_MAX_TOKENS` | Optional reply token cap (vLLM engine only) |
 | `AGENT_MAX_CONTINUATIONS` | How many times one answer may resume after being cut off |
 | `AGENT_CONTINUATION_TAIL` | Characters of the partial answer resent when resuming |
 | `AGENT_LOG_LEVEL` | Logging level |
@@ -277,6 +521,8 @@ See [`.env.example`](.env.example):
 
 ## LLM host (local or remote)
 
+For **getting started**, use the [Setup guide](#setup-guide) paths instead of reading this section first.
+
 Inference is split into **client** and **server** packages (see [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md)):
 
 | Package | Process | Role |
@@ -285,8 +531,7 @@ Inference is split into **client** and **server** packages (see [`ai_agent/llm/A
 | `ai_agent.llm.server` | `ai-agent-llm` | `AgentLlmFacade` + `LlmEngine` (`OllamaEngine` or `VLLMEngine`) |
 | `ai_agent.llm.http` | both | Shared HTTP transport only |
 
-The agent never chooses Ollama vs vLLM. It connects to the facade and displays
-`Engine: … | Model: …` from `/api/info`. Engine choice is server-side (`LLM_ENGINE`).
+The agent never chooses Ollama vs vLLM. It connects to whatever URL is in `LLM_HOST` and displays `Engine: … | Model: …` from `/api/info`. Engine choice is server-side (`LLM_ENGINE` on `ai-agent-llm`).
 
 | Piece | Role |
 |-------|------|
@@ -295,28 +540,15 @@ The agent never chooses Ollama vs vLLM. It connects to the facade and displays
 | `OllamaEngine` / `VLLMEngine` | Server-side upstream adapters |
 | SSH sandbox / tunnel | Optional: `ai-agent config remote-provider` (Ollama engine) |
 
-Point the agent at the facade URL (or a direct server). Only the host URL changes:
-
-```env
-# Same machine as the agent (via ai-agent-llm facade)
-LLM_HOST=http://127.0.0.1:52341
-
-# Or direct to a remote facade / server
-LLM_HOST=http://home-server:11434
-```
+**`LLM_HOST` vs `LLM_UPSTREAM`:** the agent only reads `LLM_HOST`. `LLM_UPSTREAM` is for `ai-agent-llm` — where the real engine listens. Never point `LLM_UPSTREAM` at the facade URL.
 
 Command execution does not use `LLM_HOST`. See [Execution targets](#execution-targets).
 
 ### Upstream engines
 
-By default (`LLM_MANAGE_UPSTREAM=true`), **`ai-agent-llm` starts and stops** the
-configured engine (`ollama serve` or `vllm serve …`) at `LLM_UPSTREAM`. Install
-`ollama` or `vllm` on your PATH first.
+By default (`LLM_MANAGE_UPSTREAM=true`), **`ai-agent-llm` starts and stops** the configured engine (`ollama serve` or `vllm serve …`) at `LLM_UPSTREAM`. Install Ollama or vLLM on the machine where `ai-agent-llm` runs — `pip install -e ".[dev]"` does not install them.
 
-If the engine is already running at `LLM_UPSTREAM`, `ai-agent-llm` reuses it.
-Set `LLM_MANAGE_UPSTREAM=false` to disable auto-start.
-
-See [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md) for the full client/server split.
+If the engine is already running at `LLM_UPSTREAM`, `ai-agent-llm` reuses it. Set `LLM_MANAGE_UPSTREAM=false` to attach without auto-start ([Path E](#path-e-attach-to-an-already-running-engine)).
 
 ### SSH remote provider
 
@@ -354,11 +586,11 @@ ai-agent host-setup --public-key-file .ai-agent\ssh\host-setup.pub
 
 That writes the correct authorized_keys file, restarts `sshd`, and checks Ollama on `127.0.0.1:11434`. Linux GPU hosts add `--linux`. Tailscale/WireGuard is optional: use that hostname as the SSH target.
 
-### Two-window workflow (same machine)
+### Two-window workflow (details)
 
-Use this to run the model process and the agent as separate layers. The upstream
-Set `LLM_ENGINE=vllm` and `LLM_UPSTREAM=http://localhost:8000` for vLLM. With the
-default `LLM_MANAGE_UPSTREAM=true`, `ai-agent-llm` starts the engine for you.
+Step-by-step checklist: [Path B — Two-window workflow](#path-b-two-window-workflow-same-machine).
+
+Use this to run the model process and the agent as separate layers. With the default `LLM_MANAGE_UPSTREAM=true`, `ai-agent-llm` starts the engine for you. For vLLM, set `LLM_ENGINE=vllm` and `LLM_UPSTREAM=http://localhost:8000` before starting Window 1.
 
 **Window 1 — model / facade**
 
@@ -559,7 +791,7 @@ ai_agent/
   cli/            # Terminal (`ai-agent`, `config`, `host-setup`, `ai-agent-llm`)
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
-  llm/            # Provider, session, Ollama, facade, SSH sandbox/tunnel
+  llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
 tests/
 ```
