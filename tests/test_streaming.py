@@ -11,15 +11,16 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMResponse, StreamChunk, ToolCall
-from ai_agent.llm.ollama import OllamaProvider
-from ai_agent.llm.session import LlmHttpSession
-from ai_agent.llm.streaming import (
+from ai_agent.llm.client.provider import FacadeLlmClient
+from ai_agent.llm.client.streaming import (
     RespondMessageStreamer,
     ResumeOverlapTrimmer,
     sanitize_terminal_text,
     trim_resume_overlap,
 )
+from ai_agent.llm.client.types import LLMMessage, LLMResponse, StreamChunk, ToolCall
+from ai_agent.llm.http.errors import LLMErrorKind
+from ai_agent.llm.http.session import LlmHttpSession
 from ai_agent.policy.engine import PolicyEngine
 
 
@@ -210,7 +211,7 @@ def test_ollama_chat_stream_yields_tool_argument_deltas(monkeypatch) -> None:
         lambda timeout: _MockClient(lines),
     )
 
-    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
+    provider = FacadeLlmClient(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(
         provider.chat_stream(
             [LLMMessage(role="user", content="hello")],
@@ -253,7 +254,7 @@ def test_ollama_chat_stream_sends_context_options(monkeypatch) -> None:
     ]
     monkeypatch.setattr(httpx, "Client", lambda timeout: _CapturingClient(lines))
 
-    provider = OllamaProvider(
+    provider = FacadeLlmClient(
         LlmHttpSession("http://localhost:11434"),
         "test-model",
         num_ctx=16384,
@@ -279,7 +280,7 @@ def test_ollama_chat_stream_reports_length_stop_reason(monkeypatch) -> None:
     ]
     monkeypatch.setattr(httpx, "Client", lambda timeout: _MockClient(lines))
 
-    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
+    provider = FacadeLlmClient(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
 
     assert chunks[-1].response is not None
@@ -323,7 +324,7 @@ def test_ollama_chat_stream_handles_interrupted_stream(monkeypatch) -> None:
         lambda timeout: _BrokenClient(lines),
     )
 
-    provider = OllamaProvider(LlmHttpSession("http://localhost:11434"), "test-model")
+    provider = FacadeLlmClient(LlmHttpSession("http://localhost:11434"), "test-model")
     chunks = list(provider.chat_stream([LLMMessage(role="user", content="hello")]))
 
     assert chunks[-1].done is True

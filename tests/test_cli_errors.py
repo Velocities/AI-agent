@@ -46,7 +46,7 @@ def test_mid_turn_session_closed_exits() -> None:
 
 def test_warmup_agent_stops_on_unavailable_endpoint() -> None:
     agent = MagicMock()
-    agent.settings.ollama_model = "test-model"
+    agent.settings.llm_model = "test-model"
     agent.llm.healthcheck.return_value = LLMHealthcheck(
         ok=False,
         message="LLM endpoint is unavailable: http://127.0.0.1:9",
@@ -62,7 +62,7 @@ def test_warmup_agent_stops_on_unavailable_endpoint() -> None:
 
 def test_warmup_agent_stops_on_missing_model() -> None:
     agent = MagicMock()
-    agent.settings.ollama_model = "missing"
+    agent.settings.llm_model = "missing"
     agent.llm.healthcheck.return_value = LLMHealthcheck(
         ok=False,
         message="Model 'missing' not found at http://localhost:11434.",
@@ -76,7 +76,7 @@ def test_warmup_agent_stops_on_missing_model() -> None:
 
 def test_warmup_agent_stops_when_warmup_fails() -> None:
     agent = MagicMock()
-    agent.settings.ollama_model = "test-model"
+    agent.settings.llm_model = "test-model"
     agent.llm.healthcheck.return_value = LLMHealthcheck(ok=True, message="ok")
     agent.warmup.return_value = (False, "LLM request timed out.", 1.2)
     console = MagicMock()
@@ -89,7 +89,7 @@ def test_warmup_agent_stops_when_warmup_fails() -> None:
 
 def test_warmup_agent_continues_when_ready() -> None:
     agent = MagicMock()
-    agent.settings.ollama_model = "test-model"
+    agent.settings.llm_model = "test-model"
     agent.llm.healthcheck.return_value = LLMHealthcheck(ok=True, message="ok")
     agent.warmup.return_value = (True, "ready", 0.5)
     console = MagicMock()

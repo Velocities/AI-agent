@@ -42,19 +42,20 @@ def _prompt(console: Console, label: str, default: str = "") -> str:
 
 def cmd_show(console: Console, settings: Settings) -> int:
     console.print("[bold]Current LLM transport[/bold]")
-    console.print(f"  OLLAMA_TRANSPORT = {settings.ollama_transport.value}")
-    console.print(f"  OLLAMA_HOST      = {settings.ollama_host}")
-    console.print(f"  OLLAMA_UPSTREAM  = {settings.ollama_upstream}")
-    if settings.ollama_transport.value == "ssh":
-        console.print(f"  OLLAMA_SSH_HOST  = {settings.ollama_ssh_host or '(empty)'}")
-        console.print(f"  OLLAMA_SSH_CONFIG= {settings.ollama_ssh_config}")
-        console.print(f"  OLLAMA_SSH_REMOTE= {settings.ollama_ssh_remote}")
+    console.print(f"  LLM_ENGINE       = {settings.llm_engine.value}")
+    console.print(f"  LLM_TRANSPORT    = {settings.llm_transport.value}")
+    console.print(f"  LLM_HOST         = {settings.llm_host}")
+    console.print(f"  LLM_UPSTREAM     = {settings.llm_upstream}")
+    if settings.llm_transport.value == "ssh":
+        console.print(f"  LLM_SSH_HOST     = {settings.llm_ssh_host or '(empty)'}")
+        console.print(f"  LLM_SSH_CONFIG   = {settings.llm_ssh_config}")
+        console.print(f"  LLM_SSH_REMOTE   = {settings.llm_ssh_remote}")
     return 0
 
 
 def cmd_disable(console: Console, env_path: Path) -> int:
     disable_remote_provider_env(env_path)
-    console.print(f"Wrote {env_path} with OLLAMA_TRANSPORT=http (local Ollama).")
+    console.print(f"Wrote {env_path} with LLM_TRANSPORT=http (local engine).")
     return 0
 
 
@@ -62,8 +63,8 @@ def _trust_host_key(console: Console, settings: Settings) -> bool:
     """Fetch the GPU host key into the sandbox known_hosts after confirmation."""
     try:
         resolved = resolve_user_ssh_host(
-            settings.ollama_ssh_host.strip(),
-            user_config=settings.ollama_ssh_config,
+            settings.llm_ssh_host.strip(),
+            user_config=settings.llm_ssh_config,
         )
     except Exception as exc:
         console.print(f"[red]Could not read sandbox SSH config:[/red] {exc}")
@@ -84,15 +85,15 @@ def _trust_host_key(console: Console, settings: Settings) -> bool:
         console.print(f"  {line}")
     if not confirm(console, "Trust these keys and save them in .ai-agent/ssh/known_hosts"):
         return False
-    known_hosts = settings.ollama_ssh_config.parent / "known_hosts"
+    known_hosts = settings.llm_ssh_config.parent / "known_hosts"
     append_known_hosts(known_hosts, entries)
     console.print(f"Saved {len(entries)} key(s) to {known_hosts}")
     return True
 
 
 def cmd_test(console: Console, settings: Settings, *, _retried: bool = False) -> int:
-    if settings.ollama_transport.value != "ssh":
-        console.print("[yellow]OLLAMA_TRANSPORT is not ssh. Nothing to test.[/yellow]")
+    if settings.llm_transport.value != "ssh":
+        console.print("[yellow]LLM_TRANSPORT is not ssh. Nothing to test.[/yellow]")
         return 1
     try:
         require_ssh_binary()
@@ -219,8 +220,8 @@ def cmd_remote_provider(
     write_sandbox_host_config(sandbox, host, identity)
     if confirm(console, "Fetch and trust the GPU PC's SSH host key now"):
         settings_preview = Settings()
-        settings_preview.ollama_ssh_config = sandbox / "config"
-        settings_preview.ollama_ssh_host = host.alias
+        settings_preview.llm_ssh_config = sandbox / "config"
+        settings_preview.llm_ssh_host = host.alias
         _trust_host_key(console, settings_preview)
     public_key = read_public_key(identity)
     gpu_os = _prompt(console, "GPU machine OS (windows/linux)", "windows").lower()

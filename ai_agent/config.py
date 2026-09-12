@@ -1,7 +1,7 @@
 from enum import Enum
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,11 @@ class LlmTransport(str, Enum):
     SSH = "ssh"
 
 
+class LlmEngineKind(str, Enum):
+    OLLAMA = "ollama"
+    VLLM = "vllm"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -23,14 +28,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    ollama_host: str = Field(default="http://localhost:11434", alias="OLLAMA_HOST")
-    ollama_upstream: str = Field(
+    llm_engine: LlmEngineKind = Field(
+        default=LlmEngineKind.OLLAMA,
+        alias="LLM_ENGINE",
+        description="Server-side inference engine used by ai-agent-llm.",
+    )
+    llm_host: str = Field(
         default="http://localhost:11434",
-        alias="OLLAMA_UPSTREAM",
-        description=(
-            "Real Ollama URL used by ai-agent-llm. Kept separate from OLLAMA_HOST "
-            "so the agent can point at the local facade after you paste its URL."
-        ),
+        validation_alias=AliasChoices("LLM_HOST", "OLLAMA_HOST"),
+        description="Agent client URL for the LLM facade or direct server.",
     )
     llm_bind_host: str = Field(default="127.0.0.1", alias="LLM_BIND_HOST")
     llm_bind_port: int = Field(
@@ -38,43 +44,87 @@ class Settings(BaseSettings):
         alias="LLM_BIND_PORT",
         description="Facade listen port. 0 lets the OS pick a free port.",
     )
-    ollama_transport: LlmTransport = Field(
+    llm_model: str = Field(
+        default="qwen3:14b",
+        validation_alias=AliasChoices("LLM_MODEL", "OLLAMA_MODEL"),
+        description="Default model name/id for the configured engine.",
+    )
+    llm_timeout: float = Field(
+        default=600.0,
+        validation_alias=AliasChoices("LLM_TIMEOUT", "OLLAMA_TIMEOUT"),
+        description="HTTP timeout in seconds for LLM chat (long read for streaming).",
+    )
+    llm_transport: LlmTransport = Field(
         default=LlmTransport.HTTP,
-        alias="OLLAMA_TRANSPORT",
+        validation_alias=AliasChoices("LLM_TRANSPORT", "OLLAMA_TRANSPORT"),
+        description="How ai-agent-llm reaches the upstream engine (Ollama only for SSH).",
     )
-    ollama_ssh_config: Path = Field(
+    llm_ssh_config: Path = Field(
         default=Path(".ai-agent/ssh/config"),
-        alias="OLLAMA_SSH_CONFIG",
+        validation_alias=AliasChoices("LLM_SSH_CONFIG", "OLLAMA_SSH_CONFIG"),
     )
-    ollama_ssh_host: str = Field(default="", alias="OLLAMA_SSH_HOST")
-    ollama_ssh_remote: str = Field(
+    llm_ssh_host: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_SSH_HOST", "OLLAMA_SSH_HOST"),
+    )
+    llm_ssh_remote: str = Field(
         default="127.0.0.1:11434",
-        alias="OLLAMA_SSH_REMOTE",
-        description="Ollama bind on the far side of the SSH tunnel.",
+        validation_alias=AliasChoices("LLM_SSH_REMOTE", "OLLAMA_SSH_REMOTE"),
+        description="Engine bind address on the far side of the SSH tunnel.",
     )
-    ollama_ssh_local_port: int = Field(
+    llm_ssh_local_port: int = Field(
         default=0,
-        alias="OLLAMA_SSH_LOCAL_PORT",
+        validation_alias=AliasChoices("LLM_SSH_LOCAL_PORT", "OLLAMA_SSH_LOCAL_PORT"),
         description="Local tunnel port. 0 picks a free port.",
     )
-    ollama_model: str = Field(default="qwen3:14b", alias="OLLAMA_MODEL")
-    ollama_timeout: float = Field(
-        default=600.0,
-        alias="OLLAMA_TIMEOUT",
-        description="HTTP timeout in seconds for Ollama chat (long read for streaming).",
+    llm_upstream: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("LLM_UPSTREAM", "OLLAMA_UPSTREAM", "VLLM_UPSTREAM"),
+        description=(
+            "Inference engine URL for ai-agent-llm. ai-agent-llm starts the engine "
+            "here when LLM_MANAGE_UPSTREAM=true. Do not point this at the facade URL."
+        ),
+    )
+    llm_manage_upstream: bool = Field(
+        default=True,
+        alias="LLM_MANAGE_UPSTREAM",
+        description=(
+            "When true, ai-agent-llm starts and stops the local engine process. "
+            "Set false to attach to an engine you started yourself."
+        ),
+    )
+    llm_startup_timeout: float = Field(
+        default=180.0,
+        alias="LLM_STARTUP_TIMEOUT",
+        description="Seconds to wait for the engine process to accept HTTP requests.",
+    )
+    llm_ollama_binary: str | None = Field(
+        default=None,
+        alias="LLM_OLLAMA_BINARY",
+        description="Optional path to the ollama executable.",
+    )
+    llm_vllm_binary: str | None = Field(
+        default=None,
+        alias="LLM_VLLM_BINARY",
+        description="Optional path to the vllm executable.",
     )
     ollama_num_predict: int | None = Field(
         default=None,
         alias="OLLAMA_NUM_PREDICT",
-        description="Optional Ollama num_predict override for longer replies.",
+        description="Optional num_predict override (Ollama engine only).",
     )
     ollama_num_ctx: int | None = Field(
         default=16384,
         alias="OLLAMA_NUM_CTX",
         description=(
-            "Ollama context window. The default of 4096 truncates long answers, "
-            "so this is raised explicitly. Lower it if VRAM is tight."
+            "Ollama context window (Ollama engine only). The default of 4096 "
+            "truncates long answers, so this is raised explicitly."
         ),
+    )
+    vllm_max_tokens: int | None = Field(
+        default=None,
+        alias="VLLM_MAX_TOKENS",
+        description="Optional vLLM max_tokens override for chat completions.",
     )
 
     agent_log_level: str = Field(default="INFO", alias="AGENT_LOG_LEVEL")

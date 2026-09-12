@@ -129,15 +129,15 @@ def test_copy_identity_and_write_sandbox(tmp_path: Path) -> None:
 
 def test_upsert_env_preserves_other_keys(tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("OLLAMA_MODEL=qwen3:14b\nAGENT_LOG_LEVEL=INFO\n", encoding="utf-8")
+    env.write_text("LLM_MODEL=qwen3:14b\nAGENT_LOG_LEVEL=INFO\n", encoding="utf-8")
     upsert_env_values(env, remote_provider_env_values(alias="gpu-box", config_path=tmp_path / "config"))
     text = env.read_text(encoding="utf-8")
-    assert "OLLAMA_MODEL=qwen3:14b" in text
-    assert "OLLAMA_TRANSPORT=ssh" in text
-    assert "OLLAMA_SSH_HOST=gpu-box" in text
+    assert "LLM_MODEL=qwen3:14b" in text
+    assert "LLM_TRANSPORT=ssh" in text
+    assert "LLM_SSH_HOST=gpu-box" in text
     disable_remote_provider_env(env)
     text = env.read_text(encoding="utf-8")
-    assert "OLLAMA_TRANSPORT=http" in text
+    assert "LLM_TRANSPORT=http" in text
 
 
 def test_host_setup_next_steps_point_at_wrapper() -> None:
@@ -153,9 +153,9 @@ def test_build_ssh_forward_command_uses_sandbox(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.write_text("Host gpu-box\n", encoding="utf-8")
     settings = Settings()
-    settings.ollama_ssh_config = config
-    settings.ollama_ssh_host = "gpu-box"
-    settings.ollama_ssh_remote = "127.0.0.1:11434"
+    settings.llm_ssh_config = config
+    settings.llm_ssh_host = "gpu-box"
+    settings.llm_ssh_remote = "127.0.0.1:11434"
     command = build_ssh_forward_command(settings, local_port=23456, ssh_bin="ssh")
     assert command[:4] == ["ssh", "-N", "-F", str(config)]
     assert "127.0.0.1:23456:127.0.0.1:11434" in command
@@ -195,13 +195,13 @@ def test_session_runs_before_request() -> None:
 
 def test_factory_starts_tunnel_for_ssh_transport(tmp_path: Path) -> None:
     settings = Settings()
-    settings.ollama_transport = LlmTransport.SSH
-    settings.ollama_ssh_host = "gpu-box"
+    settings.llm_transport = LlmTransport.SSH
+    settings.llm_ssh_host = "gpu-box"
     tunnel = MagicMock()
     tunnel.local_url = "http://127.0.0.1:34567"
     tunnel.ensure = MagicMock()
     tunnel.close = MagicMock()
-    with patch("ai_agent.llm.factory.start_ssh_tunnel", return_value=tunnel) as start:
+    with patch("ai_agent.llm.client.factory.start_ssh_tunnel", return_value=tunnel) as start:
         session = create_http_session(settings)
         start.assert_called_once()
         assert session.base_url == "http://127.0.0.1:34567"
@@ -211,9 +211,9 @@ def test_factory_starts_tunnel_for_ssh_transport(tmp_path: Path) -> None:
 
 def test_factory_http_skips_tunnel() -> None:
     settings = Settings()
-    settings.ollama_transport = LlmTransport.HTTP
-    with patch("ai_agent.llm.factory.start_ssh_tunnel") as start:
+    settings.llm_transport = LlmTransport.HTTP
+    with patch("ai_agent.llm.client.factory.start_ssh_tunnel") as start:
         session = create_http_session(settings)
         start.assert_not_called()
-        assert session.base_url.rstrip("/") == settings.ollama_host.rstrip("/")
+        assert session.base_url.rstrip("/") == settings.llm_host.rstrip("/")
         session.close()

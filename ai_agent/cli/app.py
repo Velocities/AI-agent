@@ -45,7 +45,7 @@ def run_error_notice(error: str | None) -> str | None:
         return "Agent stopped at the tool iteration limit."
     if error == "truncated":
         return (
-            "Answer stopped early after repeated cutoffs. Raise OLLAMA_NUM_CTX or "
+            "Answer stopped early after repeated cutoffs. Raise OLLAMA_NUM_CTX (Ollama) or "
             "AGENT_MAX_CONTINUATIONS, or ask for a smaller piece at a time."
         )
     if error == "empty_response":
@@ -107,9 +107,11 @@ def warmup_agent(agent: AgentLoop, console: Console) -> bool:
         console.print(f"[red]LLM endpoint unavailable:[/red] {health.message}")
         return not startup_should_exit(healthy=False, warmup_ok=True)
 
+    model_label = agent.llm.model_name or agent.settings.llm_model
+    engine_label = agent.llm.engine_name or "LLM server"
     with console.status(
-        f"[bold cyan]Loading {agent.settings.ollama_model}[/bold cyan] "
-        "[dim](warming up GPU with agent context)[/dim]",
+        f"[bold cyan]Loading {model_label}[/bold cyan] "
+        f"[dim]({engine_label}, warming up GPU with agent context)[/dim]",
         spinner="dots",
     ):
         ok, detail, duration = agent.warmup()
@@ -181,8 +183,11 @@ def run_repl() -> int:
 
     console.print("[bold]AI Server Assistant[/bold]")
     agent = build_agent(console)
+    engine_label = agent.llm.engine_name or "LLM server"
+    model_label = agent.llm.model_name or settings.llm_model
     console.print(
-        f"Model: {settings.ollama_model} @ {agent.llm.endpoint or settings.ollama_host} | "
+        f"Engine: {engine_label} | Model: {model_label} @ "
+        f"{agent.llm.endpoint or settings.llm_host} | "
         f"Confirmation: {settings.agent_confirmation_mode.value}"
     )
     target_names = ", ".join(agent.router.names())

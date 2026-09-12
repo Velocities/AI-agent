@@ -9,8 +9,8 @@ import time
 from pathlib import Path
 
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMErrorKind
-from ai_agent.llm.session import LlmSessionError
+from ai_agent.llm.http.errors import LLMErrorKind
+from ai_agent.llm.http.session import LlmSessionError
 from ai_agent.llm.ssh_sandbox import ssh_path_for_config
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def parse_remote_bind(value: str) -> tuple[str, int]:
     if ":" not in value:
-        raise ValueError(f"OLLAMA_SSH_REMOTE must look like 127.0.0.1:11434, got {value!r}")
+        raise ValueError(f"LLM_SSH_REMOTE must look like 127.0.0.1:11434, got {value!r}")
     host, port_text = value.rsplit(":", 1)
     return host, int(port_text)
 
@@ -95,17 +95,17 @@ def build_ssh_forward_command(
     local_port: int,
     ssh_bin: str,
 ) -> list[str]:
-    remote_host, remote_port = parse_remote_bind(settings.ollama_ssh_remote)
-    config = settings.ollama_ssh_config
+    remote_host, remote_port = parse_remote_bind(settings.llm_ssh_remote)
+    config = settings.llm_ssh_config
     if not config.is_file():
         raise LlmSessionError(
             LLMErrorKind.UNAVAILABLE,
             f"SSH config not found: {config}. Run: ai-agent config remote-provider",
         )
-    if not settings.ollama_ssh_host.strip():
+    if not settings.llm_ssh_host.strip():
         raise LlmSessionError(
             LLMErrorKind.UNAVAILABLE,
-            "OLLAMA_SSH_HOST is empty. Run: ai-agent config remote-provider",
+            "LLM_SSH_HOST is empty. Run: ai-agent config remote-provider",
         )
     known_hosts = config.parent / "known_hosts"
     return [
@@ -125,7 +125,7 @@ def build_ssh_forward_command(
         "IdentitiesOnly=yes",
         "-L",
         f"127.0.0.1:{local_port}:{remote_host}:{remote_port}",
-        settings.ollama_ssh_host.strip(),
+        settings.llm_ssh_host.strip(),
     ]
 
 
@@ -141,9 +141,9 @@ def start_ssh_tunnel(
             LLMErrorKind.UNAVAILABLE,
             "ssh was not found on PATH. Install OpenSSH Client.",
         )
-    local_port = settings.ollama_ssh_local_port or pick_local_port()
+    local_port = settings.llm_ssh_local_port or pick_local_port()
     command = build_ssh_forward_command(settings, local_port=local_port, ssh_bin=binary)
-    logger.info("Starting SSH tunnel to %s via %s", settings.ollama_ssh_remote, settings.ollama_ssh_host)
+    logger.info("Starting SSH tunnel to %s via %s", settings.llm_ssh_remote, settings.llm_ssh_host)
     kwargs: dict = {
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.PIPE,
@@ -159,7 +159,7 @@ def start_ssh_tunnel(
         if process.poll() is None:
             process.kill()
         raise
-    return SshTunnel(process, local_port, settings.ollama_ssh_remote)
+    return SshTunnel(process, local_port, settings.llm_ssh_remote)
 
 
 def require_ssh_binary() -> str:
