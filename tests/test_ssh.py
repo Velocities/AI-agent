@@ -201,7 +201,7 @@ def test_factory_starts_tunnel_for_ssh_transport(tmp_path: Path) -> None:
     tunnel.local_url = "http://127.0.0.1:34567"
     tunnel.ensure = MagicMock()
     tunnel.close = MagicMock()
-    with patch("ai_agent.llm.factory.start_ssh_tunnel", return_value=tunnel) as start:
+    with patch("ai_agent.llm.client.factory.start_ssh_tunnel", return_value=tunnel) as start:
         session = create_http_session(settings)
         start.assert_called_once()
         assert session.base_url == "http://127.0.0.1:34567"
@@ -212,7 +212,7 @@ def test_factory_starts_tunnel_for_ssh_transport(tmp_path: Path) -> None:
 def test_factory_http_skips_tunnel() -> None:
     settings = Settings()
     settings.ollama_transport = LlmTransport.HTTP
-    with patch("ai_agent.llm.factory.start_ssh_tunnel") as start:
+    with patch("ai_agent.llm.client.factory.start_ssh_tunnel") as start:
         session = create_http_session(settings)
         start.assert_not_called()
         assert session.base_url.rstrip("/") == settings.ollama_host.rstrip("/")

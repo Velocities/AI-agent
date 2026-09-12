@@ -274,16 +274,25 @@ See [`.env.example`](.env.example):
 
 ## LLM host (local or remote)
 
-Inference goes through `LLMProvider`. The CLI builds the provider with `create_llm_provider(settings)` and never talks to Ollama types directly.
+Inference is split into **client** and **server** packages (see [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md)):
+
+| Package | Process | Role |
+|---------|---------|------|
+| `ai_agent.llm.client` | `ai-agent` | `FacadeLlmClient` — one provider, canonical HTTP API |
+| `ai_agent.llm.server` | `ai-agent-llm` | `AgentLlmFacade` + `LlmEngine` (`OllamaEngine` or `VLLMEngine`) |
+| `ai_agent.llm.http` | both | Shared HTTP transport only |
+
+The agent never chooses Ollama vs vLLM. It connects to the facade and displays
+`Engine: … | Model: …` from `/api/info`. Engine choice is server-side (`LLM_ENGINE`).
 
 | Piece | Role |
 |-------|------|
-| `LLMProvider` | Interface: `chat`, `chat_stream`, `healthcheck`, `close` |
-| `OllamaProvider` | Ollama `/api/chat` and `/api/tags` (the only implementation today) |
-| `LlmHttpSession` | HTTP client and transport errors |
-| SSH sandbox / tunnel | Optional: `ai-agent config remote-provider` writes `.ai-agent/ssh/` and the factory starts `ssh -L` |
+| `LLMProvider` / `FacadeLlmClient` | Agent-side: `chat`, `chat_stream`, `healthcheck`, `close` |
+| `AgentLlmFacade` | Stable `/api/chat`, `/api/tags`, `/api/info` HTTP surface |
+| `OllamaEngine` / `VLLMEngine` | Server-side upstream adapters |
+| SSH sandbox / tunnel | Optional: `ai-agent config remote-provider` (Ollama engine) |
 
-Local and remote Ollama use the same provider. Only the host URL changes:
+Point the agent at the facade URL (or a direct server). Only the host URL changes:
 
 ```env
 # Same machine as the agent
@@ -335,7 +344,9 @@ That writes the correct authorized_keys file, restarts `sshd`, and checks Ollama
 
 ### Two-window workflow (same machine)
 
-Use this to run the model process and the agent as separate layers. Ollama must already be running at `OLLAMA_UPSTREAM` (default `http://localhost:11434`).
+Use this to run the model process and the agent as separate layers. The upstream
+engine must be reachable (`OLLAMA_UPSTREAM` for Ollama, `VLLM_UPSTREAM` for vLLM).
+Set `LLM_ENGINE=vllm` to use vLLM instead of Ollama on the server side.
 
 **Window 1 — model / facade**
 
@@ -343,7 +354,9 @@ Use this to run the model process and the agent as separate layers. Ollama must 
 ai-agent-llm
 ```
 
-It healthchecks the upstream Ollama, warms the model with the same system prompt and tools the agent uses, then listens on `127.0.0.1` (port `LLM_BIND_PORT`, or an OS-chosen port if `0`). When ready it prints a URL, for example:
+It healthchecks the upstream engine, warms the model with the same system prompt
+and tools the agent uses, then listens on `127.0.0.1` (port `LLM_BIND_PORT`, or
+an OS-chosen port if `0`). When ready it prints a URL, for example:
 
 ```text
 Endpoint: http://127.0.0.1:52341
@@ -362,7 +375,9 @@ Set `OLLAMA_HOST` to the printed URL (`.env` or the environment), then:
 ai-agent
 ```
 
-The agent still uses `OllamaProvider` and `LlmHttpSession`. It talks to the local facade; the facade forwards `/api/chat` and `/api/tags` to real Ollama. `OLLAMA_UPSTREAM` stays pointed at Ollama so restarting `ai-agent-llm` after you change `OLLAMA_HOST` does not loop the facade onto itself.
+The agent uses `FacadeLlmClient` against the local facade. The facade delegates to
+the configured engine (`OllamaEngine` or `VLLMEngine`). Upstream URLs
+(`OLLAMA_UPSTREAM` / `VLLM_UPSTREAM`) must not point at the facade URL.
 
 This is a same-machine split for testing layers. A GPU box on the LAN is still configured with `OLLAMA_HOST` or `OLLAMA_UPSTREAM` set to that machine. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
 
@@ -371,7 +386,7 @@ This is a same-machine split for testing layers. A GPU box on the LAN is still c
 | When | What you see | What the CLI does |
 |------|----------------|-------------------|
 | Startup healthcheck fails (host down, refused, timeout, HTTP/protocol error) | `LLM endpoint unavailable: …` | Logs the error and **exits** (no REPL) |
-| Startup: model name not present on that host | `Model '…' not found at …` | Logs the error and **exits** |
+| Startup: model name not present on that host | `ModelMissingError: the requested model '…' was not available for …` | Logs the error and **exits** |
 | Startup warmup fails after a passing healthcheck | `LLM warmup failed: …` | Logs the error and **exits** |
 | Mid-chat: connect, timeout, HTTP, or bad JSON | Yellow `LLM error: …` (and any partial text) | Logs a warning and **stays in the REPL** so you can retry or quit |
 | Mid-chat: SSH tunnel process died | Red message and `Exiting.` | Logs the error and **exits** |

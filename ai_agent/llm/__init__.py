@@ -1,19 +1,19 @@
-from ai_agent.llm.base import (
-    LLMErrorKind,
+from ai_agent.llm.client import (
+    FacadeLlmClient,
     LLMHealthcheck,
     LLMMessage,
     LLMProvider,
     LLMResponse,
+    ModelMissingError,
     StreamChunk,
     ToolCall,
-)
-from ai_agent.llm.factory import (
     create_http_session,
     create_llm_provider,
-    create_upstream_provider,
 )
-from ai_agent.llm.ollama import OllamaProvider
-from ai_agent.llm.session import LlmHttpSession, LlmSessionError
+from ai_agent.llm.client.provider import FacadeLlmClient as OllamaProvider
+from ai_agent.llm.factory import create_upstream_provider
+from ai_agent.llm.http.errors import LLMErrorKind
+from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 
 __all__ = [
     "LLMErrorKind",
@@ -23,6 +23,8 @@ __all__ = [
     "LLMResponse",
     "LlmHttpSession",
     "LlmSessionError",
+    "FacadeLlmClient",
+    "ModelMissingError",
     "OllamaProvider",
     "StreamChunk",
     "ToolCall",

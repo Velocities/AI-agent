@@ -9,8 +9,8 @@ import time
 from pathlib import Path
 
 from ai_agent.config import Settings
-from ai_agent.llm.base import LLMErrorKind
-from ai_agent.llm.session import LlmSessionError
+from ai_agent.llm.http.errors import LLMErrorKind
+from ai_agent.llm.http.session import LlmSessionError
 from ai_agent.llm.ssh_sandbox import ssh_path_for_config
 
 logger = logging.getLogger(__name__)

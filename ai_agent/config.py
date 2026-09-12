@@ -16,6 +16,11 @@ class LlmTransport(str, Enum):
     SSH = "ssh"
 
 
+class LlmEngineKind(str, Enum):
+    OLLAMA = "ollama"
+    VLLM = "vllm"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -23,7 +28,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    ollama_host: str = Field(default="http://localhost:11434", alias="OLLAMA_HOST")
+    llm_engine: LlmEngineKind = Field(
+        default=LlmEngineKind.OLLAMA,
+        alias="LLM_ENGINE",
+        description="Server-side inference engine used by ai-agent-llm.",
+    )
+    ollama_host: str = Field(
+        default="http://localhost:11434",
+        alias="OLLAMA_HOST",
+        description="Agent client URL for the local LLM facade (alias: LLM_HOST).",
+    )
     ollama_upstream: str = Field(
         default="http://localhost:11434",
         alias="OLLAMA_UPSTREAM",
@@ -58,15 +72,30 @@ class Settings(BaseSettings):
         description="Local tunnel port. 0 picks a free port.",
     )
     ollama_model: str = Field(default="qwen3:14b", alias="OLLAMA_MODEL")
+    vllm_upstream: str = Field(
+        default="http://localhost:8000",
+        alias="VLLM_UPSTREAM",
+        description="Real vLLM URL used by ai-agent-llm when LLM_ENGINE=vllm.",
+    )
+    vllm_model: str | None = Field(
+        default=None,
+        alias="VLLM_MODEL",
+        description="Model id for vLLM. Falls back to OLLAMA_MODEL when unset.",
+    )
+    vllm_max_tokens: int | None = Field(
+        default=None,
+        alias="VLLM_MAX_TOKENS",
+        description="Optional vLLM max_tokens override for chat completions.",
+    )
     ollama_timeout: float = Field(
         default=600.0,
         alias="OLLAMA_TIMEOUT",
-        description="HTTP timeout in seconds for Ollama chat (long read for streaming).",
+        description="HTTP timeout in seconds for LLM chat (long read for streaming).",
     )
     ollama_num_predict: int | None = Field(
         default=None,
         alias="OLLAMA_NUM_PREDICT",
-        description="Optional Ollama num_predict override for longer replies.",
+        description="Optional num_predict override (Ollama engine).",
     )
     ollama_num_ctx: int | None = Field(
         default=16384,
@@ -76,6 +105,33 @@ class Settings(BaseSettings):
             "so this is raised explicitly. Lower it if VRAM is tight."
         ),
     )
+
+    @property
+    def llm_host(self) -> str:
+        return self.ollama_host
+
+    @property
+    def llm_model(self) -> str:
+        if self.llm_engine == LlmEngineKind.VLLM and self.vllm_model:
+            return self.vllm_model
+        return self.ollama_model
+
+    @property
+    def llm_timeout(self) -> float:
+        return self.ollama_timeout
+
+    @property
+    def llm_num_predict(self) -> int | None:
+        return self.ollama_num_predict
+
+    @property
+    def llm_num_ctx(self) -> int | None:
+        return self.ollama_num_ctx
+
+    def llm_upstream_url(self) -> str:
+        if self.llm_engine == LlmEngineKind.VLLM:
+            return self.vllm_upstream
+        return self.ollama_upstream
 
     agent_log_level: str = Field(default="INFO", alias="AGENT_LOG_LEVEL")
     agent_stream_responses: bool = Field(default=True, alias="AGENT_STREAM_RESPONSES")
