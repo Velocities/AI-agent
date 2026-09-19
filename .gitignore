@@ -13,3 +13,6 @@ venv/
 .ruff_cache/
 *.log
 execution_targets.yaml
+clients/android/local.properties
+clients/android/.gradle/
+clients/android/**/build/
