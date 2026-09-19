@@ -793,8 +793,12 @@ ai_agent/
   execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
+clients/android/  # Discord + Supabase auth client (no agent API yet)
+supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
+
+Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
 
 ---
 
