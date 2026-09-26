@@ -42,6 +42,11 @@ _RECOVERABLE_TRUNCATION_KINDS = frozenset(
 
 
 @dataclass
+class AgentCancelled(Exception):
+    """The client went away while a turn was still running."""
+
+
+@dataclass
 class AgentRunResult:
     final_message: str
     iterations: int
@@ -80,6 +85,8 @@ class AgentLoop:
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)
         ]
+        self.on_message: Callable[[LLMMessage], None] | None = None
+        self.should_stop: Callable[[], bool] | None = None
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
@@ -89,6 +96,16 @@ class AgentLoop:
             tools=self.tool_definitions,
         )
 
+    def _raise_if_stopped(self) -> None:
+        if self.should_stop is not None and self.should_stop():
+            raise AgentCancelled()
+
+    def _append(self, message: LLMMessage) -> None:
+        self._raise_if_stopped()
+        self.messages.append(message)
+        if self.on_message is not None:
+            self.on_message(message)
+
     def run(
         self,
         user_input: str,
@@ -97,9 +114,10 @@ class AgentLoop:
         iteration_callback: Callable[[int], None] | None = None,
         notice_callback: Callable[[str], None] | None = None,
     ) -> AgentRunResult:
-        self.messages.append(LLMMessage(role="user", content=user_input))
+        self._append(LLMMessage(role="user", content=user_input))
 
         for iteration in range(1, self.settings.agent_max_iterations + 1):
+            self._raise_if_stopped()
             if iteration_callback is not None:
                 iteration_callback(iteration)
             response = self._generate_assistant_turn(stream_callback, notice_callback)
@@ -115,7 +133,7 @@ class AgentLoop:
                     error_kind=response.error_kind,
                 )
 
-            self.messages.append(assistant)
+            self._append(assistant)
 
             if self._was_cut_short(response):
                 return AgentRunResult(
@@ -128,7 +146,7 @@ class AgentLoop:
                 answer = (assistant.content or "").strip()
                 if answer and looks_like_command_dump(answer):
                     if iteration < self.settings.agent_max_iterations:
-                        self.messages.append(
+                        self._append(
                             LLMMessage(role="user", content=COMMAND_DUMP_NUDGE)
                         )
                         continue
@@ -138,7 +156,7 @@ class AgentLoop:
                         iterations=iteration,
                     )
                 if iteration < self.settings.agent_max_iterations:
-                    self.messages.append(LLMMessage(role="user", content=SCHEMA_NUDGE))
+                    self._append(LLMMessage(role="user", content=SCHEMA_NUDGE))
                     continue
                 return AgentRunResult(
                     final_message=(
@@ -352,7 +370,7 @@ class AgentLoop:
                     tool_messages.append(self._handle_tool_call(call))
 
         for tool_message in tool_messages:
-            self.messages.append(tool_message)
+            self._append(tool_message)
         return final_message
 
     def _handle_respond(self, call: ToolCall) -> tuple[LLMMessage, str | None]:

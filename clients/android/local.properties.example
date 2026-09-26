@@ -4,5 +4,8 @@
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
 
+## HTTPS origin of ai-agent-serve. Example: https://agent.example.com
+# API_BASE_URL=
+
 ## Optional. Debug builds default to true; release defaults to false.
 # AUTH_DEBUG=true

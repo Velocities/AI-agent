@@ -71,7 +71,7 @@ def serve_ready_engine(
     console.print(f"Engine: {engine.engine_name}")
     console.print(f"Upstream: {engine.upstream_url}")
     console.print(f"[bold]Endpoint:[/bold] {endpoint}\n")
-    console.print("Copy this into .env, then start [bold]ai-agent[/bold] in another terminal:")
+    console.print("Copy this into .env. [bold]ai-agent-serve[/bold] uses it to reach the model:")
     console.print(f"  LLM_HOST={endpoint}")
     console.print("\n[dim]Leave this window open. Ctrl+C to stop.[/dim]\n")
     try:

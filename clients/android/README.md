@@ -1,6 +1,8 @@
 # AI Agent — Android client (0.1.0)
 
-First Android client: **Discord sign-in through Supabase Auth**, then a `profiles` row from Supabase. There is no conversation UI and no call into the Python agent.
+First Android client: **Discord sign-in through Supabase Auth**, then a `profiles` row from Supabase. With `API_BASE_URL` set, the signed-in screen lists chats stored by `ai-agent-serve` and can open them. Sending a turn stays on the CLI, because that is where command approval is answered.
+
+The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. Set `API_BASE_URL` in `local.properties` to the HTTPS origin (for example `https://agent.example.com`). Do not point it at the SQLite file or at Ollama.
 
 ## Stack (pinned)
 

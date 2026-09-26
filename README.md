@@ -12,23 +12,28 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Pick a setup path below and edit the listed variables
+# Path A for the model, plus SUPABASE_URL and SUPABASE_ANON_KEY
 
-ai-agent
+ai-agent-serve    # terminal 1, on the model machine
+ai-agent login    # once, in the browser
+ai-agent          # terminal 2, the chat client
 ```
 
 **Requirements:**
 - Python 3.11+
 - an LLM backend (see [Setup guide](#setup-guide))
+- a Supabase project with Discord sign-in (same one as the Android app)
 - a Linux target user `ai` **without sudo** for command execution.
 
-For the recommended first run on Windows or macOS, use [Path A — Ollama on this machine](#path-a-ollama-on-this-machine-recommended). For split model/agent processes, see [Path B — Two-window workflow](#path-b-two-window-workflow-same-machine).
+For the recommended first run, use [Path A — Ollama on this machine](#path-a-ollama-on-this-machine-recommended). Publishing that API on the internet is [Path F](#path-f--public-api-through-cloudflare).
 
 ---
 
 ## Setup guide
 
-Copy [`.env.example`](.env.example) to `.env`, pick **one path**, and set only the variables listed for that path. The full variable reference is in [Configuration](#configuration).
+Copy [`.env.example`](.env.example) to `.env`, pick **one path** for the model and the CLI, and set only the variables listed for that path. The full variable reference is in [Configuration](#configuration).
+
+[Path F](#path-f--public-api-through-cloudflare) publishes that API through Cloudflare. It does not replace Paths A–E for starting the model.
 
 ### Prerequisites (every path)
 
@@ -71,15 +76,26 @@ ollama pull qwen3:14b
 
 Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
 
-**3. Run (single process — agent only):**
+**3. Run the API and the client.**
 
-If Ollama is already running (Ollama app or `ollama serve`):
+`LLM_HOST` is how `ai-agent-serve` reaches Ollama. The chat client does not call Ollama itself.
+
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key). In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`.
+
+If Ollama is already running:
 
 ```bash
+ai-agent-serve
+```
+
+```bash
+ai-agent login
 ai-agent
 ```
 
-**Or run the full stack** with [Path B](#path-b-two-window-workflow-same-machine) so `ai-agent-llm` manages Ollama and exposes a stable facade URL.
+Chats are stored in `~/.local/share/ai-agent/conversations.db` on this machine. That file is not served over HTTP.
+
+**Or** use [Path B](#path-b-two-window-workflow-same-machine) when `ai-agent-llm` should start Ollama and print the facade URL.
 
 ---
 
@@ -108,13 +124,15 @@ ai-agent-llm
 
 Wait for `Endpoint: http://127.0.0.1:…` and copy the printed `LLM_HOST=…` line into `.env`.
 
-**3. Window 2 — agent:**
+**3. Window 2 — API and client:**
+
+`ai-agent-serve` reads `LLM_HOST`. Leave `LLM_UPSTREAM` pointed at the real engine.
 
 ```bash
+ai-agent-serve
+ai-agent login
 ai-agent
 ```
-
-The agent reads `LLM_HOST` (facade URL). `LLM_UPSTREAM` stays pointed at the real engine so restarts do not loop the facade onto itself.
 
 Details: [Two-window workflow](#two-window-workflow-details) · Architecture: [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md)
 
@@ -205,27 +223,94 @@ Run `ai-agent-llm` (facade + warmup) or point `LLM_HOST` directly at the engine 
 
 ---
 
+### Path F — Public API through Cloudflare
+
+**When:** You want the CLI and the Android app to share one HTTPS address. The API, the agent, and the chat database run on the model machine. Paths A–E still describe how the model itself is started.
+
+**Where:** On the machine that hosts the model. `ai-agent-serve` listens on `127.0.0.1` only. Cloudflare Tunnel is what the internet connects to.
+
+**1. Install the Python package** (repo root, venv active):
+
+```bash
+pip install -e ".[dev]"
+```
+
+That installs FastAPI and Uvicorn with the rest of the project. It does not install cloudflared, Ollama, or vLLM.
+
+**2. Supabase.** Use the same project as the Android app. Discord setup is in [`clients/android/README.md`](clients/android/README.md). Copy the project URL and the **publishable** (anon) key. Do not put the service-role key in `.env`.
+
+**3. Install cloudflared** from [Cloudflare's download page](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+
+**4. Set these in `.env`:**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` | Project URL. Signing keys are fetched from here. |
+| `SUPABASE_ANON_KEY` | publishable key | Same key as Android `local.properties`. |
+| `API_BIND_HOST` | `127.0.0.1` | Must stay a loopback address. |
+| `API_BIND_PORT` | `8000` | Local port the tunnel targets. |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | Where the CLI sends chats. Use the HTTPS hostname from another machine. |
+| `CONVERSATION_DATABASE` | empty | SQLite file on this machine. Set a SQLAlchemy URL to put chats somewhere else later. |
+
+If vLLM is already using port 8000, pick another `API_BIND_PORT` and use that port in the tunnel config.
+
+**5. Start the API** and leave it running:
+
+```bash
+ai-agent-serve
+```
+
+```bash
+curl -s http://127.0.0.1:8000/health
+```
+
+The first start creates `~/.local/share/ai-agent/conversations.db` and applies the Alembic migration. The file mode is private to the user running the process. Nothing in the API reads or writes that file except the server, and there is no route that serves it.
+
+`{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
+
+**CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
+
+```bash
+ai-agent login
+ai-agent
+```
+
+`/new` starts a chat, `/list` shows chats. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app can open the same chats after you set `API_BASE_URL`.
+
+**6. Open the tunnel** from the same machine:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create ai-agent
+```
+
+Copy [`deploy/cloudflared/config.yml.example`](deploy/cloudflared/config.yml.example) to `deploy/cloudflared/config.yml`. Fill in the tunnel id, the credentials file path from the create command, and your hostname. If you changed `API_BIND_PORT`, change the origin port too.
+
+```bash
+cloudflared tunnel route dns ai-agent agent.example.com
+cloudflared tunnel --config deploy/cloudflared/config.yml run
+```
+
+Leave both processes running. `https://agent.example.com/health` should return the same JSON.
+
+Leave `SUPABASE_JWT_SECRET` empty. Set it only if this Supabase project still signs tokens with the legacy shared secret (HS256).
+
+---
+
 ## Architecture
 
 ```text
-User (CLI)
-    |
+CLI or Android
+    |  Supabase access token
     v
-Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
-    |
-    +--> Policy Engine (validate CommandExpr)
-    |
-    +--> Approval UX (confirm / batch preview / session grants)
-    |
-    +--> Execution targets (local / SSH / Docker; independent of the LLM host)
-    |
-    +--> Audit Logger
-    |
-    v
-Linux (permissions of `ai` user)
+ai-agent-serve (loopback; Cloudflare Tunnel for HTTPS)
+    |-- SQLite chats, on this machine only
+    |-- Agent loop, policy, audit
+    |-- LLM_HOST --> Ollama or the ai-agent-llm facade
+    +-- Execution targets (local / SSH / Docker)
 ```
 
-The agent and the model do not have to share a machine. Set `LLM_HOST` to the LLM facade URL (or a direct server). Command execution uses named **execution targets** (this machine, SSH hosts, or Docker containers) and is not tied to that URL.
+`ai-agent-serve` runs the agent loop on the model machine. It calls `LLM_HOST` for the model and runs commands through execution targets on that same process. The CLI and Android app send a Supabase access token and do not run the loop themselves. Chats are rows in the local SQLite file, keyed by the token subject.
 
 ### Responsibilities stay separate
 
@@ -236,7 +321,7 @@ The agent and the model do not have to share a machine. Set `LLM_HOST` to the LL
 | Linux | Final permission boundary |
 | Human | Approves consequential operations |
 
-**The model must not approve its own actions.** Approval tokens are created by the CLI, not inferred from chat text.
+**The model must not approve its own actions.** The signed-in client sends the approval. It is not inferred from chat text.
 
 ---
 
@@ -450,6 +535,23 @@ Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-
 | `LLM_OLLAMA_BINARY` | Optional path to `ollama` if not on `PATH` |
 | `LLM_VLLM_BINARY` | Optional path to `vllm` if not on `PATH` |
 
+### Public API (`ai-agent-serve`)
+
+See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HOST` for the model. Clients call `API_BASE_URL`.
+
+| Variable | Description |
+|----------|-------------|
+| `API_BIND_HOST` | Loopback listen address (default `127.0.0.1`). `0.0.0.0` is refused. |
+| `API_BIND_PORT` | Listen port (default `8000`) |
+| `SUPABASE_URL` | Supabase project URL for JWT signing keys |
+| `SUPABASE_ANON_KEY` | Publishable key sent when fetching those keys |
+| `SUPABASE_JWT_AUDIENCE` | Expected `aud` claim (default `authenticated`) |
+| `SUPABASE_JWT_SECRET` | Legacy HS256 secret. Leave empty for current projects. |
+| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `CLI_OAUTH_PORT` | Loopback port for `ai-agent login` (default `53682`) |
+| `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
+| `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
+
 ### LLM — engine-specific options
 
 | Variable | Engine | Description |
@@ -516,6 +618,16 @@ Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
 | `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
 | `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+| `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
+| `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
+| `SUPABASE_URL` | Supabase project URL used to verify access tokens |
+| `SUPABASE_ANON_KEY` | Publishable Supabase key (not the service-role key) |
+| `SUPABASE_JWT_AUDIENCE` | Expected token audience (default `authenticated`) |
+| `SUPABASE_JWT_SECRET` | Legacy HS256 secret; empty when the project uses signing keys |
+| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `CLI_OAUTH_PORT` | Loopback port for Discord sign-in (default `53682`) |
+| `CONVERSATION_DATABASE` | SQLAlchemy URL for chats. Empty uses the on-machine SQLite file. |
+| `AGENT_APPROVAL_TIMEOUT` | Seconds to wait for a command approval (default `900`) |
 
 ---
 
@@ -531,7 +643,7 @@ Inference is split into **client** and **server** packages (see [`ai_agent/llm/A
 | `ai_agent.llm.server` | `ai-agent-llm` | `AgentLlmFacade` + `LlmEngine` (`OllamaEngine` or `VLLMEngine`) |
 | `ai_agent.llm.http` | both | Shared HTTP transport only |
 
-The agent never chooses Ollama vs vLLM. It connects to whatever URL is in `LLM_HOST` and displays `Engine: … | Model: …` from `/api/info`. Engine choice is server-side (`LLM_ENGINE` on `ai-agent-llm`).
+`ai-agent-serve` connects to whatever URL is in `LLM_HOST`. Engine choice is `LLM_ENGINE` on `ai-agent-llm`. The `ai-agent` command is the chat client: it uses `API_BASE_URL` and a Supabase access token.
 
 | Piece | Role |
 |-------|------|
@@ -611,19 +723,11 @@ Copy this into .env, then start ai-agent in another terminal:
 
 Leave that window open.
 
-**Window 2 — agent**
+**Window 2 — API**
 
-Set `LLM_HOST` to the printed URL (`.env` or the environment), then:
+Set `LLM_HOST` to the printed URL, then start `ai-agent-serve`. That process calls the facade. Upstream `LLM_UPSTREAM` must not point at the facade URL.
 
-```bat
-ai-agent
-```
-
-The agent uses `FacadeLlmClient` against the local facade. The facade delegates to
-the configured engine (`OllamaEngine` or `VLLMEngine`). Upstream URLs
-`LLM_UPSTREAM` must not point at the facade URL.
-
-This is a same-machine split for testing layers. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
+The facade has no authentication. Keep `LLM_BIND_HOST=127.0.0.1`. Clients authenticate to `ai-agent-serve`, not to the facade.
 
 ### Connection errors
 
@@ -788,12 +892,15 @@ ai_agent/
   agent/          # Agent loop and tool schemas
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
+  api/            # Public HTTP API (`ai-agent-serve`)
+  conversations/  # SQLite transcript store and Alembic migrations
   cli/            # Terminal (`ai-agent`, `config`, `host-setup`, `ai-agent-llm`)
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
-clients/android/  # Discord + Supabase auth client (no agent API yet)
+clients/android/  # Discord sign-in, then reads chats from ai-agent-serve
+deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
 supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
@@ -826,6 +933,7 @@ SSH public keys belong in the remote user's `authorized_keys`. Host keys are sto
 
 ## Roadmap (not yet implemented)
 
+- Android approval and sending a turn from the phone
 - Web UI with the same approval token model
 - AppArmor / Landlock profiles
 - OS-level network restrictions for `ai` user

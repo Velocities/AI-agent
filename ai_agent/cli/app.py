@@ -62,7 +62,13 @@ def configure_logging(level: str) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def build_agent(console: Console | None = None) -> AgentLoop:
+def build_agent(
+    console: Console | None = None,
+    *,
+    prompter=None,
+    audit_user: str | None = None,
+    session: ApprovalSession | None = None,
+) -> AgentLoop:
     settings = Settings()
     configure_logging(settings.agent_log_level)
     console = console or Console()
@@ -82,10 +88,12 @@ def build_agent(console: Console | None = None) -> AgentLoop:
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")
         raise
+    if session is None:
+        session = getattr(prompter, "session", None) or ApprovalSession()
+    if prompter is None:
+        prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, console)
     audit_path = Path(settings.agent_audit_log) if settings.agent_audit_log else None
-    audit = AuditLogger(log_path=audit_path, user=getuser())
-    session = ApprovalSession()
-    prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, console)
+    audit = AuditLogger(log_path=audit_path, user=audit_user or getuser())
     llm = create_llm_provider(settings)
 
     return AgentLoop(
@@ -172,10 +180,21 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.host_setup import main as host_setup_main
 
         return host_setup_main(args[1:])
-    return run_repl()
+    if args and args[0] == "login":
+        from ai_agent.cli.login import main as login_main
+
+        return login_main(args[1:])
+    if args and args[0] == "logout":
+        from ai_agent.cli.login import logout
+
+        return logout()
+    from ai_agent.cli.remote_repl import run_remote_repl
+
+    return run_remote_repl()
 
 
 def run_repl() -> int:
+    """In-process REPL. The `ai-agent` command uses the remote client instead."""
     configure_stdio_encoding()
     console = Console()
     settings = Settings()

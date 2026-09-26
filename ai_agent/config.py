@@ -165,6 +165,60 @@ class Settings(BaseSettings):
         description="Used when the model omits target. Must be a configured name.",
     )
 
+    api_bind_host: str = Field(
+        default="127.0.0.1",
+        alias="API_BIND_HOST",
+        description="Loopback address for ai-agent-serve. Public HTTPS is the Cloudflare Tunnel.",
+    )
+    api_bind_port: int = Field(
+        default=8000,
+        alias="API_BIND_PORT",
+        description="Local port for ai-agent-serve. vLLM also defaults to 8000.",
+    )
+    api_base_url: str = Field(
+        default="http://127.0.0.1:8000",
+        alias="API_BASE_URL",
+        description="URL the CLI uses to reach ai-agent-serve.",
+    )
+    cli_oauth_port: int = Field(
+        default=53682,
+        alias="CLI_OAUTH_PORT",
+        description="Loopback port for Discord sign-in in the CLI.",
+    )
+    conversation_database: str = Field(
+        default="",
+        alias="CONVERSATION_DATABASE",
+        description=(
+            "SQLAlchemy URL for conversation storage. Empty uses a SQLite file "
+            "under ~/.local/share/ai-agent/ on this machine."
+        ),
+    )
+    agent_approval_timeout: float = Field(
+        default=900.0,
+        alias="AGENT_APPROVAL_TIMEOUT",
+        description="Seconds a turn waits for the client to approve a command.",
+    )
+    supabase_url: str = Field(
+        default="",
+        alias="SUPABASE_URL",
+        description="Supabase project URL. Used to fetch JWT signing keys.",
+    )
+    supabase_anon_key: str = Field(
+        default="",
+        alias="SUPABASE_ANON_KEY",
+        description="Publishable Supabase key, same value as the Android app. Not the service-role key.",
+    )
+    supabase_jwt_audience: str = Field(
+        default="authenticated",
+        alias="SUPABASE_JWT_AUDIENCE",
+        description="Expected aud claim on Supabase access tokens.",
+    )
+    supabase_jwt_secret: str = Field(
+        default="",
+        alias="SUPABASE_JWT_SECRET",
+        description="Legacy HS256 JWT secret. Current Supabase projects use signing keys and leave this empty.",
+    )
+
     def policy_path(self) -> Path:
         if self.agent_policy_file:
             return Path(self.agent_policy_file)

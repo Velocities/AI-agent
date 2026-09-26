@@ -18,6 +18,7 @@ fun escapeBuildConfigString(value: String): String =
 
 val supabaseUrl = localProperties.getProperty("SUPABASE_URL", "")
 val supabaseAnonKey = localProperties.getProperty("SUPABASE_ANON_KEY", "")
+val apiBaseUrl = localProperties.getProperty("API_BASE_URL", "")
 val authDebugOverride = localProperties.getProperty("AUTH_DEBUG")?.trim()?.lowercase()
 
 fun authDebugValue(default: Boolean): String =
@@ -40,6 +41,7 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", escapeBuildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_ANON_KEY", escapeBuildConfigString(supabaseAnonKey))
+        buildConfigField("String", "API_BASE_URL", escapeBuildConfigString(apiBaseUrl))
     }
 
     buildTypes {

@@ -42,6 +42,10 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             SignedInScreen(
                 state = state,
                 onSignOut = viewModel::signOut,
+                onRefreshChats = viewModel::refreshChats,
+                onOpenChat = viewModel::openChat,
+                onCloseChat = viewModel::closeChat,
+                onNewChat = viewModel::createChat,
             )
         }
     }

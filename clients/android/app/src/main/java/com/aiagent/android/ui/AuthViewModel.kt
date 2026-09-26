@@ -3,6 +3,10 @@ package com.aiagent.android.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aiagent.android.AiAgentApp
+import com.aiagent.android.BuildConfig
+import com.aiagent.android.data.AgentApi
+import com.aiagent.android.data.ChatMessage
+import com.aiagent.android.data.ConversationSummary
 import com.aiagent.android.data.Profile
 import com.aiagent.android.data.SupabaseModule
 import io.github.jan.supabase.auth.auth
@@ -10,11 +14,13 @@ import io.github.jan.supabase.auth.providers.Discord
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.from
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -31,10 +37,15 @@ data class AuthUiState(
     val profileJson: String? = null,
     val lastError: String? = null,
     val busy: Boolean = false,
+    val conversations: List<ConversationSummary> = emptyList(),
+    val messages: List<ChatMessage> = emptyList(),
+    val openConversationTitle: String? = null,
+    val chatsStatus: String? = null,
 )
 
 class AuthViewModel : ViewModel() {
     private val json = Json { prettyPrint = true; encodeDefaults = true }
+    private var sessionAccessToken: String? = null
     private val _state = MutableStateFlow(
         AuthUiState(configured = SupabaseModule.isConfigured()),
     )
@@ -91,6 +102,7 @@ class AuthViewModel : ViewModel() {
         when (status) {
             is SessionStatus.Authenticated -> {
                 val session = status.session
+                sessionAccessToken = session.accessToken
                 val user = session.user
                 val profile = user?.id?.let { loadProfile(it) }
                 _state.update {
@@ -109,11 +121,13 @@ class AuthViewModel : ViewModel() {
                         profileJson = profile?.let { row -> json.encodeToString(row) } ?: "(no profiles row)",
                     )
                 }
+                refreshChats()
             }
             SessionStatus.Initializing -> {
                 _state.update { it.copy(sessionStatusLabel = "Initializing", busy = true) }
             }
             is SessionStatus.NotAuthenticated -> {
+                sessionAccessToken = null
                 _state.update {
                     it.copy(
                         sessionStatusLabel = if (status.isSignOut) "Signed out" else "Not authenticated",
@@ -126,6 +140,10 @@ class AuthViewModel : ViewModel() {
                         discordIdentities = null,
                         tokenExpiresAt = null,
                         profileJson = null,
+                        conversations = emptyList(),
+                        messages = emptyList(),
+                        openConversationTitle = null,
+                        chatsStatus = null,
                     )
                 }
             }
@@ -137,6 +155,79 @@ class AuthViewModel : ViewModel() {
                         busy = false,
                     )
                 }
+            }
+        }
+    }
+
+    fun refreshChats() {
+        val baseUrl = BuildConfig.API_BASE_URL
+        if (baseUrl.isBlank()) {
+            _state.update {
+                it.copy(chatsStatus = "Set API_BASE_URL in local.properties to load chats from the server.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            val token = sessionAccessToken?.takeIf { it.isNotBlank() }
+            if (token == null) {
+                _state.update { it.copy(chatsStatus = "No Supabase session to send to the chat API.") }
+                return@launch
+            }
+            try {
+                val chats = withContext(Dispatchers.IO) {
+                    AgentApi(baseUrl).listConversations(token)
+                }
+                _state.update { it.copy(conversations = chats, chatsStatus = null) }
+            } catch (error: Throwable) {
+                _state.update { it.copy(chatsStatus = error.message ?: error.toString()) }
+            }
+        }
+    }
+
+    fun openChat(conversationId: String) {
+        val baseUrl = BuildConfig.API_BASE_URL
+        val title = _state.value.conversations.find { it.id == conversationId }?.title
+        viewModelScope.launch {
+            val token = sessionAccessToken?.takeIf { it.isNotBlank() } ?: return@launch
+            try {
+                val messages = withContext(Dispatchers.IO) {
+                    AgentApi(baseUrl).listMessages(token, conversationId)
+                }
+                _state.update {
+                    it.copy(
+                        messages = messages,
+                        openConversationTitle = title?.ifBlank { "Untitled" } ?: "Chat",
+                        chatsStatus = null,
+                    )
+                }
+            } catch (error: Throwable) {
+                _state.update { it.copy(chatsStatus = error.message ?: error.toString()) }
+            }
+        }
+    }
+
+    fun closeChat() {
+        _state.update { it.copy(messages = emptyList(), openConversationTitle = null) }
+    }
+
+    fun createChat() {
+        val baseUrl = BuildConfig.API_BASE_URL
+        if (baseUrl.isBlank()) return
+        viewModelScope.launch {
+            val token = sessionAccessToken?.takeIf { it.isNotBlank() } ?: return@launch
+            try {
+                val created = withContext(Dispatchers.IO) {
+                    AgentApi(baseUrl).createConversation(token)
+                }
+                refreshChats()
+                _state.update {
+                    it.copy(
+                        messages = emptyList(),
+                        openConversationTitle = created.title.ifBlank { "New chat" },
+                    )
+                }
+            } catch (error: Throwable) {
+                _state.update { it.copy(chatsStatus = error.message ?: error.toString()) }
             }
         }
     }

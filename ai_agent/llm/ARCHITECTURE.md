@@ -80,3 +80,9 @@ aliases where noted in `config.py`.
 1. Start upstream engine (Ollama or vLLM)
 2. **`ai-agent-llm`** — warms model, binds facade, prints URL
 3. **`ai-agent`** — set `LLM_HOST` to the printed URL
+
+## Public API (`ai-agent-serve`)
+
+This is not the facade above. `ai-agent-serve` listens on loopback and is the process a Cloudflare Tunnel should target. It checks Supabase access tokens, runs the agent loop, and stores chats in the local SQLite file. It calls this facade through `LLM_HOST`. It does not proxy `/api/chat` to the internet, and it does not start Ollama or vLLM.
+
+Keep the facade on `127.0.0.1`. Put the tunnel in front of `ai-agent-serve` only. Setup: README Path F.
