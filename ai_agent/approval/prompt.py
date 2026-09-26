@@ -30,15 +30,7 @@ class ApprovalPrompter:
         self.console = console
 
     def should_auto_run(self, decision: PolicyDecision) -> bool:
-        if not decision.allowed:
-            return False
-        if self.session.has_grant(decision.effective_risk, "global"):
-            return True
-        return not risk_requires_confirmation(
-            decision.effective_risk,
-            self.mode,
-            self.session,
-        )
+        return auto_approves(self.session, self.mode, decision)
 
     def prompt_single(
         self,
@@ -159,6 +151,15 @@ class ApprovalPrompter:
                 self.session.enable_read_only_auto()
                 return ApprovalResult(approved=True, grant_scope="read_only_session")
         return ApprovalResult(approved=response in {"y", "yes"})
+
+
+def auto_approves(session: ApprovalSession, mode: ConfirmationMode, decision: PolicyDecision) -> bool:
+    """True when policy allows the command and this session does not need a person."""
+    if not decision.allowed:
+        return False
+    if session.has_grant(decision.effective_risk, "global"):
+        return True
+    return not risk_requires_confirmation(decision.effective_risk, mode, session)
 
 
 def _target_suffix(item: PendingCommand) -> str:

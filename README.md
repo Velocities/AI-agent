@@ -12,23 +12,46 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Pick a setup path below and edit the listed variables
+# Path A for the model, plus SUPABASE_URL and SUPABASE_ANON_KEY
 
-ai-agent
+ai-agent serve    # model and API, one process
+ai-agent login    # once, in the browser
+ai-agent          # chat client
 ```
+
+On an Ubuntu server, use [Path G — Ubuntu production (systemd)](#path-g-ubuntu-production-systemd) (`sudo systemctl enable --now ai-agent`) instead of leaving a terminal open. Details: [`deploy/systemd/README.md`](deploy/systemd/README.md).
 
 **Requirements:**
 - Python 3.11+
 - an LLM backend (see [Setup guide](#setup-guide))
+- a Supabase project with Discord sign-in (same one as the Android app)
 - a Linux target user `ai` **without sudo** for command execution.
 
-For the recommended first run on Windows or macOS, use [Path A — Ollama on this machine](#path-a-ollama-on-this-machine-recommended). For split model/agent processes, see [Path B — Two-window workflow](#path-b-two-window-workflow-same-machine).
+For the recommended first run, use [Path A — Ollama on this machine](#path-a-ollama-on-this-machine-recommended). Publishing that API on the internet is [Path F](#path-f--public-api-through-cloudflare).
 
 ---
 
 ## Setup guide
 
-Copy [`.env.example`](.env.example) to `.env`, pick **one path**, and set only the variables listed for that path. The full variable reference is in [Configuration](#configuration).
+Copy [`.env.example`](.env.example) to `.env`, pick **one path** below, and set only the variables listed for that path. The full variable reference is in [Configuration](#configuration).
+
+### Start here
+
+If you have never run this project, use this table once. You can ignore the other paths until you need them.
+
+| Your goal | Path | What you run |
+|-----------|------|----------------|
+| Try it on a laptop (Windows, macOS, or Linux) | [A](#path-a-ollama-on-this-machine-recommended) | `ai-agent serve`, then `ai-agent login`, then `ai-agent` |
+| Run model and API in **two terminals** (debugging) | [B](#path-b-two-window-workflow-same-machine) | `ai-agent-llm` in one window, `ai-agent-serve` in another |
+| **Ubuntu server**, starts at boot, no SSH needed | [G](#path-g-ubuntu-production-systemd) | `sudo deploy/systemd/install.sh`, then `sudo systemctl enable --now ai-agent` |
+| HTTPS for CLI + Android (Cloudflare Tunnel) | [F](#path-f--public-api-through-cloudflare) | Path **G** (or A) on the model machine, then cloudflared |
+| Model on a GPU box, agent on your laptop | [C](#path-c-remote-ollama-over-ssh) | `ai-agent config remote-provider`, then `ai-agent` |
+| vLLM instead of Ollama | [D](#path-d-vllm-linux--wsl2) | Same as A or B, with `LLM_ENGINE=vllm` |
+| Ollama/vLLM already running (Docker, systemd, cloud) | [E](#path-e-attach-to-an-already-running-engine) | `LLM_MANAGE_UPSTREAM=false`, then B or `ai-agent serve` |
+
+**One process vs two:** In normal use you want **one** server process. `ai-agent serve` (and the systemd service) starts the inference engine, the local LLM facade, and the loopback API together. Paths B and the old `ai-agent-llm` + `ai-agent-serve` pair exist so you can debug each layer separately.
+
+**Two different “users” on a server:** The **systemd service** runs as the Linux account `ai` (created by the installer). Approved **shell commands** from the agent also run as that same `ai` user when the default `local` execution target is used. That user must not have sudo.
 
 ### Prerequisites (every path)
 
@@ -71,15 +94,21 @@ ollama pull qwen3:14b
 
 Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
 
-**3. Run (single process — agent only):**
+**3. Run the server and the client.**
 
-If Ollama is already running (Ollama app or `ollama serve`):
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key). In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`.
+
+Recommended — one terminal for model + API (`ai-agent serve` starts Ollama when needed and does not require setting `LLM_HOST`):
 
 ```bash
+ai-agent serve
+ai-agent login
 ai-agent
 ```
 
-**Or run the full stack** with [Path B](#path-b-two-window-workflow-same-machine) so `ai-agent-llm` manages Ollama and exposes a stable facade URL.
+Chats are stored in `~/.local/share/ai-agent/conversations.db` for whichever user runs the server process. That file is not served over HTTP.
+
+**Alternatives:** [Path B](#path-b-two-window-workflow-same-machine) (`ai-agent-llm` + `ai-agent-serve`). Or `ai-agent-serve` alone only if the model is already reachable at `LLM_HOST` in `.env` (for example direct Ollama on port 11434).
 
 ---
 
@@ -108,13 +137,15 @@ ai-agent-llm
 
 Wait for `Endpoint: http://127.0.0.1:…` and copy the printed `LLM_HOST=…` line into `.env`.
 
-**3. Window 2 — agent:**
+**3. Window 2 — API and client:**
+
+`ai-agent-serve` reads `LLM_HOST`. Leave `LLM_UPSTREAM` pointed at the real engine.
 
 ```bash
+ai-agent-serve
+ai-agent login
 ai-agent
 ```
-
-The agent reads `LLM_HOST` (facade URL). `LLM_UPSTREAM` stays pointed at the real engine so restarts do not loop the facade onto itself.
 
 Details: [Two-window workflow](#two-window-workflow-details) · Architecture: [`ai_agent/llm/ARCHITECTURE.md`](ai_agent/llm/ARCHITECTURE.md)
 
@@ -205,27 +236,213 @@ Run `ai-agent-llm` (facade + warmup) or point `LLM_HOST` directly at the engine 
 
 ---
 
+### Path G — Ubuntu production (systemd)
+
+**When:** An Ubuntu Server (24.04 or similar) should run the model and API as one service, survive reboot, and start without you SSH in. Use [Path F](#path-f--public-api-through-cloudflare) afterward if you want HTTPS through Cloudflare.
+
+**What you get:** One unit, `ai-agent.service`, running `ai-agent serve` as the `ai` user. It starts Ollama or vLLM (unless something already listens at `LLM_UPSTREAM`), warms the model, binds the LLM facade on loopback, and serves the API on `127.0.0.1`:`API_BIND_PORT`. Logs go to the journal.
+
+**1. Install dependencies on the server**
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv python3-pip acl
+```
+
+Install **Ollama** ([ollama.com](https://ollama.com/)) or **vLLM** on the same machine. The Python package does not install them.
+
+```bash
+ollama pull qwen3:14b   # example; match LLM_MODEL in .env
+```
+
+If you use vLLM and it binds port `8000`, set a different `API_BIND_PORT` in `.env` (see step 2).
+
+**2. Install the project**
+
+```bash
+git clone <your-repo-url> AI-agent   # or use your existing checkout
+cd AI-agent
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+cp .env.example .env
+```
+
+Edit `.env`. For a typical Ollama server you need at least:
+
+| Variable | Example | Notes |
+|----------|---------|--------|
+| `LLM_ENGINE` | `ollama` | |
+| `LLM_MODEL` | `qwen3:14b` | Must exist on the engine (`ollama pull …`) |
+| `LLM_UPSTREAM` | `http://localhost:11434` | Engine URL, **not** the facade |
+| `LLM_MANAGE_UPSTREAM` | `true` | Service starts `ollama serve` if needed |
+| `API_BIND_HOST` | `127.0.0.1` | Do not expose the API on `0.0.0.0` |
+| `API_BIND_PORT` | `8000` | Cloudflare Tunnel targets this port |
+| `SUPABASE_URL` | `https://….supabase.co` | Required for authenticated API routes |
+| `SUPABASE_ANON_KEY` | publishable key | Not the service-role key |
+
+You do **not** need to set `LLM_HOST` for `ai-agent serve` — the process picks a facade port and uses it internally. Status will show something like `Model: http://127.0.0.1:33841` in `systemctl status`; that is expected.
+
+**3. Install and enable the systemd unit**
+
+From the repo root:
+
+```bash
+sudo deploy/systemd/install.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now ai-agent
+```
+
+The installer writes `/etc/systemd/system/ai-agent.service`, creates the `ai` user if missing, and creates `/tmp/ai-agent`. It does **not** start the service until you run `enable --now` or `start`.
+
+Re-run `sudo deploy/systemd/install.sh` after you move the checkout, recreate `.venv`, or pull unit template changes, then `sudo systemctl daemon-reload`.
+
+**4. Verify**
+
+```bash
+sudo systemctl status ai-agent
+curl -s http://127.0.0.1:8000/health
+sudo journalctl -u ai-agent -b -n 50 --no-pager
+```
+
+`active (running)` with status `Listening on http://127.0.0.1:8000` and `{"status":"ok"}` from `/health` mean the stack is up. The first start can take minutes while the model loads; the unit stays `activating (start)` until the API socket is open.
+
+Conversation SQLite for the service lives under **`/var/lib/ai-agent/.local/share/ai-agent/`** (the `ai` user’s home), not your login user’s home.
+
+**5. Optional CLI shortcuts**
+
+When the unit is installed:
+
+```bash
+ai-agent status    # same as systemctl status (no sudo if your user can manage the unit)
+ai-agent start     # delegates to systemctl; use sudo if you get “Permission denied”
+```
+
+**Common install and startup problems**
+
+| Symptom | Cause | Fix |
+|---------|--------|-----|
+| Installer: `ai cannot execute …/.venv/bin/ai-agent` | Checkout under `~/…` and home dir is `750` (`drwxr-x---`) | `sudo apt install acl`, re-run `sudo deploy/systemd/install.sh` (applies traverse ACLs), or `sudo setfacl -m u:ai:--x /home/YOUR_USER` |
+| `bad-setting` / `WorkingDirectory= path is not absolute` | Old generated unit file | Pull latest repo, `sudo deploy/systemd/install.sh`, `sudo systemctl daemon-reload` |
+| Service starts but ignores `.env` | `ai` cannot read `.env` | Installer tries `chgrp ai` + `640`; or `sudo chgrp ai .env && sudo chmod 640 .env` |
+| `activating (start)` a long time | Model warmup | Normal; `sudo journalctl -u ai-agent -f` |
+| Start fails after ~900s | Model too slow to load | Increase `LLM_STARTUP_TIMEOUT` in `.env` and `TimeoutStartSec` in the unit template, reinstall unit |
+| `ollama` / `vllm` not found in journal | Engine not on `PATH` for `ai` | Install Ollama system-wide or set `LLM_OLLAMA_BINARY` / `LLM_VLLM_BINARY` in `.env` |
+| GPU errors | `ai` not in device groups | `sudo usermod -aG render,video ai`, restart service |
+| API bind error / port in use | vLLM and API both want 8000 | Change `API_BIND_PORT` and tunnel config |
+
+Full service reference: [`deploy/systemd/README.md`](deploy/systemd/README.md).
+
+---
+
+### Path F — Public API through Cloudflare
+
+**When:** You want the CLI and the Android app to share one HTTPS address. The API, the agent, and the chat database run on the model machine.
+
+**Where:** On the machine that hosts the model. The API listens on `127.0.0.1` only (`ai-agent serve` or `ai-agent-serve`). Cloudflare Tunnel is what the internet connects to.
+
+**Prerequisite:** The model machine already runs the API. On Ubuntu production that means [Path G](#path-g-ubuntu-production-systemd) (`systemctl status ai-agent` shows `active (running)`). On a laptop use [Path A](#path-a-ollama-on-this-machine-recommended) (`ai-agent serve`).
+
+**1. Install the Python package** (repo root, venv active):
+
+```bash
+pip install -e ".[dev]"
+```
+
+That installs FastAPI and Uvicorn with the rest of the project. It does not install cloudflared, Ollama, or vLLM.
+
+**2. Supabase.** Use the same project as the Android app. Discord setup is in [`clients/android/README.md`](clients/android/README.md). Copy the project URL and the **publishable** (anon) key. Do not put the service-role key in `.env`.
+
+**3. Install cloudflared** from [Cloudflare's download page](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+
+**4. Set these in `.env`:**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` | Project URL. Signing keys are fetched from here. |
+| `SUPABASE_ANON_KEY` | publishable key | Same key as Android `local.properties`. |
+| `API_BIND_HOST` | `127.0.0.1` | Must stay a loopback address. |
+| `API_BIND_PORT` | `8000` | Local port the tunnel targets. |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | Where the CLI sends chats. Use the HTTPS hostname from another machine. |
+| `CONVERSATION_DATABASE` | empty | SQLite file on this machine. Set a SQLAlchemy URL to put chats somewhere else later. |
+
+If vLLM is already using port 8000, pick another `API_BIND_PORT` and use that port in the tunnel config.
+
+**5. Start the API** (skip if Path G already enabled the service).
+
+On an Ubuntu server, use [Path G](#path-g-ubuntu-production-systemd) — do not run a second copy in a terminal:
+
+```bash
+sudo systemctl enable --now ai-agent
+curl -s http://127.0.0.1:8000/health
+```
+
+For a one-off terminal on a dev machine:
+
+```bash
+ai-agent serve
+```
+
+To run **only** the API while the model is already up and `LLM_HOST` is set in `.env`:
+
+```bash
+ai-agent-serve
+```
+
+```bash
+curl -s http://127.0.0.1:8000/health
+```
+
+The first start creates the conversation SQLite file and applies the Alembic migration (under the **user that runs the server** — `/var/lib/ai-agent/…` for systemd, or your home when you run `ai-agent serve` locally). Nothing in the API serves that file over HTTP.
+
+`{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
+
+**CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
+
+```bash
+ai-agent login
+ai-agent
+```
+
+`/new` starts a chat, `/list` shows chats. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app can open the same chats after you set `API_BASE_URL`.
+
+**6. Open the tunnel** from the same machine:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create ai-agent
+```
+
+Copy [`deploy/cloudflared/config.yml.example`](deploy/cloudflared/config.yml.example) to `deploy/cloudflared/config.yml`. Fill in the tunnel id, the credentials file path from the create command, and your hostname. If you changed `API_BIND_PORT`, change the origin port too.
+
+```bash
+cloudflared tunnel route dns ai-agent agent.example.com
+cloudflared tunnel --config deploy/cloudflared/config.yml run
+```
+
+Leave the API and cloudflared running. With the systemd unit, the API is `ai-agent.service` and cloudflared is still its own process. `https://agent.example.com/health` should return the same JSON.
+
+Leave `SUPABASE_JWT_SECRET` empty. Set it only if this Supabase project still signs tokens with the legacy shared secret (HS256).
+
+---
+
 ## Architecture
 
 ```text
-User (CLI)
+CLI or Android
+    |  Supabase access token
+    v
+systemd: ai-agent.service
     |
     v
-Agent Loop  ---- HTTP ---->  LLM host (Ollama, local or remote)
-    |
-    +--> Policy Engine (validate CommandExpr)
-    |
-    +--> Approval UX (confirm / batch preview / session grants)
-    |
-    +--> Execution targets (local / SSH / Docker; independent of the LLM host)
-    |
-    +--> Audit Logger
-    |
-    v
-Linux (permissions of `ai` user)
+ai-agent serve (one process; loopback API; Cloudflare Tunnel for HTTPS)
+    |-- SQLite chats, on this machine only
+    |-- Agent loop, policy, audit
+    |-- LLM facade --> Ollama or vLLM
+    +-- Execution targets (local / SSH / Docker)
 ```
 
-The agent and the model do not have to share a machine. Set `LLM_HOST` to the LLM facade URL (or a direct server). Command execution uses named **execution targets** (this machine, SSH hosts, or Docker containers) and is not tied to that URL.
+`ai-agent serve` runs the agent loop on the model machine. The API calls the in-process LLM facade, and commands run through execution targets in that same process. `ai-agent-serve` is the API on its own and calls `LLM_HOST`. The CLI and Android app send a Supabase access token and do not run the loop themselves. Chats are rows in the local SQLite file, keyed by the token subject. Production setup: [`deploy/systemd/README.md`](deploy/systemd/README.md).
 
 ### Responsibilities stay separate
 
@@ -236,7 +453,7 @@ The agent and the model do not have to share a machine. Set `LLM_HOST` to the LL
 | Linux | Final permission boundary |
 | Human | Approves consequential operations |
 
-**The model must not approve its own actions.** Approval tokens are created by the CLI, not inferred from chat text.
+**The model must not approve its own actions.** The signed-in client sends the approval. It is not inferred from chat text.
 
 ---
 
@@ -450,6 +667,23 @@ Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-
 | `LLM_OLLAMA_BINARY` | Optional path to `ollama` if not on `PATH` |
 | `LLM_VLLM_BINARY` | Optional path to `vllm` if not on `PATH` |
 
+### Public API (`ai-agent-serve`)
+
+See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HOST` for the model. Clients call `API_BASE_URL`.
+
+| Variable | Description |
+|----------|-------------|
+| `API_BIND_HOST` | Loopback listen address (default `127.0.0.1`). `0.0.0.0` is refused. |
+| `API_BIND_PORT` | Listen port (default `8000`) |
+| `SUPABASE_URL` | Supabase project URL for JWT signing keys |
+| `SUPABASE_ANON_KEY` | Publishable key sent when fetching those keys |
+| `SUPABASE_JWT_AUDIENCE` | Expected `aud` claim (default `authenticated`) |
+| `SUPABASE_JWT_SECRET` | Legacy HS256 secret. Leave empty for current projects. |
+| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `CLI_OAUTH_PORT` | Loopback port for `ai-agent login` (default `53682`) |
+| `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
+| `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
+
 ### LLM — engine-specific options
 
 | Variable | Engine | Description |
@@ -516,6 +750,16 @@ Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
 | `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
 | `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+| `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
+| `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
+| `SUPABASE_URL` | Supabase project URL used to verify access tokens |
+| `SUPABASE_ANON_KEY` | Publishable Supabase key (not the service-role key) |
+| `SUPABASE_JWT_AUDIENCE` | Expected token audience (default `authenticated`) |
+| `SUPABASE_JWT_SECRET` | Legacy HS256 secret; empty when the project uses signing keys |
+| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `CLI_OAUTH_PORT` | Loopback port for Discord sign-in (default `53682`) |
+| `CONVERSATION_DATABASE` | SQLAlchemy URL for chats. Empty uses the on-machine SQLite file. |
+| `AGENT_APPROVAL_TIMEOUT` | Seconds to wait for a command approval (default `900`) |
 
 ---
 
@@ -531,7 +775,7 @@ Inference is split into **client** and **server** packages (see [`ai_agent/llm/A
 | `ai_agent.llm.server` | `ai-agent-llm` | `AgentLlmFacade` + `LlmEngine` (`OllamaEngine` or `VLLMEngine`) |
 | `ai_agent.llm.http` | both | Shared HTTP transport only |
 
-The agent never chooses Ollama vs vLLM. It connects to whatever URL is in `LLM_HOST` and displays `Engine: … | Model: …` from `/api/info`. Engine choice is server-side (`LLM_ENGINE` on `ai-agent-llm`).
+`ai-agent-serve` connects to whatever URL is in `LLM_HOST`. Engine choice is `LLM_ENGINE` on `ai-agent-llm`. The `ai-agent` command is the chat client: it uses `API_BASE_URL` and a Supabase access token. `ai-agent serve` starts the engine and the API together and points the API at the facade it just bound.
 
 | Piece | Role |
 |-------|------|
@@ -611,19 +855,11 @@ Copy this into .env, then start ai-agent in another terminal:
 
 Leave that window open.
 
-**Window 2 — agent**
+**Window 2 — API**
 
-Set `LLM_HOST` to the printed URL (`.env` or the environment), then:
+Set `LLM_HOST` to the printed URL, then start `ai-agent-serve`. That process calls the facade. Upstream `LLM_UPSTREAM` must not point at the facade URL.
 
-```bat
-ai-agent
-```
-
-The agent uses `FacadeLlmClient` against the local facade. The facade delegates to
-the configured engine (`OllamaEngine` or `VLLMEngine`). Upstream URLs
-`LLM_UPSTREAM` must not point at the facade URL.
-
-This is a same-machine split for testing layers. There is no authentication on the facade; keep `LLM_BIND_HOST=127.0.0.1`.
+The facade has no authentication. Keep `LLM_BIND_HOST=127.0.0.1`. Clients authenticate to `ai-agent-serve`, not to the facade.
 
 ### Connection errors
 
@@ -788,12 +1024,17 @@ ai_agent/
   agent/          # Agent loop and tool schemas
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
-  cli/            # Terminal (`ai-agent`, `config`, `host-setup`, `ai-agent-llm`)
+  api/            # Public HTTP API (`ai-agent-serve`)
+  conversations/  # SQLite transcript store and Alembic migrations
+  cli/            # Terminal (`ai-agent`, `serve`, `config`, `host-setup`, `ai-agent-llm`)
+  service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
-clients/android/  # Discord + Supabase auth client (no agent API yet)
+clients/android/  # Discord sign-in, then reads chats from ai-agent-serve
+deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
+deploy/systemd/   # Ubuntu service unit and installer (`ai-agent.service`)
 supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
@@ -826,6 +1067,7 @@ SSH public keys belong in the remote user's `authorized_keys`. Host keys are sto
 
 ## Roadmap (not yet implemented)
 
+- Android approval and sending a turn from the phone
 - Web UI with the same approval token model
 - AppArmor / Landlock profiles
 - OS-level network restrictions for `ai` user

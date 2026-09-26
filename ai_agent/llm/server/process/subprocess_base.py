@@ -43,12 +43,9 @@ class SubprocessEngineProcess(EngineProcess):
             return
         command = self._command()
         logger.info("Starting %s: %s", self.engine_name, " ".join(command))
-        kwargs: dict = {
-            "env": self._subprocess_env(),
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.PIPE,
-            "text": True,
-        }
+        # Inherit stdout/stderr. A pipe that nobody reads fills up and can stall
+        # a long-running engine; under systemd those streams go to the journal.
+        kwargs: dict = {"env": self._subprocess_env()}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
