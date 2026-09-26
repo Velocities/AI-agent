@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 from rich.console import Console
 
+from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
 from ai_agent.cli.api_client import AgentApiClient, AgentApiError
 from ai_agent.cli.api_url import public_api_base_url_hint
 from ai_agent.cli.credentials import (
@@ -27,7 +28,7 @@ def run_remote_repl() -> int:
     try:
         conversation_id = _current_conversation(client, console)
     except AgentApiError as exc:
-        console.print(f"[red]{exc.detail}[/red]")
+        _print_access_error(console, exc)
         client.close()
         return 1
     except httpx.HTTPError as exc:
@@ -114,12 +115,25 @@ def _current_conversation(client: AgentApiClient, console: Console) -> str:
     return created["id"]
 
 
+def _print_access_error(console: Console, exc: AgentApiError) -> None:
+    if exc.code in {ACCESS_PENDING_CODE, ACCESS_DENIED_CODE}:
+        console.print(f"[yellow]{exc.detail}[/yellow]")
+        if exc.code == ACCESS_PENDING_CODE:
+            console.print(
+                "[dim]An administrator must run on the server:\n"
+                "  ai-agent config access list\n"
+                "  ai-agent config access approve <your user id>[/dim]"
+            )
+        return
+    if exc.status == 401:
+        console.print("[red]Sign-in was rejected. Run ai-agent login.[/red]")
+        return
+    console.print(f"[red]{exc.detail}[/red]")
+
+
 def _report_api_error(console: Console, exc: Exception, *, base_url: str) -> None:
     if isinstance(exc, AgentApiError):
-        if exc.status == 401:
-            console.print("[red]Sign-in was rejected. Run ai-agent login.[/red]")
-        else:
-            console.print(f"[red]{exc.detail}[/red]")
+        _print_access_error(console, exc)
         return
     if isinstance(exc, httpx.HTTPError):
         console.print(f"[red]Cannot reach {base_url}:[/red] {exc}")

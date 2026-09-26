@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_agent.api.auth import AuthenticatedUser
-from ai_agent.api.deps import get_current_user
+from ai_agent.api.deps import require_deployment_access
 from ai_agent.api.turns import iter_turn_events
 from ai_agent.conversations.store import (
     Conversation,
@@ -79,7 +79,7 @@ def get_store(request: Request) -> ConversationStore:
 @router.post("", response_model=ConversationResponse)
 def create_conversation(
     body: CreateConversationRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationResponse:
     conversation = store.create_conversation(user.user_id, title=body.title)
@@ -88,7 +88,7 @@ def create_conversation(
 
 @router.get("", response_model=ConversationListResponse)
 def list_conversations(
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationListResponse:
     rows = store.list_conversations(user.user_id)
@@ -98,7 +98,7 @@ def list_conversations(
 @router.get("/{conversation_id}", response_model=ConversationResponse)
 def get_conversation(
     conversation_id: str,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationResponse:
     conversation = store.get_conversation(user.user_id, conversation_id)
@@ -110,7 +110,7 @@ def get_conversation(
 @router.get("/{conversation_id}/messages", response_model=MessageListResponse)
 def list_messages(
     conversation_id: str,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> MessageListResponse:
     try:
@@ -125,7 +125,7 @@ def start_turn(
     conversation_id: str,
     body: TurnRequest,
     request: Request,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> StreamingResponse:
     if store.get_conversation(user.user_id, conversation_id) is None:
@@ -159,7 +159,7 @@ def resolve_approval(
     approval_id: str,
     body: ApprovalBody,
     request: Request,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(require_deployment_access),
 ) -> dict[str, bool]:
     found = request.app.state.broker.resolve(
         user_id=user.user_id,

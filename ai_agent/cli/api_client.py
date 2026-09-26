@@ -7,10 +7,11 @@ import httpx
 
 
 class AgentApiError(RuntimeError):
-    def __init__(self, status: int, detail: str):
+    def __init__(self, status: int, detail: str, *, code: str | None = None):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.code = code
 
 
 class AgentApiClient:
@@ -44,7 +45,8 @@ class AgentApiClient:
         ) as response:
             if response.status_code >= 400:
                 body = response.read().decode("utf-8", errors="replace")
-                raise AgentApiError(response.status_code, _detail(body, response.status_code))
+                message, code = _detail(body, response.status_code)
+                raise AgentApiError(response.status_code, message, code=code)
             for line in response.iter_lines():
                 if not line:
                     continue
@@ -66,7 +68,8 @@ class AgentApiClient:
                 json={"approved": approved, "grant_scope": grant_scope},
             )
         if response.status_code >= 400:
-            raise AgentApiError(response.status_code, _detail(response.text, response.status_code))
+            message, code = _detail(response.text, response.status_code)
+            raise AgentApiError(response.status_code, message, code=code)
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
         response = self._http.request(
@@ -76,7 +79,8 @@ class AgentApiClient:
             **kwargs,
         )
         if response.status_code >= 400:
-            raise AgentApiError(response.status_code, _detail(response.text, response.status_code))
+            message, code = _detail(response.text, response.status_code)
+            raise AgentApiError(response.status_code, message, code=code)
         payload = response.json()
         return payload if isinstance(payload, dict) else {}
 
@@ -84,12 +88,17 @@ class AgentApiClient:
         return {"Authorization": f"Bearer {self.access_token}"}
 
 
-def _detail(body: str, status: int) -> str:
+def _detail(body: str, status: int) -> tuple[str, str | None]:
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
-        return body or f"HTTP {status}"
+        return body or f"HTTP {status}", None
     detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message")
+        code = detail.get("code")
+        if isinstance(message, str):
+            return message, code if isinstance(code, str) else None
     if isinstance(detail, str):
-        return detail
-    return body or f"HTTP {status}"
+        return detail, None
+    return body or f"HTTP {status}", None

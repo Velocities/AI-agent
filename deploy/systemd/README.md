@@ -100,6 +100,21 @@ sudo usermod -aG render,video ai
 
 Adding `ai` to the `docker` group is a separate decision. It is near-root. Do it only if a Docker execution target needs it.
 
+## 2b. Approve users (deployment whitelist)
+
+Discord sign-in only proves identity. This machine keeps its own allowlist in the same SQLite file as conversations.
+
+After you try the client once:
+
+```bash
+ai-agent config access list
+ai-agent config access approve <user_id>
+ai-agent config access deny <user_id>    # optional; approve again to undo
+ai-agent config access bootstrap-help
+```
+
+Pending users receive a clear message in the CLI until you approve them on **this** server.
+
 ## 3. Start, stop, and restart
 
 ```bash

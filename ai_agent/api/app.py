@@ -5,9 +5,10 @@ from fastapi import Depends, FastAPI
 from ai_agent.api.approvals import ApprovalBroker
 from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
 from ai_agent.api.conversations import router as conversation_router
-from ai_agent.api.deps import get_current_user
+from ai_agent.api.deps import get_current_user, require_deployment_access
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
+from ai_agent.deployment.access_store import DeploymentAccessStore
 
 __all__ = ["create_app", "get_current_user"]
 
@@ -18,7 +19,9 @@ def create_app(
     *,
     configure_auth: bool = True,
     store: ConversationStore | None = None,
+    access_store: DeploymentAccessStore | None = None,
     broker: ApprovalBroker | None = None,
+    enforce_access: bool = True,
 ) -> FastAPI:
     """Build the public API.
 
@@ -37,6 +40,7 @@ def create_app(
     app.state.verifier = resolved
     app.state.settings = settings
     app.state.store = store
+    app.state.access_store = access_store if enforce_access else None
     app.state.broker = broker or ApprovalBroker()
     app.state.approval_sessions = {}
     app.state.agent_factory = None
@@ -46,7 +50,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/me")
-    def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict[str, str]:
+    def me(user: AuthenticatedUser = Depends(require_deployment_access)) -> dict[str, str]:
         return {"user_id": user.user_id}
 
     app.include_router(conversation_router)

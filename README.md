@@ -297,7 +297,19 @@ The installer writes `/etc/systemd/system/ai-agent.service`, creates the `ai` us
 
 Re-run `sudo deploy/systemd/install.sh` after you move the checkout, recreate `.venv`, or pull unit template changes, then `sudo systemctl daemon-reload`.
 
-**4. Verify**
+**4. Approve yourself (first login)**
+
+Every Supabase user starts **pending** on this deployment until you allow them on the **server**:
+
+```bash
+ai-agent config access bootstrap-help   # full steps
+ai-agent config access list             # after you tried ai-agent once from your PC
+ai-agent config access approve YOUR_SUPABASE_USER_ID
+```
+
+Sign in on your PC with `ai-agent login`, run `ai-agent` once (you will see the whitelist message), then approve the `user_id` shown in `list`.
+
+**5. Verify**
 
 ```bash
 sudo systemctl status ai-agent

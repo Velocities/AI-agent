@@ -49,3 +49,16 @@ class MessageRow(Base):
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     conversation: Mapped[ConversationRow] = relationship(back_populates="messages")
+
+
+class DeploymentAccessRow(Base):
+    """Who may use this deployment's API (local SQLite only, not Supabase)."""
+
+    __tablename__ = "deployment_access"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

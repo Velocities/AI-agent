@@ -117,7 +117,7 @@ def test_run_refuses_a_public_api_bind(monkeypatch) -> None:
         called = True
         raise AssertionError("database should not open")
 
-    monkeypatch.setattr("ai_agent.service.supervisor.open_store", open_store)
+    monkeypatch.setattr("ai_agent.service.supervisor.open_stores", open_store)
     assert run(Settings(), MagicMock()) == 1
     assert called is False
 
@@ -129,13 +129,16 @@ def test_run_returns_1_when_the_database_cannot_open(monkeypatch) -> None:
     def managed(*_args, **_kwargs):
         raise AssertionError("engine should not start")
 
-    monkeypatch.setattr("ai_agent.service.supervisor.open_store", open_store)
+    monkeypatch.setattr("ai_agent.service.supervisor.open_stores", open_store)
     monkeypatch.setattr("ai_agent.service.supervisor.managed_engine_process", managed)
     assert run(Settings(), MagicMock()) == 1
 
 
 def test_run_returns_1_when_the_model_does_not_warm(monkeypatch) -> None:
-    monkeypatch.setattr("ai_agent.service.supervisor.open_store", lambda _settings: MagicMock())
+    monkeypatch.setattr(
+        "ai_agent.service.supervisor.open_stores",
+        lambda _settings: (MagicMock(), MagicMock()),
+    )
     monkeypatch.setattr(
         "ai_agent.service.supervisor.managed_engine_process",
         _attached_engine(),
@@ -153,12 +156,15 @@ def test_run_points_the_api_at_the_facade_and_stops_it(monkeypatch) -> None:
     httpd.server_address = ("127.0.0.1", 43111)
     seen: dict = {}
 
-    def run_api(api_settings, _store, _console):
+    def run_api(api_settings, _store, _access_store, _console):
         seen["host"] = api_settings.llm_host
         seen["transport"] = api_settings.llm_transport
         return 0
 
-    monkeypatch.setattr("ai_agent.service.supervisor.open_store", lambda _settings: MagicMock())
+    monkeypatch.setattr(
+        "ai_agent.service.supervisor.open_stores",
+        lambda _settings: (MagicMock(), MagicMock()),
+    )
     monkeypatch.setattr(
         "ai_agent.service.supervisor.managed_engine_process",
         _attached_engine(),
@@ -185,7 +191,10 @@ def test_run_closes_the_facade_when_the_api_exits(monkeypatch) -> None:
     def run_api(*_args, **_kwargs):
         raise SystemExit(3)
 
-    monkeypatch.setattr("ai_agent.service.supervisor.open_store", lambda _settings: MagicMock())
+    monkeypatch.setattr(
+        "ai_agent.service.supervisor.open_stores",
+        lambda _settings: (MagicMock(), MagicMock()),
+    )
     monkeypatch.setattr(
         "ai_agent.service.supervisor.managed_engine_process",
         _attached_engine(),

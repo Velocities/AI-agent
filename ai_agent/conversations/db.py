@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
+from ai_agent.deployment.access_store import DeploymentAccessStore
 
 
 def default_database_path() -> Path:
@@ -43,17 +44,26 @@ def upgrade_database(url: str) -> None:
 
 
 def open_store(settings: Settings) -> ConversationStore:
+    return open_stores(settings)[0]
+
+
+def open_stores(settings: Settings) -> tuple[ConversationStore, DeploymentAccessStore]:
     url = database_url(settings)
     upgrade_database(url)
     engine = _engine(url)
     _restrict_sqlite_file(url)
-    return ConversationStore(engine)
+    return ConversationStore(engine), DeploymentAccessStore(engine)
 
 
 def open_store_at(url: str) -> ConversationStore:
     """Open a store at an explicit URL. Used by tests and by open_store."""
+    return open_stores_at(url)[0]
+
+
+def open_stores_at(url: str) -> tuple[ConversationStore, DeploymentAccessStore]:
     upgrade_database(url)
-    return ConversationStore(_engine(url))
+    engine = _engine(url)
+    return ConversationStore(engine), DeploymentAccessStore(engine)
 
 
 def _engine(url: str) -> Engine:

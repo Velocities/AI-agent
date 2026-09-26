@@ -13,7 +13,7 @@ from ai_agent.cli.app import configure_logging, configure_stdio_encoding
 from ai_agent.cli.errors import startup_should_exit
 from ai_agent.cli.llm_serve import prepare_upstream
 from ai_agent.config import LlmTransport, Settings
-from ai_agent.conversations.db import database_display_path, database_url, open_store
+from ai_agent.conversations.db import database_display_path, database_url, open_stores
 from ai_agent.llm.server.facade import AgentLlmFacade, bind_llm_server, public_url
 from ai_agent.llm.server.process.base import EngineProcessError
 from ai_agent.llm.server.runtime import managed_engine_process
@@ -96,11 +96,11 @@ def _stop_facade(httpd, thread: threading.Thread) -> None:
         logger.warning("LLM facade thread did not exit within 5s")
 
 
-def _run_api(settings: Settings, store, console: Console) -> int:
+def _run_api(settings: Settings, store, access_store, console: Console) -> int:
     host = settings.api_bind_host.strip()
     port = settings.api_bind_port
     display = "127.0.0.1" if host.lower() == "localhost" else host
-    app = create_app(settings, store=store)
+    app = create_app(settings, store=store, access_store=access_store)
     listening = f"http://{display}:{port}"
     logger.info("API listening at %s", listening)
     console.print(f"[bold]API:[/bold] {listening}")
@@ -126,7 +126,13 @@ def _run_api(settings: Settings, store, console: Console) -> int:
     return 0
 
 
-def _serve_with_engine(settings: Settings, console: Console, store, process) -> int:
+def _serve_with_engine(
+    settings: Settings,
+    console: Console,
+    store,
+    access_store,
+    process,
+) -> int:
     sd_notify(f"Warming {settings.llm_model}")
     engine = prepare_upstream(
         settings,
@@ -172,7 +178,7 @@ def _serve_with_engine(settings: Settings, console: Console, store, process) -> 
     thread.start()
     api_settings = settings_for_api(settings, endpoint)
     try:
-        return _run_api(api_settings, store, console)
+        return _run_api(api_settings, store, access_store, console)
     finally:
         sd_notify("Stopping", stopping=True)
         logger.info("Stopping LLM facade")
@@ -196,7 +202,7 @@ def run(settings: Settings, console: Console) -> int:
 
     sd_notify("Opening conversation database")
     try:
-        store = open_store(settings)
+        store, access_store = open_stores(settings)
     except Exception as exc:
         logger.error("Could not open conversation database: %s", exc)
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
@@ -205,7 +211,7 @@ def run(settings: Settings, console: Console) -> int:
     sd_notify(f"Starting {settings.llm_engine.value}")
     try:
         with managed_engine_process(settings, console) as process:
-            return _serve_with_engine(settings, console, store, process)
+            return _serve_with_engine(settings, console, store, access_store, process)
     except EngineProcessError:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
 

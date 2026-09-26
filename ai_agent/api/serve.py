@@ -7,7 +7,7 @@ from rich.console import Console
 
 from ai_agent.api.app import create_app
 from ai_agent.config import Settings
-from ai_agent.conversations.db import database_display_path, database_url, open_store
+from ai_agent.conversations.db import database_display_path, database_url, open_stores
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def main() -> int:
         )
 
     try:
-        store = open_store(settings)
+        store, access_store = open_stores(settings)
     except Exception as exc:
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
         return 1
@@ -78,7 +78,7 @@ def main() -> int:
     )
 
     uvicorn.run(
-        create_app(settings, store=store),
+        create_app(settings, store=store, access_store=access_store),
         host=host,
         port=port,
         log_level=settings.agent_log_level.lower(),
