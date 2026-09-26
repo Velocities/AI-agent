@@ -68,8 +68,9 @@ def build_agent(
     prompter=None,
     audit_user: str | None = None,
     session: ApprovalSession | None = None,
+    settings: Settings | None = None,
 ) -> AgentLoop:
-    settings = Settings()
+    settings = settings or Settings()
     configure_logging(settings.agent_log_level)
     console = console or Console()
 
@@ -172,6 +173,17 @@ def present_turn_result(
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] in {"start", "stop", "restart", "status"}:
+        from ai_agent.cli.service_cmd import main as service_main
+
+        return service_main(args)
+    if args and args[0] == "serve":
+        if len(args) != 1:
+            print("usage: ai-agent serve", file=sys.stderr)
+            return 2
+        from ai_agent.service.supervisor import main as serve_main
+
+        return serve_main()
     if args and args[0] == "config":
         from ai_agent.cli.config_cmd import main as config_main
 

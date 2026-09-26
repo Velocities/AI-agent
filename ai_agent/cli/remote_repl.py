@@ -31,7 +31,9 @@ def run_remote_repl() -> int:
         return 1
     except httpx.HTTPError as exc:
         console.print(f"[red]Cannot reach {settings.api_base_url}:[/red] {exc}")
-        console.print("Start [bold]ai-agent-serve[/bold] on the model machine and try again.")
+        console.print(
+            "Start [bold]ai-agent serve[/bold] on the model machine and try again."
+        )
         client.close()
         return 1
 

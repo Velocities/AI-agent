@@ -103,7 +103,12 @@ def _run_turn(
         timeout=settings.agent_approval_timeout,
     )
     factory = agent_factory or _default_agent_factory
-    agent = factory(prompter=prompter, session=session, audit_user=user_id)
+    agent = factory(
+        settings=settings,
+        prompter=prompter,
+        session=session,
+        audit_user=user_id,
+    )
     try:
         _drive_agent(
             agent,
@@ -169,5 +174,16 @@ def _drive_agent(
     )
 
 
-def _default_agent_factory(*, prompter, session, audit_user: str) -> AgentLoop:
-    return build_agent(prompter=prompter, session=session, audit_user=audit_user)
+def _default_agent_factory(
+    *,
+    settings: Settings,
+    prompter,
+    session,
+    audit_user: str,
+) -> AgentLoop:
+    return build_agent(
+        prompter=prompter,
+        session=session,
+        audit_user=audit_user,
+        settings=settings,
+    )
