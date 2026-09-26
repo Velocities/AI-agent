@@ -39,7 +39,7 @@ if ! id -u "${service_user}" >/dev/null 2>&1; then
 fi
 
 service_group=$(id -gn "${service_user}")
-install -d -o "${service_user}" -g "${service_group}" -m 0750 /var/lib/ai-agent
+install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
 install -d -o "${service_user}" -g "${service_group}" -m 0750 /tmp/ai-agent
 
 home_dir=$(getent passwd "${service_user}" | cut -d: -f6)
@@ -116,6 +116,54 @@ elif ! runuser -u "${service_user}" -- test -r "${root}/.env"; then
   fi
 fi
 
+# Must match StateDirectory=ai-agent; ProtectSystem=strict leaves only that writable.
+shared_db="/var/lib/ai-agent/conversations.db"
+shared_db_url="sqlite:///${shared_db}"
+if [[ -f "${shared_db}" ]]; then
+  chown "${service_user}:${service_group}" "${shared_db}"
+  chmod 660 "${shared_db}"
+fi
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "${service_user}" ]]; then
+  if usermod -aG "${service_group}" "${SUDO_USER}" 2>/dev/null; then
+    echo "Added ${SUDO_USER} to group ${service_group} (for ai-agent config access on ${shared_db})."
+    echo "Log out and back in, or run: newgrp ${service_group}"
+  fi
+fi
+if [[ -f "${root}/.env" ]]; then
+  python3 - "${root}/.env" "${shared_db_url}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+shared_url = sys.argv[2]
+text = env_path.read_text()
+if re.search(r"^CONVERSATION_DATABASE=\S", text, re.MULTILINE):
+    sys.exit(0)
+if re.search(r"^CONVERSATION_DATABASE=\s*$", text, re.MULTILINE):
+    text = re.sub(
+        r"^CONVERSATION_DATABASE=\s*$",
+        f"CONVERSATION_DATABASE={shared_url}",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+else:
+    if not text.endswith("\n"):
+        text += "\n"
+    text += (
+        "\n# Shared by systemd (user ai) and admin CLI — do not use per-login paths.\n"
+        f"CONVERSATION_DATABASE={shared_url}\n"
+    )
+env_path.write_text(text)
+print(f"Set CONVERSATION_DATABASE in {env_path} to the shared deployment database.")
+PY
+  chgrp "${service_group}" "${root}/.env" 2>/dev/null || true
+  chmod 640 "${root}/.env" 2>/dev/null || true
+else
+  echo "warning: add to .env when created: CONVERSATION_DATABASE=${shared_db_url}" >&2
+fi
+
 python3 - \
   "${template}" \
   "${dest}" \
@@ -187,6 +235,10 @@ Status and logs:
 
 If this machine uses an NVIDIA GPU, add the service user to the device groups:
   sudo usermod -aG render,video ${service_user}
+
+Database: set CONVERSATION_DATABASE=${shared_db_url} in .env (installer adds this if missing).
+Restart after .env changes: sudo systemctl restart ai-agent
+Approve users: ai-agent config access list  (same .env / path as the service)
 
 If an engine is already listening at LLM_UPSTREAM, this service attaches to it
 and does not stop it on shutdown. Leave that engine's own unit enabled only

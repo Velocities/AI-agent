@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -257,6 +258,12 @@ def cmd_remote_provider(
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "access":
+        from ai_agent.cli.access_cmd import main as access_main
+
+        return access_main(raw[1:])
+
     parser = argparse.ArgumentParser(
         prog="ai-agent config",
         description="Configure this project without starting the agent REPL.",
@@ -278,20 +285,9 @@ def main(argv: list[str] | None = None) -> int:
         help="test the tunnel, switch .env back to local HTTP, or trust the SSH host key.",
     )
     sub.add_parser("show", help="Print the current LLM transport settings.")
-    access = sub.add_parser(
+    sub.add_parser(
         "access",
         help="Approve or deny Supabase users for this deployment (local whitelist).",
-    )
-    access_sub = access.add_subparsers(dest="access_command")
-    access_sub.add_parser("list", help="Pending whitelist requests.")
-    access_sub.add_parser("list-all", help="All access rows.")
-    access_approve = access_sub.add_parser("approve", help="Allow a user id.")
-    access_approve.add_argument("user_id")
-    access_deny = access_sub.add_parser("deny", help="Deny a user id.")
-    access_deny.add_argument("user_id")
-    access_sub.add_parser(
-        "bootstrap-help",
-        help="How to approve yourself on a fresh server.",
     )
     service_access = sub.add_parser(
         "service-access",
@@ -348,15 +344,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "show":
         return cmd_show(console, settings)
-    if args.command == "access":
-        from ai_agent.cli.access_cmd import main as access_main
-
-        forwarded: list[str] = []
-        if getattr(args, "access_command", None):
-            forwarded.append(args.access_command)
-            if args.access_command in {"approve", "deny"} and getattr(args, "user_id", None):
-                forwarded.append(args.user_id)
-        return access_main(forwarded or None)
     if args.command == "service-access":
         from ai_agent.cli.service_access_cmd import main as service_access_main
 

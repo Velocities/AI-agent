@@ -29,12 +29,18 @@ def access_store(tmp_path) -> DeploymentAccessStore:
 
 def test_authorize_creates_pending_once(access_store: DeploymentAccessStore) -> None:
     with pytest.raises(AccessGateError) as pending:
-        access_store.authorize(USER)
+        access_store.authorize(
+            USER,
+            email="ada@example.com",
+            display_name="Ada Lovelace",
+        )
     assert pending.value.code == ACCESS_PENDING_CODE
     with pytest.raises(AccessGateError):
-        access_store.authorize(USER)
+        access_store.authorize(USER, email="ada@example.com")
     rows = access_store.list_by_status(AccessStatus.PENDING)
     assert len(rows) == 1
+    assert rows[0].email == "ada@example.com"
+    assert rows[0].display_name == "Ada Lovelace"
 
 
 def test_denied_user_cannot_re_request(access_store: DeploymentAccessStore) -> None:
@@ -46,7 +52,7 @@ def test_denied_user_cannot_re_request(access_store: DeploymentAccessStore) -> N
 
 def test_approve_after_deny(access_store: DeploymentAccessStore) -> None:
     access_store.deny(USER)
-    access_store.approve(USER)
+    access_store.approve(USER, linux_username="deployuser")
     access_store.authorize(USER)
 
 
@@ -68,7 +74,7 @@ def test_api_me_pending(tmp_path, access_store: DeploymentAccessStore) -> None:
 
 def test_api_me_approved(tmp_path) -> None:
     store, access = open_stores_at(f"sqlite:///{tmp_path / 'ok.sqlite3'}")
-    access.approve(USER)
+    access.approve(USER, linux_username="deployuser")
     app = create_app(
         __import__("ai_agent.config", fromlist=["Settings"]).Settings(),
         _Verifier(),

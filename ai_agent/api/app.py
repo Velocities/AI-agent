@@ -51,7 +51,12 @@ def create_app(
 
     @app.get("/api/me")
     def me(user: AuthenticatedUser = Depends(require_deployment_access)) -> dict[str, str]:
-        return {"user_id": user.user_id}
+        payload = {"user_id": user.user_id}
+        if user.email:
+            payload["email"] = user.email
+        if user.display_name:
+            payload["display_name"] = user.display_name
+        return payload
 
     app.include_router(conversation_router)
     return app

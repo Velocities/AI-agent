@@ -59,7 +59,11 @@ def require_deployment_access(
     if store is None:
         return user
     try:
-        store.authorize(user.user_id)
+        store.authorize(
+            user.user_id,
+            email=user.email,
+            display_name=user.display_name,
+        )
     except AccessGateError as exc:
         raise HTTPException(
             status_code=403,

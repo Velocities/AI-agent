@@ -108,12 +108,40 @@ After you try the client once:
 
 ```bash
 ai-agent config access list
-ai-agent config access approve <user_id>
+ai-agent config access approve <user_id> --run-as <linux_user>
 ai-agent config access deny <user_id>    # optional; approve again to undo
 ai-agent config access bootstrap-help
 ```
 
 Pending users receive a clear message in the CLI until you approve them on **this** server.
+
+The shared database lives under `/var/lib/ai-agent/` (mode `2770`, group `ai`). Your login user must be in group `ai` and have a fresh group session (`newgrp ai` or re-login). SQLite needs **group write on the directory** (for `-wal` / `-shm`), not only `660` on the `.db` file. The unit uses `StateDirectoryMode=0770` and `UMask=0007` so the service keeps group-readable files. Re-run `sudo deploy/systemd/install.sh` after pulling, or:
+
+```bash
+sudo usermod -aG ai "$USER"
+newgrp ai   # or log out and back in
+sudo chmod 2770 /var/lib/ai-agent
+sudo chown ai:ai /var/lib/ai-agent/conversations.db*
+sudo chmod 660 /var/lib/ai-agent/conversations.db*
+# In /etc/systemd/system/ai-agent.service: StateDirectoryMode=0770, UMask=0007
+sudo systemctl daemon-reload && sudo systemctl restart ai-agent
+```
+
+If permissions still block you: `sudo -u ai bash -c 'cd /path/to/checkout && ./.venv/bin/ai-agent config access list'`.
+
+Local `run_command` on this machine runs as the **Linux user** set at approve time (`--run-as`), not as your login shell. The service keeps `CAP_SETUID` / `CAP_SETGID` so it can drop privileges via `setpriv` without broad sudo.
+
+### Reset the conversation database
+
+When schema changes during development, stop the service and remove the shared file (and WAL sidecars), then start again so Alembic recreates tables:
+
+```bash
+sudo systemctl stop ai-agent
+sudo rm -f /var/lib/ai-agent/conversations.db /var/lib/ai-agent/conversations.db-wal /var/lib/ai-agent/conversations.db-shm
+sudo systemctl start ai-agent
+```
+
+Sign in from the client once to create a new pending row, then `ai-agent config access list` and approve with `--run-as`.
 
 ## 3. Start, stop, and restart
 

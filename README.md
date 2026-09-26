@@ -304,7 +304,7 @@ Every Supabase user starts **pending** on this deployment until you allow them o
 ```bash
 ai-agent config access bootstrap-help   # full steps
 ai-agent config access list             # after you tried ai-agent once from your PC
-ai-agent config access approve YOUR_SUPABASE_USER_ID
+ai-agent config access approve YOUR_SUPABASE_USER_ID --run-as YOUR_LINUX_USERNAME
 ```
 
 Sign in on your PC with `ai-agent login`, run `ai-agent` once (you will see the whitelist message), then approve the `user_id` shown in `list`.

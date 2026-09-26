@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pwd
 import stat
 from pathlib import Path
 
@@ -16,6 +17,32 @@ from ai_agent.deployment.access_store import DeploymentAccessStore
 def default_database_path() -> Path:
     """SQLite file on the machine running the model and ai-agent-serve."""
     return Path.home() / ".local" / "share" / "ai-agent" / "conversations.db"
+
+
+def shared_deployment_database_path() -> Path:
+    """Single SQLite file for systemd + admin CLI (see CONVERSATION_DATABASE).
+
+    Must stay under the unit's StateDirectory=ai-agent; ProtectSystem=strict
+    makes the rest of /var/lib read-only for the service.
+    """
+    return Path("/var/lib/ai-agent") / "conversations.db"
+
+
+def service_user_database_path(service_user: str = "ai") -> Path:
+    """Where the API stores data when CONVERSATION_DATABASE is unset and User=ai."""
+    try:
+        home = Path(pwd.getpwnam(service_user).pw_dir)
+    except KeyError:
+        home = Path(f"/var/lib/{service_user}")
+    return home / ".local" / "share" / "ai-agent" / "conversations.db"
+
+
+def service_user_database_url(service_user: str = "ai") -> str:
+    return f"sqlite:///{service_user_database_path(service_user)}"
+
+
+def shared_deployment_database_url() -> str:
+    return f"sqlite:///{shared_deployment_database_path()}"
 
 
 def database_url(settings: Settings) -> str:
@@ -83,8 +110,15 @@ def _enable_sqlite(engine: Engine) -> None:
     def _on_connect(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         cursor.close()
+
+
+def _shared_sqlite_file_mode() -> int:
+    return stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
 
 
 def _restrict_sqlite_file(url: str) -> None:
@@ -94,5 +128,18 @@ def _restrict_sqlite_file(url: str) -> None:
     if made.database == ":memory:":
         return
     path = Path(made.database)
-    if path.exists():
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    if not path.exists():
+        return
+    if path.resolve() == shared_deployment_database_path().resolve():
+        path.chmod(_shared_sqlite_file_mode())
+        _restrict_shared_sqlite_sidecars(path)
+        return
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _restrict_shared_sqlite_sidecars(db_path: Path) -> None:
+    mode = _shared_sqlite_file_mode()
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{db_path}{suffix}")
+        if sidecar.exists():
+            sidecar.chmod(mode)

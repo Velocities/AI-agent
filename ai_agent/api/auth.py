@@ -8,6 +8,7 @@ import jwt
 from jwt import PyJWKClient, PyJWKClientError
 
 from ai_agent.config import Settings
+from ai_agent.deployment.identity import profile_from_jwt_payload
 
 
 class InvalidTokenError(Exception):
@@ -21,6 +22,8 @@ class AuthUnavailableError(Exception):
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str
+    email: str = ""
+    display_name: str = ""
 
 
 class TokenVerifier(Protocol):
@@ -106,7 +109,12 @@ class SupabaseJwtVerifier:
             user_id = str(UUID(subject))
         except ValueError as exc:
             raise InvalidTokenError("Token subject is not a user id.") from exc
-        return AuthenticatedUser(user_id=user_id)
+        email, display_name = profile_from_jwt_payload(payload)
+        return AuthenticatedUser(
+            user_id=user_id,
+            email=email,
+            display_name=display_name,
+        )
 
 
 def build_verifier(settings: Settings) -> SupabaseJwtVerifier | None:

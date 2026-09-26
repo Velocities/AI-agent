@@ -15,6 +15,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.executor import CommandExecutor
+from ai_agent.commands.run_as import build_command_executor
 from ai_agent.config import Settings
 from ai_agent.execution_targets.router import load_router
 from ai_agent.execution_targets.store import TargetConfigError
@@ -69,16 +70,18 @@ def build_agent(
     audit_user: str | None = None,
     session: ApprovalSession | None = None,
     settings: Settings | None = None,
+    run_as_linux_user: str | None = None,
 ) -> AgentLoop:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
     console = console or Console()
 
     policy = PolicyEngine.from_yaml(settings.policy_path(), settings.agent_scratch_dir)
-    executor = CommandExecutor(
+    executor = build_command_executor(
         timeout=settings.agent_tool_timeout,
         output_limit=settings.agent_output_limit,
         scratch_dir=settings.agent_scratch_dir,
+        linux_username=run_as_linux_user,
     )
     try:
         router = load_router(

@@ -5,6 +5,7 @@ import logging
 import uvicorn
 from rich.console import Console
 
+from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
 from ai_agent.config import Settings
 from ai_agent.conversations.db import database_display_path, database_url, open_stores
@@ -77,8 +78,10 @@ def main() -> int:
         "The database file is not served. Ctrl+C to stop.[/dim]\n"
     )
 
+    app = create_app(settings, store=store, access_store=access_store)
+    app.state.agent_factory = build_api_agent_factory(access_store)
     uvicorn.run(
-        create_app(settings, store=store, access_store=access_store),
+        app,
         host=host,
         port=port,
         log_level=settings.agent_log_level.lower(),

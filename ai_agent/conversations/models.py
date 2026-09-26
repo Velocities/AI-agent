@@ -59,6 +59,8 @@ class DeploymentAccessRow(Base):
     user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), default="")
+    email: Mapped[str] = mapped_column(String(320), default="")
+    linux_username: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

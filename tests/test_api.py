@@ -65,6 +65,8 @@ def _token(
         "iss": issuer,
         "iat": now,
         "exp": now + expires_in,
+        "email": "user@example.com",
+        "user_metadata": {"full_name": "Example User"},
     }
     encoded = jwt.encode(payload, key, algorithm=algorithm)
     assert isinstance(encoded, str)
@@ -124,6 +126,8 @@ def test_rs256_token_returns_supabase_user_id() -> None:
     verifier, client = _verifier()
     user = verifier.verify(_token())
     assert user.user_id == str(UUID(_USER_ID))
+    assert user.email == "user@example.com"
+    assert user.display_name == "Example User"
     client.get_signing_key_from_jwt.assert_called_once()
 
 
