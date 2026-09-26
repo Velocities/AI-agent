@@ -66,6 +66,12 @@ rules:
   - binary: ls
     risk: READ_ONLY
     path_args: true
+  - binary: pwd
+    risk: READ_ONLY
+  - binary: whoami
+    risk: READ_ONLY
+  - binary: id
+    risk: READ_ONLY
   - binary: cat
     risk: READ_ONLY
     path_args: true

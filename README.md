@@ -363,7 +363,7 @@ That installs FastAPI and Uvicorn with the rest of the project. It does not inst
 | `SUPABASE_ANON_KEY` | publishable key | Same key as Android `local.properties`. |
 | `API_BIND_HOST` | `127.0.0.1` | Must stay a loopback address. |
 | `API_BIND_PORT` | `8000` | Local port the tunnel targets. |
-| `API_BASE_URL` | `http://127.0.0.1:8000` | Where the CLI sends chats. Use the HTTPS hostname from another machine. |
+| `API_BASE_URL` | `http://127.0.0.1:8000` on the server; **`https://agent.example.com`** from your PC (no `:8000` — Cloudflare uses port 443) | Where the CLI sends chats |
 | `CONVERSATION_DATABASE` | empty | SQLite file on this machine. Set a SQLAlchemy URL to put chats somewhere else later. |
 
 If vLLM is already using port 8000, pick another `API_BIND_PORT` and use that port in the tunnel config.
@@ -396,6 +396,8 @@ curl -s http://127.0.0.1:8000/health
 The first start creates the conversation SQLite file and applies the Alembic migration (under the **user that runs the server** — `/var/lib/ai-agent/…` for systemd, or your home when you run `ai-agent serve` locally). Nothing in the API serves that file over HTTP.
 
 `{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
+
+**CLI on your PC.** In the repo on Windows/macOS/Linux, set `API_BASE_URL` to the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
 
 **CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
 

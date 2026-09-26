@@ -4,6 +4,7 @@ import httpx
 from rich.console import Console
 
 from ai_agent.cli.api_client import AgentApiClient, AgentApiError
+from ai_agent.cli.api_url import public_api_base_url_hint
 from ai_agent.cli.credentials import (
     load_conversation_id,
     load_session,
@@ -39,6 +40,8 @@ def run_remote_repl() -> int:
 
     console.print("[bold]AI Server Assistant[/bold]")
     console.print(f"API: {settings.api_base_url}")
+    if hint := public_api_base_url_hint(settings.api_base_url):
+        console.print(f"[yellow]{hint}[/yellow]")
     console.print("Type /new, /list, or exit.\n")
 
     try:
@@ -54,10 +57,13 @@ def run_remote_repl() -> int:
                 console.print("Goodbye.")
                 return 0
             if user_input == "/list":
-                _print_conversations(client, console)
+                if not _print_conversations(client, console):
+                    return 1
                 continue
             if user_input == "/new":
-                created = client.create_conversation()
+                created = _create_conversation(client, console)
+                if created is None:
+                    return 1
                 conversation_id = created["id"]
                 save_conversation_id(conversation_id)
                 console.print("[dim]Started a new chat.[/dim]")
@@ -108,16 +114,47 @@ def _current_conversation(client: AgentApiClient, console: Console) -> str:
     return created["id"]
 
 
-def _print_conversations(client: AgentApiClient, console: Console) -> None:
-    rows = client.list_conversations()
+def _report_api_error(console: Console, exc: Exception, *, base_url: str) -> None:
+    if isinstance(exc, AgentApiError):
+        if exc.status == 401:
+            console.print("[red]Sign-in was rejected. Run ai-agent login.[/red]")
+        else:
+            console.print(f"[red]{exc.detail}[/red]")
+        return
+    if isinstance(exc, httpx.HTTPError):
+        console.print(f"[red]Cannot reach {base_url}:[/red] {exc}")
+        if hint := public_api_base_url_hint(base_url):
+            console.print(f"[yellow]{hint}[/yellow]")
+        return
+    raise exc
+
+
+def _create_conversation(
+    client: AgentApiClient,
+    console: Console,
+) -> dict | None:
+    try:
+        return client.create_conversation()
+    except (AgentApiError, httpx.HTTPError) as exc:
+        _report_api_error(console, exc, base_url=client.base_url)
+        return None
+
+
+def _print_conversations(client: AgentApiClient, console: Console) -> bool:
+    try:
+        rows = client.list_conversations()
+    except (AgentApiError, httpx.HTTPError) as exc:
+        _report_api_error(console, exc, base_url=client.base_url)
+        return False
     if not rows:
         console.print("[dim]No chats yet.[/dim]")
-        return
+        return True
     current = load_conversation_id()
     for row in rows:
         mark = "*" if row.get("id") == current else " "
         title = row.get("title") or "Untitled"
         console.print(f"{mark} {title}  [dim]{row.get('id')}[/dim]")
+    return True
 
 
 def _play_turn(
