@@ -1,5 +1,5 @@
 # Default command policy for the ai-agent.
-# Rules are evaluated in order; first match wins unless marked as fallback.
+# Rules are evaluated in order; first match wins. Commands matching no rule use the fallback.
 #
 # Each rule matches on binary name (argv[0]) and optional subcommand (argv[1]).
 # Risk levels: READ_ONLY, REVERSIBLE, DESTRUCTIVE, FORBIDDEN
@@ -12,6 +12,8 @@ forbidden_patterns:
   - argv_regex: '^(rm)$'
     subcommand_regex: '^-.*r.*f$|^--recursive$'
   - argv_regex: '^(mkfs|dd|mkswap|parted|fdisk|gdisk)$'
+  # date is read-only except when setting the clock (-s / --set, alone or in a flag group).
+  - pattern: '^(\S*/)?date( .*)? (-[A-Za-z]*s|--set)'
 
 filesystem:
   readable_paths:
@@ -69,6 +71,14 @@ rules:
   - binary: pwd
     risk: READ_ONLY
   - binary: whoami
+    risk: READ_ONLY
+  - binary: date
+    risk: READ_ONLY
+  - binary: timedatectl
+    subcommand: status
+    risk: READ_ONLY
+  - binary: timedatectl
+    subcommand: show
     risk: READ_ONLY
   - binary: id
     risk: READ_ONLY
@@ -182,6 +192,8 @@ rules:
     subcommand: -T
     risk: READ_ONLY
 
+# Commands without a rule are not refused: they need the user's approval every time
+# (DESTRUCTIVE is never covered by a session grant). forbidden_patterns above stay hard blocks.
 fallback:
-  risk: FORBIDDEN
-  reason: "No matching policy rule"
+  risk: DESTRUCTIVE
+  reason: "No matching policy rule; needs your approval"

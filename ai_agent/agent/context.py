@@ -97,8 +97,15 @@ def build_system_prompt(
     targets: list[TargetSummary] | None = None,
     *,
     default_target: str = "local",
+    unlisted_need_approval: bool = False,
 ) -> str:
     commands = ", ".join(allowed_commands)
+    unlisted = (
+        "Unlisted commands are not forbidden: they run only after the user explicitly approves them, "
+        "every time. Prefer listed commands; use an unlisted one when it is the right tool, and give a clear reason."
+        if unlisted_need_approval
+        else "Unlisted commands are forbidden by policy."
+    )
     target_summaries = targets or [
         TargetSummary(
             name="local",
@@ -163,7 +170,7 @@ Forbidden: shell invocation, command substitution, semicolon chains, piping into
 ## Policy-allowed command binaries
 {commands}
 
-Unlisted commands are forbidden by policy.
+{unlisted}
 
 ## Platform guidance
 {platform_guidance(context)}

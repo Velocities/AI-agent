@@ -2,9 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from ai_agent.approval.session import ApprovalSession, risk_requires_confirmation
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.render import render_command
-from ai_agent.config import Settings
+from ai_agent.config import ConfirmationMode, Settings
 from ai_agent.policy.engine import PolicyEngine
 from ai_agent.policy.risk import RiskLevel
 
@@ -20,6 +21,50 @@ def test_read_only_command_allowed(policy_engine: PolicyEngine) -> None:
     decision = policy_engine.evaluate(expr)
     assert decision.allowed
     assert decision.effective_risk == RiskLevel.READ_ONLY
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["date"], ["date", "-u"], ["date", "+%Z %z"], ["timedatectl", "status"], ["timedatectl", "show"]],
+)
+def test_clock_reads_are_read_only(policy_engine: PolicyEngine, argv: list[str]) -> None:
+    decision = policy_engine.evaluate(parse_command_expr({"type": "single", "argv": argv}))
+    assert decision.allowed
+    assert decision.effective_risk == RiskLevel.READ_ONLY
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["date", "-s", "2020-01-01"],
+        ["date", "-us", "2020-01-01"],
+        ["date", "--set=2020-01-01"],
+        ["/usr/bin/date", "-u", "-s", "2020-01-01"],
+    ],
+)
+def test_clock_changes_are_forbidden(policy_engine: PolicyEngine, argv: list[str]) -> None:
+    decision = policy_engine.evaluate(parse_command_expr({"type": "single", "argv": argv}))
+    assert not decision.allowed
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["lsblk"], ["timedatectl", "set-time", "2020-01-01"], ["dir", "/B", "."]],
+)
+def test_unlisted_command_needs_approval_every_time(policy_engine: PolicyEngine, argv: list[str]) -> None:
+    decision = policy_engine.evaluate(parse_command_expr({"type": "single", "argv": argv}))
+    assert decision.allowed
+    assert decision.effective_risk == RiskLevel.DESTRUCTIVE
+    session = ApprovalSession()
+    session.add_grant(RiskLevel.REVERSIBLE, "global")
+    assert risk_requires_confirmation(decision.effective_risk, ConfirmationMode.PERMISSIVE, session)
+    assert policy_engine.unlisted_need_approval()
+
+
+def test_forbidden_patterns_stay_blocked_despite_approval_fallback(policy_engine: PolicyEngine) -> None:
+    for argv in (["bash", "-c", "id"], ["mkfs", "/dev/sda1"], ["rm", "-rf", "/tmp/x"]):
+        decision = policy_engine.evaluate(parse_command_expr({"type": "single", "argv": argv}))
+        assert not decision.allowed, argv
 
 
 def test_forbidden_rm_recursive(policy_engine: PolicyEngine) -> None:
@@ -192,14 +237,3 @@ def test_powershell_invoke_expression_forbidden(tmp_path: Path) -> None:
     decision = engine.evaluate(expr)
     assert not decision.allowed
 
-
-def test_dir_command_forbidden(tmp_path: Path) -> None:
-    engine = PolicyEngine.from_yaml(Settings().policy_path(), tmp_path / "scratch")
-    expr = parse_command_expr(
-        {
-            "type": "single",
-            "argv": ["dir", "/B", str(Path.cwd())],
-        }
-    )
-    decision = engine.evaluate(expr)
-    assert not decision.allowed

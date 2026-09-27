@@ -82,6 +82,7 @@ class AgentLoop:
             policy.allowed_binaries(),
             self.router.summaries(),
             default_target=self.router.default_name,
+            unlisted_need_approval=policy.unlisted_need_approval(),
         )
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)

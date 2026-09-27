@@ -41,6 +41,8 @@ data class ChatUiState(
     val resolvingApproval: Boolean = false,
     val accessMessage: String? = null,
     val error: String? = null,
+    /** A one-off confirmation, such as a deleted chat, shown in a snackbar. */
+    val notice: String? = null,
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
@@ -109,7 +111,9 @@ class ChatViewModel : ViewModel() {
             if (deleted) {
                 _state.update { state ->
                     val clear = state.currentId == id
+                    val title = state.conversations.firstOrNull { it.id == id }?.title?.ifBlank { null } ?: "New chat"
                     state.copy(
+                        notice = "Deleted \u201c${shorten(title)}\u201d",
                         conversations = state.conversations.filterNot { it.id == id },
                         currentId = if (clear) null else state.currentId,
                         messages = if (clear) emptyList() else state.messages,
@@ -187,6 +191,10 @@ class ChatViewModel : ViewModel() {
         _state.update { it.copy(error = null) }
     }
 
+    fun clearNotice() {
+        _state.update { it.copy(notice = null) }
+    }
+
     private fun loadMessages(id: String) {
         viewModelScope.launch { reloadMessages(id) }
     }
@@ -262,6 +270,11 @@ class ChatViewModel : ViewModel() {
     }
 
     private companion object {
+        const val NOTICE_TITLE_CHARS = 32
+
+        fun shorten(title: String): String =
+            if (title.length <= NOTICE_TITLE_CHARS) title else title.take(NOTICE_TITLE_CHARS).trimEnd() + "\u2026"
+
         /** Cancellation is user-initiated and max_iterations already arrives as the reply text. */
         val QUIET_DONE_ERRORS = setOf("cancelled", "max_iterations")
     }

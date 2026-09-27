@@ -22,7 +22,11 @@ logger = logging.getLogger(__name__)
 def _system_prompt(settings: Settings) -> str:
     policy = PolicyEngine.from_yaml(settings.policy_path(), settings.agent_scratch_dir)
     runtime = gather_runtime_context(settings)
-    return build_system_prompt(runtime, policy.allowed_binaries())
+    return build_system_prompt(
+        runtime,
+        policy.allowed_binaries(),
+        unlisted_need_approval=policy.unlisted_need_approval(),
+    )
 
 
 def prepare_upstream(

@@ -101,6 +101,12 @@ fun ChatScreen(
             viewModel.clearError()
         }
     }
+    LaunchedEffect(state.notice) {
+        state.notice?.let {
+            snackbar.showSnackbar(it)
+            viewModel.clearNotice()
+        }
+    }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
     fun closeDrawerThen(action: () -> Unit) {
