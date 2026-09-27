@@ -13,7 +13,7 @@ class LocalExecutionTarget(ExecutionTarget):
         executor: CommandExecutor,
         *,
         name: str = "local",
-        description: str = "This machine (where the agent CLI runs)",
+        description: str = "This machine (where ai-agent serve runs)",
     ):
         self.name = name
         self.description = description

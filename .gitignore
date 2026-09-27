@@ -6,6 +6,9 @@ dist/
 build/
 .env
 .venv/
+deploy/cloudflared/config.yml
+deploy/cloudflared/*.json
+conversations.db
 .ai-agent/
 venv/
 .pytest_cache/

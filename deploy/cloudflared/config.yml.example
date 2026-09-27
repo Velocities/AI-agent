@@ -1,0 +1,13 @@
+# Copy to deploy/cloudflared/config.yml and fill in the three values.
+# config.yml is gitignored. Do not commit the credentials JSON.
+#
+# The ai-agent service listens on loopback (`ai-agent serve`). This tunnel is the HTTPS front.
+# Cloudflare terminates TLS. The origin stays HTTP.
+
+tunnel: TUNNEL_UUID
+credentials-file: ~/.cloudflared/TUNNEL_UUID.json
+
+ingress:
+  - hostname: agent.example.com
+    service: http://127.0.0.1:8000
+  - service: http_status:404

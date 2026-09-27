@@ -310,6 +310,11 @@ def test_agent_omitted_target_runs_local(tmp_path: Path) -> None:
     assert result.final_message == "done"
     assert captured
     assert captured[0] == ["docker", "ps"]
+    import json
+
+    tool_payload = json.loads(agent.messages[-2].content)
+    assert tool_payload["execution_target"] == {"name": "local", "kind": "local"}
+    assert tool_payload["rendered_command"]
 
 
 def test_agent_rejects_invented_target(tmp_path: Path) -> None:

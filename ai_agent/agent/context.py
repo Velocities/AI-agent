@@ -68,7 +68,12 @@ def platform_guidance(context: RuntimeContext) -> str:
         return (
             "- Target `local` is Linux. Standard server tools (systemctl, journalctl, docker, df, etc.) may apply.\n"
             "- Verify service/container names with tools before acting.\n"
-            "- You run as a dedicated automation user with limited permissions; report permission errors honestly."
+            f"- Local commands run as the User line above ({context.username}), "
+            f"not as the human at the chat client. Home is {context.home}.\n"
+            "- Other users' home directories are often mode 750; listing them requires kernel permission, "
+            "not just policy allow-list paths.\n"
+            "- Use id, whoami, and pwd when verifying identity; they are READ_ONLY when policy allows.\n"
+            "- Report permission and policy errors honestly; do not claim commands are blocked without tool stderr."
         )
     return (
         "- Adapt commands to the current operating system.\n"
@@ -92,8 +97,15 @@ def build_system_prompt(
     targets: list[TargetSummary] | None = None,
     *,
     default_target: str = "local",
+    unlisted_need_approval: bool = False,
 ) -> str:
     commands = ", ".join(allowed_commands)
+    unlisted = (
+        "Unlisted commands are not forbidden: they run only after the user explicitly approves them, "
+        "every time. Prefer listed commands; use an unlisted one when it is the right tool, and give a clear reason."
+        if unlisted_need_approval
+        else "Unlisted commands are forbidden by policy."
+    )
     target_summaries = targets or [
         TargetSummary(
             name="local",
@@ -130,7 +142,7 @@ Commands run on a named target from this list — never invent a hostname, IP, S
 {target_block}
 
 - If you omit target, the command runs on **{default_target}**.
-- `local` is this machine (the computer running the agent CLI), not a remote host.
+- `local` is the machine running the agent API (`ai-agent serve`), not the user's PC running the chat client.
 - Pick a listed name when the user asks about another configured machine or container.
 - Never call the ssh binary. Remote SSH is applied by the agent after you set target to that name.
 - SSH and Docker targets are usually Linux even when local is Windows. Use Linux binaries from the allow-list on those targets.
@@ -158,7 +170,7 @@ Forbidden: shell invocation, command substitution, semicolon chains, piping into
 ## Policy-allowed command binaries
 {commands}
 
-Unlisted commands are forbidden by policy.
+{unlisted}
 
 ## Platform guidance
 {platform_guidance(context)}

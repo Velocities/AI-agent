@@ -18,14 +18,17 @@ fun escapeBuildConfigString(value: String): String =
 
 val supabaseUrl = localProperties.getProperty("SUPABASE_URL", "")
 val supabaseAnonKey = localProperties.getProperty("SUPABASE_ANON_KEY", "")
-val authDebugOverride = localProperties.getProperty("AUTH_DEBUG")?.trim()?.lowercase()
+val apiBaseUrl = localProperties.getProperty("API_BASE_URL", "")
 
-fun authDebugValue(default: Boolean): String =
-    when (authDebugOverride) {
+// Each debug surface has its own flag so one feature can be inspected at a time.
+// Off unless set: `-PNAME=true` on the Gradle command line wins over local.properties.
+fun debugFlag(name: String): String {
+    val raw = (findProperty(name) as String?) ?: localProperties.getProperty(name)
+    return when (raw?.trim()?.lowercase()) {
         "true", "1", "yes" -> "true"
-        "false", "0", "no" -> "false"
-        else -> default.toString()
+        else -> "false"
     }
+}
 
 android {
     namespace = "com.aiagent.android"
@@ -40,19 +43,17 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", escapeBuildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_ANON_KEY", escapeBuildConfigString(supabaseAnonKey))
+        buildConfigField("String", "API_BASE_URL", escapeBuildConfigString(apiBaseUrl))
+        buildConfigField("boolean", "AUTH_DEBUG", debugFlag("AUTH_DEBUG"))
     }
 
     buildTypes {
-        debug {
-            buildConfigField("boolean", "AUTH_DEBUG", authDebugValue(default = true))
-        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            buildConfigField("boolean", "AUTH_DEBUG", authDebugValue(default = false))
         }
     }
 
@@ -90,4 +91,6 @@ dependencies {
     implementation(libs.ktor.client.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    testImplementation(libs.junit)
 }

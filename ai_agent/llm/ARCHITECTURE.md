@@ -80,3 +80,15 @@ aliases where noted in `config.py`.
 1. Start upstream engine (Ollama or vLLM)
 2. **`ai-agent-llm`** — warms model, binds facade, prints URL
 3. **`ai-agent`** — set `LLM_HOST` to the printed URL
+
+## One process (`ai-agent serve`)
+
+Production runs both the facade and `ai-agent-serve` in one process. systemd's `ai-agent.service` executes `ai-agent serve`. That command starts or attaches to the engine, warms the model, binds the facade, and points the API at the facade URL in memory. `LLM_HOST` in `.env` is not rewritten.
+
+`ai-agent-llm` and `ai-agent-serve` remain available when you want to run one side alone. Setup: [`deploy/systemd/README.md`](../../deploy/systemd/README.md).
+
+## Public API (`ai-agent-serve`)
+
+This is not the facade above. `ai-agent-serve` listens on loopback and is the process a Cloudflare Tunnel should target. It checks Supabase access tokens, runs the agent loop, and stores chats in the local SQLite file. It calls this facade through `LLM_HOST`. It does not proxy `/api/chat` to the internet, and it does not start Ollama or vLLM.
+
+Keep the facade on `127.0.0.1`. Put the tunnel in front of `ai-agent-serve` only. Setup: README Path F.

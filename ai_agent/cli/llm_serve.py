@@ -22,7 +22,11 @@ logger = logging.getLogger(__name__)
 def _system_prompt(settings: Settings) -> str:
     policy = PolicyEngine.from_yaml(settings.policy_path(), settings.agent_scratch_dir)
     runtime = gather_runtime_context(settings)
-    return build_system_prompt(runtime, policy.allowed_binaries())
+    return build_system_prompt(
+        runtime,
+        policy.allowed_binaries(),
+        unlisted_need_approval=policy.unlisted_need_approval(),
+    )
 
 
 def prepare_upstream(
@@ -71,7 +75,7 @@ def serve_ready_engine(
     console.print(f"Engine: {engine.engine_name}")
     console.print(f"Upstream: {engine.upstream_url}")
     console.print(f"[bold]Endpoint:[/bold] {endpoint}\n")
-    console.print("Copy this into .env, then start [bold]ai-agent[/bold] in another terminal:")
+    console.print("Copy this into .env. [bold]ai-agent-serve[/bold] uses it to reach the model:")
     console.print(f"  LLM_HOST={endpoint}")
     console.print("\n[dim]Leave this window open. Ctrl+C to stop.[/dim]\n")
     try:

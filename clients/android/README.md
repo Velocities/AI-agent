@@ -1,6 +1,14 @@
 # AI Agent — Android client (0.1.0)
 
-First Android client: **Discord sign-in through Supabase Auth**, then a `profiles` row from Supabase. There is no conversation UI and no call into the Python agent.
+Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, then a chat screen in the usual mobile chatbot layout.
+
+- **Chat history sidebar.** Swipe from the left edge or tap the menu button at the top left. It has **New chat** and your chats grouped by date (Today, Yesterday, Previous 7 days, Previous 30 days, Older). Long-press a chat to delete it, or use **⋮ → Delete chat** in the top bar. Deleting removes the chat and its messages from the server. It is refused while a reply is still running.
+- **Replies** render the model's Markdown: headings, bold/italic, inline code, code blocks, lists, quotes, tables and links. `<think>` reasoning (Qwen3, DeepSeek-R1) is folded behind a **Show reasoning** toggle.
+- **Commands** show as cards coloured by where they run: green for this machine (`local`), violet for SSH, blue for Docker. Each card shows the exit status, duration and output.
+- **Approvals** match the CLI's `y` / `n` / `a`: **Deny**, **Approve** (red **Run anyway** for destructive commands), and **Approve, and allow … for this session** when the CLI would offer `a`.
+- **Dictation** uses the phone's own speech-to-text (the mic in the message box). No audio is recorded by this app. The mic is hidden if the phone has no speech recognizer.
+
+The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. Set `API_BASE_URL` in `local.properties` to the HTTPS origin (for example `https://agent.example.com`). Do not point it at the SQLite file or at Ollama.
 
 ## Stack (pinned)
 
@@ -19,6 +27,8 @@ First Android client: **Discord sign-in through Supabase Auth**, then a `profile
 | Ktor Android engine | 3.5.1 |
 
 Open this folder in Android Studio that supports **AGP 8.13** (Otter and later). Install **Android SDK 36**.
+
+Coding practices that keep a possible future iPhone client cheap to add are in [DEVELOPMENT.md](DEVELOPMENT.md). Follow them when changing this app.
 
 ## One-time cloud setup
 
@@ -60,7 +70,7 @@ Edit `local.properties` (plain text). Values are baked into the debug APK at bui
 ```properties
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
-# AUTH_DEBUG=true
+API_BASE_URL=https://agent.example.com
 ```
 
 **Where to find the anon / publishable key:** In the [Supabase Dashboard](https://supabase.com/dashboard), open your project → **Project Settings** (gear) → **API** (or **Data API** / **API Keys**, depending on dashboard version). Copy the **public** client key—the one labeled **anon** `public` or **publishable** (safe to embed in a mobile app). Do **not** put the **service_role** / **secret** key in the app; that key bypasses RLS and must stay on servers only. See [Supabase API keys](https://supabase.com/docs/guides/api/api-keys) if labels differ in your project.
@@ -90,4 +100,10 @@ When the build succeeds, the installable file is:
 
 Rebuild after any change to `local.properties` so the new Supabase values are included.
 
-**AUTH_DEBUG** (debug builds default **true**, release default **false**, override in `local.properties`) shows session status, user id, email, Discord identity, token **expiry**, last error, and the `profiles` JSON. Access and refresh tokens are never printed.
+## Developer debug flags
+
+Each debug feature has its own build-time flag, so one can be switched on without the others. Every flag defaults to **false** in all build types. Set a flag in `local.properties` (`AUTH_DEBUG=true`) or for one build with Gradle (`./gradlew -PAUTH_DEBUG=true :app:assembleDebug`); the Gradle value wins.
+
+| Flag | Shows |
+|---|---|
+| `AUTH_DEBUG` | Session status, user id, email, display name, avatar, Discord identity, token **expiry**, last error, and the `profiles` JSON. It appears on the sign-in screen and under the account menu (⋮) at the bottom of the sidebar → **Auth debug**. Access and refresh tokens are never shown. |

@@ -155,6 +155,10 @@ class PolicyEngine:
     def allowed_binaries(self) -> list[str]:
         return sorted({rule.binary for rule in self.config.rules})
 
+    def unlisted_need_approval(self) -> bool:
+        """Whether commands without a matching rule can still run once the user approves."""
+        return self.config.fallback_risk != RiskLevel.FORBIDDEN
+
     def evaluate(self, expr: CommandExpr, *, piped_to: str | None = None) -> PolicyDecision:
         segments: list[SegmentDecision] = []
         redirect_path: str | None = None

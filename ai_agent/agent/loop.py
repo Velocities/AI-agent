@@ -19,6 +19,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
+from ai_agent.commands.render import render_command
 from ai_agent.config import Settings
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
@@ -39,6 +40,11 @@ _RECOVERABLE_TRUNCATION_KINDS = frozenset(
         LLMErrorKind.STREAM_INCOMPLETE,
     }
 )
+
+
+@dataclass
+class AgentCancelled(Exception):
+    """The client went away while a turn was still running."""
 
 
 @dataclass
@@ -76,10 +82,13 @@ class AgentLoop:
             policy.allowed_binaries(),
             self.router.summaries(),
             default_target=self.router.default_name,
+            unlisted_need_approval=policy.unlisted_need_approval(),
         )
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)
         ]
+        self.on_message: Callable[[LLMMessage], None] | None = None
+        self.should_stop: Callable[[], bool] | None = None
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
@@ -89,6 +98,16 @@ class AgentLoop:
             tools=self.tool_definitions,
         )
 
+    def _raise_if_stopped(self) -> None:
+        if self.should_stop is not None and self.should_stop():
+            raise AgentCancelled()
+
+    def _append(self, message: LLMMessage) -> None:
+        self._raise_if_stopped()
+        self.messages.append(message)
+        if self.on_message is not None:
+            self.on_message(message)
+
     def run(
         self,
         user_input: str,
@@ -97,9 +116,10 @@ class AgentLoop:
         iteration_callback: Callable[[int], None] | None = None,
         notice_callback: Callable[[str], None] | None = None,
     ) -> AgentRunResult:
-        self.messages.append(LLMMessage(role="user", content=user_input))
+        self._append(LLMMessage(role="user", content=user_input))
 
         for iteration in range(1, self.settings.agent_max_iterations + 1):
+            self._raise_if_stopped()
             if iteration_callback is not None:
                 iteration_callback(iteration)
             response = self._generate_assistant_turn(stream_callback, notice_callback)
@@ -115,7 +135,7 @@ class AgentLoop:
                     error_kind=response.error_kind,
                 )
 
-            self.messages.append(assistant)
+            self._append(assistant)
 
             if self._was_cut_short(response):
                 return AgentRunResult(
@@ -128,7 +148,7 @@ class AgentLoop:
                 answer = (assistant.content or "").strip()
                 if answer and looks_like_command_dump(answer):
                     if iteration < self.settings.agent_max_iterations:
-                        self.messages.append(
+                        self._append(
                             LLMMessage(role="user", content=COMMAND_DUMP_NUDGE)
                         )
                         continue
@@ -138,7 +158,7 @@ class AgentLoop:
                         iterations=iteration,
                     )
                 if iteration < self.settings.agent_max_iterations:
-                    self.messages.append(LLMMessage(role="user", content=SCHEMA_NUDGE))
+                    self._append(LLMMessage(role="user", content=SCHEMA_NUDGE))
                     continue
                 return AgentRunResult(
                     final_message=(
@@ -352,7 +372,7 @@ class AgentLoop:
                     tool_messages.append(self._handle_tool_call(call))
 
         for tool_message in tool_messages:
-            self.messages.append(tool_message)
+            self._append(tool_message)
         return final_message
 
     def _handle_respond(self, call: ToolCall) -> tuple[LLMMessage, str | None]:
@@ -427,6 +447,8 @@ class AgentLoop:
                             decision=decision,
                             reason=call.arguments.get("reason"),
                             target_display=target.display() if target else None,
+                            target_name=target.name if target else None,
+                            target_kind=target.kind if target else None,
                         )
                     )
                     call_map.append((call, expr, target_name, target))
@@ -447,6 +469,8 @@ class AgentLoop:
                         decision=decision,
                         reason=call.arguments.get("reason"),
                         target_display=target.display() if target else None,
+                        target_name=target.name if target else None,
+                        target_kind=target.kind if target else None,
                     )
                 )
                 call_map.append((call, expr, target_name, target))
@@ -520,6 +544,8 @@ class AgentLoop:
                         decision=self.policy.evaluate(expr),
                         reason=call.arguments.get("reason"),
                         target_display=target.display() if target else None,
+                        target_name=target.name if target else None,
+                        target_kind=target.kind if target else None,
                     )
                 )
 
@@ -580,6 +606,8 @@ class AgentLoop:
                     decision,
                     reason=call.arguments.get("reason"),
                     target_display=target.display() if target else None,
+                    target_name=target.name if target else None,
+                    target_kind=target.kind if target else None,
                 )
                 approval_granted = approval.approved
 
@@ -623,6 +651,33 @@ class AgentLoop:
             return name, None, str(exc)
 
     def _execute_with_audit(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict,
+        expr,
+        decision,
+        approved: bool,
+        target_name: str,
+        target: ExecutionTarget | None,
+    ) -> dict:
+        payload = self._run_audited(
+            tool_name=tool_name,
+            arguments=arguments,
+            expr=expr,
+            decision=decision,
+            approved=approved,
+            target_name=target_name,
+            target=target,
+        )
+        payload.setdefault("rendered_command", render_command(expr))
+        payload["execution_target"] = {
+            "name": target_name,
+            "kind": target.kind if target else None,
+        }
+        return payload
+
+    def _run_audited(
         self,
         *,
         tool_name: str,

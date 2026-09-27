@@ -10,11 +10,16 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
+    "alembic>=1.13",
+    "fastapi>=0.115",
     "httpx>=0.27",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "pyjwt[crypto]>=2.10",
     "pyyaml>=6.0",
     "rich>=13.7",
+    "sqlalchemy>=2.0",
+    "uvicorn>=0.32",
 ]
 
 [project.optional-dependencies]
@@ -26,10 +31,20 @@ dev = [
 [project.scripts]
 ai-agent = "ai_agent.cli.app:main"
 ai-agent-llm = "ai_agent.cli.llm_serve:main"
+ai-agent-serve = "ai_agent.api.serve:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai_agent*"]
+
+[tool.setuptools.package-data]
+ai_agent = [
+    "conversations/alembic.ini",
+    "conversations/alembic/env.py",
+    "conversations/alembic/script.py.mako",
+    "conversations/alembic/versions/*.py",
+    "policy/*.yaml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

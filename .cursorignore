@@ -1,0 +1,13 @@
+# Some of the same expectations as the .gitignore file, but for Cursor
+.env
+.venv/
+deploy/cloudflared/config.yml
+deploy/cloudflared/*.json
+conversations.db
+.ai-agent/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+execution_targets.yaml
