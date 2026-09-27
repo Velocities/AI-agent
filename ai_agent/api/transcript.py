@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+from ai_agent.agent.tools import COMMAND_DUMP_NUDGE, SCHEMA_NUDGE
 from ai_agent.conversations.store import Message
 from ai_agent.llm.base import LLMMessage, ToolCall
+
+_INTERNAL_USER_PROMPTS = frozenset({SCHEMA_NUDGE, COMMAND_DUMP_NUDGE})
+
+
+def message_payload(record: Message) -> dict:
+    """JSON shape of a stored message, shared by the REST list and the turn stream."""
+    return {
+        "id": record.id,
+        "role": record.role,
+        "content": record.content,
+        "created_at": record.created_at.isoformat(),
+        "metadata": record.metadata,
+        "position": record.position,
+    }
 
 
 def message_metadata(message: LLMMessage) -> dict:
     metadata: dict = {}
+    if message.role == "user" and message.content in _INTERNAL_USER_PROMPTS:
+        metadata["internal"] = True
     if message.tool_calls:
         metadata["tool_calls"] = [
             {"id": call.id, "name": call.name, "arguments": call.arguments}

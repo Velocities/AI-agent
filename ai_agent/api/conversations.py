@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -105,6 +105,28 @@ def get_conversation(
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
     return _conversation_response(conversation)
+
+
+@router.delete("/{conversation_id}", status_code=204)
+def delete_conversation(
+    conversation_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_deployment_access),
+    store: ConversationStore = Depends(get_store),
+) -> Response:
+    if store.get_conversation(user.user_id, conversation_id) is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    broker = request.app.state.broker
+    if not broker.try_begin(conversation_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A turn is running in this conversation. Stop it before deleting.",
+        )
+    try:
+        store.delete_conversation(user.user_id, conversation_id)
+    finally:
+        broker.finish(conversation_id)
+    return Response(status_code=204)
 
 
 @router.get("/{conversation_id}/messages", response_model=MessageListResponse)

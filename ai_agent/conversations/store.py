@@ -85,6 +85,17 @@ class ConversationStore:
             row = _owned(db, owner, conversation_id)
             return None if row is None else _conversation(row)
 
+    def delete_conversation(self, user_id: str, conversation_id: str) -> bool:
+        """Remove a conversation and its messages. False when it is not this user's."""
+        owner = _require_user_id(user_id)
+        with self._session() as db:
+            row = _owned(db, owner, conversation_id)
+            if row is None:
+                return False
+            db.delete(row)
+            db.commit()
+            return True
+
     def append_message(
         self,
         user_id: str,

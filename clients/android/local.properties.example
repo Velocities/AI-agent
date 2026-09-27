@@ -7,5 +7,7 @@ SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
 ## HTTPS origin of ai-agent-serve. Example: https://agent.example.com
 # API_BASE_URL=
 
-## Optional. Debug builds default to true; release defaults to false.
+## Developer debug flags. Each defaults to false in every build type and can
+## also be set per build with Gradle, e.g. ./gradlew -PAUTH_DEBUG=true :app:assembleDebug
+## AUTH_DEBUG: session/profile panel on the sign-in screen and under Account → Auth debug.
 # AUTH_DEBUG=true

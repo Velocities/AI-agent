@@ -3,6 +3,13 @@ package com.aiagent.android.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -20,6 +27,7 @@ data class ChatMessage(
     val role: String,
     val content: String = "",
     @SerialName("created_at") val createdAt: String = "",
+    val metadata: JsonObject = JsonObject(emptyMap()),
     val position: Int = 0,
 )
 
@@ -33,12 +41,24 @@ private data class MessageListResponse(
     val messages: List<ChatMessage> = emptyList(),
 )
 
-/**
- * Reads chats from ai-agent-serve using the Supabase access token.
- * The phone does not send turns; command approval stays on the CLI.
- */
+/** An HTTP error from ai-agent-serve. [code] is set for whitelist refusals (see ACCESS_* codes). */
+class AgentApiException(
+    val status: Int,
+    override val message: String,
+    val code: String? = null,
+) : RuntimeException(message) {
+    val isAccessGate: Boolean
+        get() = code == ACCESS_PENDING || code == ACCESS_DENIED || code == ACCESS_INCOMPLETE
+
+    companion object {
+        const val ACCESS_PENDING = "access_pending"
+        const val ACCESS_DENIED = "access_denied"
+        const val ACCESS_INCOMPLETE = "access_incomplete"
+    }
+}
+
+/** Talks to ai-agent-serve with the Supabase access token. */
 class AgentApi(private val baseUrl: String) {
-    private val json = Json { ignoreUnknownKeys = true }
 
     fun listConversations(accessToken: String): List<ConversationSummary> {
         val body = request("GET", "/api/conversations", accessToken)
@@ -55,13 +75,77 @@ class AgentApi(private val baseUrl: String) {
         return json.decodeFromString(body)
     }
 
-    private fun request(method: String, path: String, accessToken: String, body: String? = null): String {
-        val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+    fun deleteConversation(accessToken: String, conversationId: String) {
+        request("DELETE", "/api/conversations/$conversationId", accessToken)
+    }
+
+    fun resolveApproval(
+        accessToken: String,
+        conversationId: String,
+        approvalId: String,
+        approved: Boolean,
+        grantScope: String?,
+    ) {
+        val body = buildJsonObject {
+            put("approved", JsonPrimitive(approved))
+            put("grant_scope", grantScope?.let(::JsonPrimitive) ?: JsonNull)
+        }
+        request(
+            "POST",
+            "/api/conversations/$conversationId/approvals/$approvalId",
+            accessToken,
+            body.toString(),
+        )
+    }
+
+    /**
+     * Run one turn and deliver each NDJSON event on the calling thread until the stream ends.
+     * [onConnection] receives the open connection so another thread can disconnect it to stop
+     * the turn; the server cancels the agent when the client goes away.
+     */
+    fun streamTurn(
+        accessToken: String,
+        conversationId: String,
+        content: String,
+        onConnection: (HttpURLConnection) -> Unit,
+        onEvent: (TurnEvent) -> Unit,
+    ) {
+        val connection = open("POST", "/api/conversations/$conversationId/turns", accessToken).apply {
+            readTimeout = 0
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/x-ndjson")
+        }
+        onConnection(connection)
+        try {
+            val payload = buildJsonObject { put("content", JsonPrimitive(content)) }
+            connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                throw errorFrom(code, connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty())
+            }
+            connection.inputStream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    if (line.isBlank()) continue
+                    onEvent(TurnEvent.parse(line))
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun open(method: String, path: String, accessToken: String): HttpURLConnection =
+        (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
-            readTimeout = 20_000
+            readTimeout = 30_000
             setRequestProperty("Authorization", "Bearer $accessToken")
             setRequestProperty("Accept", "application/json")
+        }
+
+    private fun request(method: String, path: String, accessToken: String, body: String? = null): String {
+        val connection = open(method, path, accessToken).apply {
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
@@ -75,11 +159,29 @@ class AgentApi(private val baseUrl: String) {
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
-                error("Chat API HTTP $code ${text.take(200)}")
+                throw errorFrom(code, text)
             }
             return text
         } finally {
             connection.disconnect()
+        }
+    }
+
+    companion object {
+        internal val json = Json { ignoreUnknownKeys = true }
+
+        /** FastAPI puts either a string or `{code, message}` under `detail`. */
+        internal fun errorFrom(status: Int, body: String): AgentApiException {
+            val detail = runCatching { json.parseToJsonElement(body).jsonObject["detail"] }.getOrNull()
+            if (detail is JsonObject) {
+                val message = detail["message"]?.jsonPrimitive?.contentOrNull
+                val code = detail["code"]?.jsonPrimitive?.contentOrNull
+                if (message != null) return AgentApiException(status, message, code)
+            }
+            if (detail is JsonPrimitive && detail.isString) {
+                return AgentApiException(status, detail.content)
+            }
+            return AgentApiException(status, body.take(200).ifBlank { "HTTP $status" })
         }
     }
 }

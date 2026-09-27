@@ -116,6 +116,8 @@ class RemoteApprovalPrompter:
         *,
         reason: str | None = None,
         target_display: str | None = None,
+        target_name: str | None = None,
+        target_kind: str | None = None,
     ) -> ApprovalResult:
         if not decision.allowed or self.should_auto_run(decision):
             return ApprovalResult(approved=decision.allowed and self.should_auto_run(decision))
@@ -125,6 +127,8 @@ class RemoteApprovalPrompter:
                     decision,
                     reason=reason,
                     target_display=target_display,
+                    target_name=target_name,
+                    target_kind=target_kind,
                 )
             ]
         )
@@ -140,6 +144,8 @@ class RemoteApprovalPrompter:
                     item.decision,
                     reason=item.reason,
                     target_display=item.target_display,
+                    target_name=item.target_name,
+                    target_kind=item.target_kind,
                 )
                 if not result.approved:
                     return ApprovalResult(approved=False)
@@ -154,6 +160,8 @@ class RemoteApprovalPrompter:
                     item.decision,
                     reason=item.reason,
                     target_display=item.target_display,
+                    target_name=item.target_name,
+                    target_kind=item.target_kind,
                 )
                 for item in pending
             ]
@@ -195,6 +203,8 @@ def _command_summary(
     *,
     reason: str | None,
     target_display: str | None,
+    target_name: str | None = None,
+    target_kind: str | None = None,
 ) -> dict:
     return {
         "command": render_command(decision.expr),
@@ -202,6 +212,8 @@ def _command_summary(
         "reason": reason or decision.reason,
         "allowed": decision.allowed,
         "target": target_display,
+        "target_name": target_name,
+        "target_kind": target_kind,
     }
 
 

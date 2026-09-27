@@ -126,14 +126,100 @@ def test_turn_persists_the_transcript(tmp_path) -> None:
         )
     assert response.status_code == 200
     events = [json.loads(line) for line in response.text.splitlines() if line]
-    assert events[0] == {"type": "token", "text": "Hello"}
-    assert events[-1]["type"] == "done"
+    assert [event["type"] for event in events] == ["message", "token", "message", "done"]
+    assert events[1] == {"type": "token", "text": "Hello"}
     assert events[-1]["message"] == "Hello"
     messages = store.list_messages(ALICE, conversation_id)
     assert [(message.role, message.content) for message in messages] == [
         ("user", "hello"),
         ("assistant", "Hello"),
     ]
+    streamed = [event["message"] for event in events if event["type"] == "message"]
+    assert [row["id"] for row in streamed] == [message.id for message in messages]
+    assert streamed[0]["role"] == "user"
+    assert streamed[1]["position"] == 1
+
+
+def test_delete_conversation_removes_it_for_the_owner_only(tmp_path) -> None:
+    client, store = _client(tmp_path)
+    alice = {"Authorization": "Bearer alice"}
+    bob = {"Authorization": "Bearer bob"}
+    with client:
+        conversation_id = client.post("/api/conversations", json={}, headers=alice).json()["id"]
+        client.post(
+            f"/api/conversations/{conversation_id}/turns",
+            json={"content": "hello"},
+            headers=alice,
+        )
+        assert client.delete(f"/api/conversations/{conversation_id}", headers=bob).status_code == 404
+        assert client.delete(f"/api/conversations/{conversation_id}", headers=alice).status_code == 204
+        assert client.get(f"/api/conversations/{conversation_id}", headers=alice).status_code == 404
+        assert client.delete(f"/api/conversations/{conversation_id}", headers=alice).status_code == 404
+    assert store.list_conversations(ALICE) == []
+
+
+def test_delete_conversation_refuses_while_a_turn_runs(tmp_path) -> None:
+    client, _store = _client(tmp_path)
+    alice = {"Authorization": "Bearer alice"}
+    with client:
+        conversation_id = client.post("/api/conversations", json={}, headers=alice).json()["id"]
+        assert client.app.state.broker.try_begin(conversation_id)
+        response = client.delete(f"/api/conversations/{conversation_id}", headers=alice)
+        client.app.state.broker.finish(conversation_id)
+    assert response.status_code == 409
+
+
+def test_approval_event_names_the_target_kind() -> None:
+    broker = ApprovalBroker()
+    seen: list[dict] = []
+    prompter = RemoteApprovalPrompter(
+        ConfirmationMode.PARANOID,
+        ApprovalSession(),
+        broker,
+        user_id=ALICE,
+        conversation_id="chat",
+        emit=seen.append,
+        cancel=threading.Event(),
+        timeout=5,
+    )
+    decision = PolicyDecision(
+        expr=SingleCommand(argv=["uptime"]),
+        effective_risk=RiskLevel.READ_ONLY,
+        segments=[],
+        allowed=True,
+        reason="check load",
+    )
+
+    def respond() -> None:
+        while not seen:
+            threading.Event().wait(0.01)
+        broker.resolve(
+            user_id=ALICE,
+            conversation_id="chat",
+            approval_id=seen[0]["approval_id"],
+            approved=False,
+            grant_scope=None,
+        )
+
+    threading.Thread(target=respond, daemon=True).start()
+    prompter.prompt_single(
+        decision,
+        target_display="box (ssh://me@box)",
+        target_name="box",
+        target_kind="ssh",
+    )
+    command = seen[0]["commands"][0]
+    assert command["target_name"] == "box"
+    assert command["target_kind"] == "ssh"
+    assert command["command"] == "uptime"
+
+
+def test_internal_nudges_are_flagged() -> None:
+    from ai_agent.agent.tools import SCHEMA_NUDGE
+    from ai_agent.api.transcript import message_metadata
+
+    assert message_metadata(LLMMessage(role="user", content=SCHEMA_NUDGE)) == {"internal": True}
+    assert message_metadata(LLMMessage(role="user", content="hi")) == {}
 
 
 def test_approval_ignores_another_users_decision() -> None:

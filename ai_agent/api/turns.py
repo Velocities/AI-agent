@@ -8,7 +8,7 @@ from collections.abc import Iterator
 
 from ai_agent.agent.loop import AgentCancelled, AgentLoop
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
-from ai_agent.api.transcript import message_from_record, message_metadata
+from ai_agent.api.transcript import message_from_record, message_metadata, message_payload
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.cli.app import build_agent
 from ai_agent.config import Settings
@@ -136,13 +136,17 @@ def _drive_agent(
     emit,
     cancel: threading.Event,
 ) -> None:
-    agent.on_message = lambda message: store.append_message(
-        user_id,
-        conversation_id,
-        role=message.role,
-        content=message.content or "",
-        metadata=message_metadata(message),
-    )
+    def on_message(message) -> None:
+        record = store.append_message(
+            user_id,
+            conversation_id,
+            role=message.role,
+            content=message.content or "",
+            metadata=message_metadata(message),
+        )
+        emit({"type": "message", "message": message_payload(record)})
+
+    agent.on_message = on_message
     agent.should_stop = cancel.is_set
     history = store.list_messages(user_id, conversation_id)
     for record in history:

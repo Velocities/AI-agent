@@ -19,6 +19,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
+from ai_agent.commands.render import render_command
 from ai_agent.config import Settings
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
@@ -445,6 +446,8 @@ class AgentLoop:
                             decision=decision,
                             reason=call.arguments.get("reason"),
                             target_display=target.display() if target else None,
+                            target_name=target.name if target else None,
+                            target_kind=target.kind if target else None,
                         )
                     )
                     call_map.append((call, expr, target_name, target))
@@ -465,6 +468,8 @@ class AgentLoop:
                         decision=decision,
                         reason=call.arguments.get("reason"),
                         target_display=target.display() if target else None,
+                        target_name=target.name if target else None,
+                        target_kind=target.kind if target else None,
                     )
                 )
                 call_map.append((call, expr, target_name, target))
@@ -538,6 +543,8 @@ class AgentLoop:
                         decision=self.policy.evaluate(expr),
                         reason=call.arguments.get("reason"),
                         target_display=target.display() if target else None,
+                        target_name=target.name if target else None,
+                        target_kind=target.kind if target else None,
                     )
                 )
 
@@ -598,6 +605,8 @@ class AgentLoop:
                     decision,
                     reason=call.arguments.get("reason"),
                     target_display=target.display() if target else None,
+                    target_name=target.name if target else None,
+                    target_kind=target.kind if target else None,
                 )
                 approval_granted = approval.approved
 
@@ -641,6 +650,33 @@ class AgentLoop:
             return name, None, str(exc)
 
     def _execute_with_audit(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict,
+        expr,
+        decision,
+        approved: bool,
+        target_name: str,
+        target: ExecutionTarget | None,
+    ) -> dict:
+        payload = self._run_audited(
+            tool_name=tool_name,
+            arguments=arguments,
+            expr=expr,
+            decision=decision,
+            approved=approved,
+            target_name=target_name,
+            target=target,
+        )
+        payload.setdefault("rendered_command", render_command(expr))
+        payload["execution_target"] = {
+            "name": target_name,
+            "kind": target.kind if target else None,
+        }
+        return payload
+
+    def _run_audited(
         self,
         *,
         tool_name: str,

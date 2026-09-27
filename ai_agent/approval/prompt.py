@@ -15,6 +15,8 @@ class PendingCommand:
     decision: PolicyDecision
     reason: str | None = None
     target_display: str | None = None
+    target_name: str | None = None
+    target_kind: str | None = None
 
 
 @dataclass
@@ -38,6 +40,8 @@ class ApprovalPrompter:
         *,
         reason: str | None = None,
         target_display: str | None = None,
+        target_name: str | None = None,
+        target_kind: str | None = None,
     ) -> ApprovalResult:
         if not decision.allowed:
             self._print_header(

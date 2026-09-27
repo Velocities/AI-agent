@@ -1,13 +1,14 @@
 package com.aiagent.android.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.compose.runtime.LaunchedEffect
+import com.aiagent.android.ui.chat.ChatScreen
 
 private const val ROUTE_SIGN_IN = "sign_in"
 private const val ROUTE_SIGNED_IN = "signed_in"
@@ -39,14 +40,7 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             )
         }
         composable(ROUTE_SIGNED_IN) {
-            SignedInScreen(
-                state = state,
-                onSignOut = viewModel::signOut,
-                onRefreshChats = viewModel::refreshChats,
-                onOpenChat = viewModel::openChat,
-                onCloseChat = viewModel::closeChat,
-                onNewChat = viewModel::createChat,
-            )
+            ChatScreen(auth = state, onSignOut = viewModel::signOut)
         }
     }
 }
