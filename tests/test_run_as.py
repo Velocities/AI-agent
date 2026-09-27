@@ -19,6 +19,40 @@ def test_build_command_executor_skips_when_already_that_user(tmp_path) -> None:
     assert type(executor).__name__ == "CommandExecutor"
 
 
+def test_build_command_executor_uses_windows_username(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("LOGNAME", raising=False)
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LNAME", raising=False)
+    monkeypatch.setenv("USERNAME", "Alice")
+    executor = build_command_executor(
+        timeout=5,
+        output_limit=1024,
+        scratch_dir=tmp_path,
+        linux_username="alice",
+    )
+    assert type(executor).__name__ == "CommandExecutor"
+
+
+def test_run_as_reports_when_pwd_is_unavailable(tmp_path, monkeypatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pwd":
+            raise ModuleNotFoundError("No module named 'pwd'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(OSError, match="only supported on Linux"):
+        RunAsCommandExecutor(
+            timeout=5,
+            output_limit=1024,
+            scratch_dir=tmp_path,
+            linux_username="nobody",
+        )
+
+
 def test_run_as_wraps_with_setpriv(tmp_path) -> None:
     executor = RunAsCommandExecutor(
         timeout=5,
