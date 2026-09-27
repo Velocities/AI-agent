@@ -8,7 +8,7 @@ Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, the
 - **Approvals** match the CLI's `y` / `n` / `a`: **Deny**, **Approve** (red **Run anyway** for destructive commands), and **Approve, and allow … for this session** when the CLI would offer `a`.
 - **Dictation** uses the phone's own speech-to-text (the mic in the message box). No audio is recorded by this app. The mic is hidden if the phone has no speech recognizer.
 
-The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. Set `API_BASE_URL` in `local.properties` to the HTTPS origin (for example `https://agent.example.com`). Do not point it at the SQLite file or at Ollama.
+The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. The first time you open the app it asks for that server’s URL (for example `https://agent.example.com`). The app saves it and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Change the URL from the sign-in screen or the account menu; a different URL signs you out. Do not point it at the SQLite file or at Ollama.
 
 ## Stack (pinned)
 
@@ -65,17 +65,9 @@ cd clients\android
 copy local.properties.example local.properties
 ```
 
-Edit `local.properties` (plain text). Values are baked into the debug APK at build time:
+The server URL and Supabase publishable key are not build settings. Enter the AI server URL in the app. The server must have `SUPABASE_URL` and `SUPABASE_ANON_KEY` set; `GET /api/client-config` returns them. Put the **publishable** (anon) key in the server environment, never the **service_role** / **secret** key.
 
-```properties
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
-API_BASE_URL=https://agent.example.com
-```
-
-**Where to find the anon / publishable key:** In the [Supabase Dashboard](https://supabase.com/dashboard), open your project → **Project Settings** (gear) → **API** (or **Data API** / **API Keys**, depending on dashboard version). Copy the **public** client key—the one labeled **anon** `public` or **publishable** (safe to embed in a mobile app). Do **not** put the **service_role** / **secret** key in the app; that key bypasses RLS and must stay on servers only. See [Supabase API keys](https://supabase.com/docs/guides/api/api-keys) if labels differ in your project.
-
-If you open the project in Android Studio, it will add `sdk.dir=...` automatically. You can also set `sdk.dir` yourself to your Android SDK path. Do not commit `local.properties`.
+`local.properties` is only for the Android SDK path and optional debug flags. If you open the project in Android Studio, it adds `sdk.dir=...` automatically. You can also set `sdk.dir` yourself. Do not commit `local.properties`.
 
 ## Build a debug APK and install on your phone
 
@@ -98,7 +90,7 @@ When the build succeeds, the installable file is:
 - **USB + `adb`:** With debugging enabled, from your computer: `adb install -r app/build/outputs/apk/debug/app-debug.apk` (paths as above; on Windows use backslashes if you prefer).
 - **Copy the file:** Email, cloud drive, or copy `app-debug.apk` to the phone storage and open it there. You may need to allow **Install unknown apps** for the app you use to open the file (browser, Files, etc.).
 
-Rebuild after any change to `local.properties` so the new Supabase values are included.
+Rebuild after you change a debug flag in `local.properties` so that flag is included in the APK. The server URL is saved on the phone and does not need a rebuild.
 
 ## Developer debug flags
 

@@ -1,6 +1,5 @@
 package com.aiagent.android.data
 
-import com.aiagent.android.BuildConfig
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.ExternalAuthAction
@@ -13,16 +12,13 @@ object SupabaseModule {
     const val AUTH_HOST = "login-callback"
     const val AUTH_REDIRECT_URL = "$AUTH_SCHEME://$AUTH_HOST"
 
-    fun isConfigured(): Boolean =
-        BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
-
-    fun createClient(): SupabaseClient {
-        check(isConfigured()) {
-            "Set SUPABASE_URL and SUPABASE_ANON_KEY in clients/android/local.properties"
+    fun createClient(supabaseUrl: String, publishableKey: String): SupabaseClient {
+        check(supabaseUrl.isNotBlank() && publishableKey.isNotBlank()) {
+            "Supabase URL and publishable key are required."
         }
         return createSupabaseClient(
-            supabaseUrl = BuildConfig.SUPABASE_URL,
-            supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
+            supabaseUrl = supabaseUrl,
+            supabaseKey = publishableKey,
         ) {
             install(Auth) {
                 scheme = AUTH_SCHEME

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def settings_for_api(settings: Settings, facade_url: str) -> Settings:
     """Point the API at the facade this process just bound.
 
-    The chat client still uses API_BASE_URL. LLM_HOST in the environment is
+    Chat clients store their own server URL. LLM_HOST in the environment is
     left unchanged on disk; only this process's API settings change. Transport
     is HTTP because the facade is local even when the engine itself is reached
     over SSH.

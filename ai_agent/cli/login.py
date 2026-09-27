@@ -13,6 +13,7 @@ import httpx
 from rich.console import Console
 
 from ai_agent.cli.credentials import StoredSession, clear_session, save_session
+from ai_agent.cli.server_config import ensure_server_config
 from ai_agent.config import Settings
 
 _LOGIN_TIMEOUT = 180.0
@@ -81,10 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     del argv
     console = Console()
     settings = Settings()
-    if not settings.supabase_url.strip() or not settings.supabase_anon_key.strip():
-        console.print(
-            "[red]Set SUPABASE_URL and SUPABASE_ANON_KEY in .env before logging in.[/red]"
-        )
+    config = ensure_server_config(console)
+    if config is None:
         return 1
     port = settings.cli_oauth_port
     if port < 1 or port > 65535:
@@ -94,8 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     verifier, challenge = pkce_pair()
     redirect = redirect_url(port)
     url = authorize_url(
-        supabase_url=settings.supabase_url,
-        anon_key=settings.supabase_anon_key,
+        supabase_url=config.supabase_url,
+        anon_key=config.supabase_publishable_key,
         redirect_to=redirect,
         challenge=challenge,
     )
@@ -129,8 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         session = exchange_code(
-            supabase_url=settings.supabase_url,
-            anon_key=settings.supabase_anon_key,
+            supabase_url=config.supabase_url,
+            anon_key=config.supabase_publishable_key,
             code=code,
             verifier=verifier,
         )

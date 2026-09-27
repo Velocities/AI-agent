@@ -224,7 +224,7 @@ A failed start leaves the unit failed. `sudo systemctl status ai-agent` shows th
 | One command for model + API | `sudo systemctl start ai-agent` | `ai-agent serve` |
 | API only, engine already running, `LLM_HOST` set | Not this unit | `ai-agent-serve` |
 | Facade only, prints `LLM_HOST` | Not this unit | `ai-agent-llm` |
-| Chat client | `ai-agent` (uses `API_BASE_URL`) | same |
+| Chat client | `ai-agent` (saved server URL) | same |
 | Ready signal | systemd `Type=notify` after the API listens | The process stays in the foreground |
 | Logs | `journalctl -u ai-agent` | The terminal |
 | Shutdown | `systemctl stop` sends SIGTERM. The API stops, the facade stops, and an engine this process started is terminated. Leftover children are killed with the service cgroup. | Ctrl+C |

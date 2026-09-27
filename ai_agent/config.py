@@ -178,7 +178,10 @@ class Settings(BaseSettings):
     api_base_url: str = Field(
         default="http://127.0.0.1:8000",
         alias="API_BASE_URL",
-        description="URL the CLI uses to reach ai-agent-serve.",
+        description=(
+            "Legacy hint. Chat clients ask for a server URL and save it; "
+            "they do not read this value."
+        ),
     )
     cli_oauth_port: int = Field(
         default=53682,

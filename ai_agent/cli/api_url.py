@@ -7,7 +7,7 @@ _LOCAL_API_PORTS = frozenset({8000, 8080, 8765})
 
 
 def public_api_base_url_hint(api_base_url: str) -> str | None:
-    """Warn when API_BASE_URL mixes HTTPS with a loopback origin port."""
+    """Warn when a saved server URL mixes HTTPS with a loopback origin port."""
     parsed = urlparse(api_base_url.strip())
     if parsed.scheme != "https":
         return None
@@ -17,7 +17,7 @@ def public_api_base_url_hint(api_base_url: str) -> str | None:
     if host in {"127.0.0.1", "localhost", "::1"}:
         return None
     return (
-        f"API_BASE_URL uses https on port {parsed.port}. Through Cloudflare Tunnel the "
+        f"This server URL uses https on port {parsed.port}. Through Cloudflare Tunnel the "
         f"client should be https://{host} with no port (TLS on 443). Port {parsed.port} "
         "is only for http://127.0.0.1 on the server."
     )

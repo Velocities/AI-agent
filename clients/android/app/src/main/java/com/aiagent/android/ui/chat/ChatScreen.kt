@@ -86,6 +86,7 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     auth: AuthUiState,
     onSignOut: () -> Unit,
+    onChangeServer: () -> Unit,
     viewModel: ChatViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -127,6 +128,7 @@ fun ChatScreen(
                         onOpen = { id -> closeDrawerThen { viewModel.openConversation(id) } },
                         onDelete = viewModel::deleteConversation,
                         onSignOut = onSignOut,
+                        onChangeServer = { closeDrawerThen(onChangeServer) },
                         onShowAuthDebug = { closeDrawerThen { showAuthDebug = true } },
                     )
                 }
@@ -191,7 +193,7 @@ fun ChatScreen(
                 Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                     when {
                         !state.apiConfigured -> CenteredNote(
-                            "Set API_BASE_URL in local.properties and rebuild to connect to your AI agent server.",
+                            "Enter an AI server URL before starting a chat.",
                         )
                         state.accessMessage != null -> CenteredNote(state.accessMessage!!)
                         else -> Conversation(state, onDecision = viewModel::answerApproval)

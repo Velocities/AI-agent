@@ -195,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.host_setup import main as host_setup_main
 
         return host_setup_main(args[1:])
+    if args and args[0] == "server-url":
+        from ai_agent.cli.server_config import main as server_url_main
+
+        return server_url_main(args[1:])
     if args and args[0] == "login":
         from ai_agent.cli.login import main as login_main
 

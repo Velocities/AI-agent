@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import os
-import pwd
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from ai_agent.commands.ast import CommandExpr
 from ai_agent.commands.executor import CommandExecutor, CommandResult
 from ai_agent.deployment.identity import normalize_linux_username
+
+# Same order as getpass.getuser(), without importing the Unix-only pwd module
+# until a command actually has to switch Linux accounts.
+_USER_ENV_VARS = ("LOGNAME", "USER", "LNAME", "USERNAME")
+
+
+@dataclass(frozen=True)
+class PosixAccount:
+    name: str
+    uid: int
+    gid: int
+    home: str
 
 
 class RunAsCommandExecutor(CommandExecutor):
@@ -24,7 +36,7 @@ class RunAsCommandExecutor(CommandExecutor):
     ):
         super().__init__(timeout, output_limit, scratch_dir)
         self._linux_username = normalize_linux_username(linux_username)
-        self._passwd = pwd.getpwnam(self._linux_username)
+        self._account = lookup_posix_account(self._linux_username)
 
     def run(self, expr: CommandExpr) -> CommandResult:
         result = super().run(expr)
@@ -49,10 +61,10 @@ class RunAsCommandExecutor(CommandExecutor):
                 stdout=stdout,
                 stderr=stderr,
             )
-        wrapped, env = _wrap_argv_for_user(argv, self._passwd)
+        wrapped, env = _wrap_argv_for_user(argv, self._account)
         completed = subprocess.run(
             wrapped,
-            cwd=cwd or self._passwd.pw_dir,
+            cwd=cwd or self._account.home,
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
@@ -76,10 +88,10 @@ class RunAsCommandExecutor(CommandExecutor):
             return super()._run_pipe(expr)
         rendered = render_command(expr)
         shell_argv = ["bash", "-lc", rendered]
-        wrapped, env = _wrap_argv_for_user(shell_argv, self._passwd)
+        wrapped, env = _wrap_argv_for_user(shell_argv, self._account)
         completed = subprocess.run(
             wrapped,
-            cwd=self._passwd.pw_dir,
+            cwd=self._account.home,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -91,7 +103,7 @@ class RunAsCommandExecutor(CommandExecutor):
     def _safe_env(self) -> dict[str, str]:
         if _runs_as_current_user(self._linux_username):
             return super()._safe_env()
-        return _env_for_passwd(self._passwd)
+        return _env_for_account(self._account)
 
 
 def build_command_executor(
@@ -111,51 +123,87 @@ def build_command_executor(
     return CommandExecutor(timeout, output_limit, scratch_dir)
 
 
-def _runs_as_current_user(linux_username: str) -> bool:
+def lookup_posix_account(username: str) -> PosixAccount:
+    """Resolve a Linux account. Importing this module does not require `pwd`."""
     try:
-        return pwd.getpwuid(os.getuid()).pw_name == linux_username.strip().lower()
-    except KeyError:
+        import pwd
+    except ModuleNotFoundError as exc:
+        raise OSError(
+            "Running commands as another Linux user is only supported on Linux."
+        ) from exc
+    try:
+        account = pwd.getpwnam(username)
+    except KeyError as exc:
+        raise OSError(f"Linux user {username!r} does not exist.") from exc
+    return PosixAccount(
+        name=account.pw_name,
+        uid=account.pw_uid,
+        gid=account.pw_gid,
+        home=account.pw_dir or "/",
+    )
+
+
+def _current_username() -> str | None:
+    for name in _USER_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    try:
+        import pwd
+    except ModuleNotFoundError:
+        return None
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:
+        return None
+    try:
+        return pwd.getpwuid(getuid()).pw_name
+    except (KeyError, OSError):
+        return None
+
+
+def _runs_as_current_user(linux_username: str) -> bool:
+    current = _current_username()
+    if not current:
         return False
+    return current.strip().lower() == linux_username.strip().lower()
 
 
-def _wrap_argv_for_user(argv: list[str], account: pwd.struct_passwd) -> tuple[list[str], dict[str, str]]:
+def _wrap_argv_for_user(argv: list[str], account: PosixAccount) -> tuple[list[str], dict[str, str]]:
     setpriv = shutil.which("setpriv")
     if setpriv:
         wrapped = [
             setpriv,
-            f"--reuid={account.pw_uid}",
-            f"--regid={account.pw_gid}",
+            f"--reuid={account.uid}",
+            f"--regid={account.gid}",
             "--init-groups",
             "--",
             *argv,
         ]
-        return wrapped, _env_for_passwd(account)
+        return wrapped, _env_for_account(account)
 
     runuser = shutil.which("runuser")
     if runuser:
-        wrapped = [runuser, "-u", account.pw_name, "--", *argv]
-        return wrapped, _env_for_passwd(account)
+        wrapped = [runuser, "-u", account.name, "--", *argv]
+        return wrapped, _env_for_account(account)
 
     sudo = shutil.which("sudo")
     if sudo:
-        wrapped = [sudo, "-n", "-u", account.pw_name, "--", *argv]
-        return wrapped, _env_for_passwd(account)
+        wrapped = [sudo, "-n", "-u", account.name, "--", *argv]
+        return wrapped, _env_for_account(account)
 
     raise OSError(
-        f"Cannot run commands as {account.pw_name}: need setpriv, runuser, or passwordless sudo."
+        f"Cannot run commands as {account.name}: need setpriv, runuser, or passwordless sudo."
     )
 
 
-def _env_for_passwd(account: pwd.struct_passwd) -> dict[str, str]:
-    home = account.pw_dir or "/"
+def _env_for_account(account: PosixAccount) -> dict[str, str]:
     path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     return {
-        "HOME": home,
-        "USER": account.pw_name,
-        "LOGNAME": account.pw_name,
+        "HOME": account.home,
+        "USER": account.name,
+        "LOGNAME": account.name,
         "PATH": path,
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", ""),
         "TERM": os.environ.get("TERM", "dumb"),
     }
-

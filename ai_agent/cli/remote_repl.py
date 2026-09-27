@@ -14,17 +14,19 @@ from ai_agent.cli.credentials import (
     session_is_fresh,
 )
 from ai_agent.cli.login import refresh_session
-from ai_agent.config import Settings
+from ai_agent.cli.server_config import ServerConfig, ensure_server_config, set_server_url
 
 
 def run_remote_repl() -> int:
     console = Console()
-    settings = Settings()
-    token = _access_token(settings, console)
+    config = ensure_server_config(console)
+    if config is None:
+        return 1
+    token = _access_token(config, console)
     if token is None:
         return 1
 
-    client = AgentApiClient(settings.api_base_url, token)
+    client = AgentApiClient(config.server_url, token)
     try:
         conversation_id = _current_conversation(client, console)
     except AgentApiError as exc:
@@ -32,7 +34,7 @@ def run_remote_repl() -> int:
         client.close()
         return 1
     except httpx.HTTPError as exc:
-        console.print(f"[red]Cannot reach {settings.api_base_url}:[/red] {exc}")
+        console.print(f"[red]Cannot reach {config.server_url}:[/red] {exc}")
         console.print(
             "Start [bold]ai-agent serve[/bold] on the model machine and try again."
         )
@@ -40,10 +42,10 @@ def run_remote_repl() -> int:
         return 1
 
     console.print("[bold]AI Server Assistant[/bold]")
-    console.print(f"API: {settings.api_base_url}")
-    if hint := public_api_base_url_hint(settings.api_base_url):
+    console.print(f"API: {config.server_url}")
+    if hint := public_api_base_url_hint(config.server_url):
         console.print(f"[yellow]{hint}[/yellow]")
-    console.print("Type /new, /list, or exit.\n")
+    console.print("Type /new, /list, /server, or exit.\n")
 
     try:
         while True:
@@ -61,6 +63,16 @@ def run_remote_repl() -> int:
                 if not _print_conversations(client, console):
                     return 1
                 continue
+            if user_input == "/server" or user_input.startswith("/server "):
+                updated = _apply_server_command(
+                    console,
+                    config,
+                    user_input[len("/server") :].strip(),
+                )
+                if updated is None:
+                    return 0
+                config = updated
+                continue
             if user_input == "/new":
                 created = _create_conversation(client, console)
                 if created is None:
@@ -76,20 +88,20 @@ def run_remote_repl() -> int:
         client.close()
 
 
-def _access_token(settings: Settings, console: Console) -> str | None:
+def _access_token(config: ServerConfig, console: Console) -> str | None:
     session = load_session()
     if session is None:
         console.print("Not signed in. Run [bold]ai-agent login[/bold].")
         return None
     if session_is_fresh(session):
         return session.access_token
-    if not settings.supabase_url.strip() or not settings.supabase_anon_key.strip():
+    if not config.supabase_url.strip() or not config.supabase_publishable_key.strip():
         console.print("[red]The saved session expired. Run ai-agent login.[/red]")
         return None
     try:
         refreshed = refresh_session(
-            supabase_url=settings.supabase_url,
-            anon_key=settings.supabase_anon_key,
+            supabase_url=config.supabase_url,
+            anon_key=config.supabase_publishable_key,
             refresh_token=session.refresh_token,
         )
     except httpx.HTTPError:
@@ -97,6 +109,32 @@ def _access_token(settings: Settings, console: Console) -> str | None:
         return None
     save_session(refreshed)
     return refreshed.access_token
+
+
+def _apply_server_command(
+    console: Console,
+    current: ServerConfig,
+    argument: str,
+) -> ServerConfig | None:
+    """Apply `/server`. Return None when the chat should stop so the user can sign in."""
+    if not argument:
+        console.print(current.server_url)
+        console.print("[dim]Change it with /server https://agent.example.com[/dim]")
+        return current
+    try:
+        update = set_server_url(argument)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return current
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Could not reach that server:[/red] {exc}")
+        return current
+    if update.signed_out:
+        console.print(f"Server URL updated to {update.config.server_url}.")
+        console.print("Signed out. Run [bold]ai-agent login[/bold] to sign in again.")
+        return None
+    console.print(f"Server URL saved: {update.config.server_url}")
+    return update.config
 
 
 def _current_conversation(client: AgentApiClient, console: Console) -> str:

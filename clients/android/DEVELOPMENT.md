@@ -50,7 +50,7 @@ Room, the Android-only Coil artifact, the view system, XML layouts, and Fragment
 These are one-file or mechanical changes. Cleaning them up early does not make the app easier to share.
 
 - `java.time` in `ChatDrawer` (grouping chats into Today, Yesterday, and the older buckets). A port would use `kotlinx-datetime` in that file.
-- `BuildConfig` for `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `API_BASE_URL`, and `AUTH_DEBUG`. A port would read the same `local.properties` values through a small config object. Keep new flags in `BuildConfig` the way the existing ones work.
+- `BuildConfig` for `AUTH_DEBUG`. The server URL and Supabase settings are saved at runtime (`ServerConfigStore`), not baked in. Keep new debug flags in `BuildConfig` the way `AUTH_DEBUG` works.
 - The package name `com.aiagent.android`. Renaming it is mechanical.
 
 An `expect`/`actual` split, a `commonMain` source set, or an Xcode shell belongs in the change that actually adds iOS. Until then they slow down ordinary Android work without producing an iPhone build.
