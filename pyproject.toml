@@ -34,8 +34,8 @@ ai-agent-llm = "ai_agent.cli.llm_serve:main"
 ai-agent-serve = "ai_agent.api.serve:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["ai_agent*"]
+where = [".", "clients/cli"]
+include = ["ai_agent*", "ai_agent_cli*"]
 
 [tool.setuptools.package-data]
 ai_agent = [

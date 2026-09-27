@@ -10,7 +10,7 @@ import httpx
 from rich.console import Console
 
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH
-from ai_agent.cli.credentials import (
+from ai_agent_cli.credentials import (
     clear_conversation_id,
     clear_session,
     config_dir,

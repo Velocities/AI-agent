@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_agent.cli.app import build_agent
+from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.deployment.access_store import DeploymentAccessStore

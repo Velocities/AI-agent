@@ -1,4 +1,4 @@
-from ai_agent.cli.api_url import public_api_base_url_hint
+from ai_agent_cli.api_url import public_api_base_url_hint
 
 
 def test_https_public_host_with_8000_warns() -> None:

@@ -10,7 +10,7 @@ from rich.console import Console
 from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
 from ai_agent.api.serve import PublicBindError, assert_loopback_bind
-from ai_agent.cli.app import configure_logging, configure_stdio_encoding
+from ai_agent.agent.factory import configure_logging, configure_stdio_encoding
 from ai_agent.cli.errors import startup_should_exit
 from ai_agent.cli.llm_serve import prepare_upstream
 from ai_agent.config import LlmTransport, Settings

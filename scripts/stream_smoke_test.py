@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import time
 
-from ai_agent.cli.app import build_agent, configure_logging
+from ai_agent.agent.factory import build_agent, configure_logging
 
 
 def main() -> int:

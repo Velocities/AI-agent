@@ -12,9 +12,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 from rich.console import Console
 
-from ai_agent.cli.credentials import StoredSession, clear_session, save_session
-from ai_agent.cli.server_config import ensure_server_config
 from ai_agent.config import Settings
+from ai_agent_cli.credentials import StoredSession, clear_session, save_session
+from ai_agent_cli.server_config import ensure_server_config
 
 _LOGIN_TIMEOUT = 180.0
 

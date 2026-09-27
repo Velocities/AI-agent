@@ -10,7 +10,7 @@ from ai_agent.agent.loop import AgentCancelled, AgentLoop
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.api.transcript import message_from_record, message_metadata, message_payload
 from ai_agent.approval.session import ApprovalSession
-from ai_agent.cli.app import build_agent
+from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore
 
