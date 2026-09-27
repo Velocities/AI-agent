@@ -16,6 +16,10 @@ private const val ROUTE_SIGNED_IN = "signed_in"
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    if (state.checkingSession) {
+        StartupScreen()
+        return
+    }
     if (state.promptForServer || state.editingServer) {
         ServerUrlScreen(
             initialUrl = state.serverUrl.orEmpty(),

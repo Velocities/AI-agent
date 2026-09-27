@@ -30,6 +30,8 @@ data class AuthUiState(
     val configured: Boolean = false,
     val serverUrl: String? = null,
     val promptForServer: Boolean = false,
+    /** True until a saved server's Supabase session has been read. Startup stays on the loader. */
+    val checkingSession: Boolean = false,
     val editingServer: Boolean = false,
     val serverBusy: Boolean = false,
     val serverError: String? = null,
@@ -55,6 +57,7 @@ class AuthViewModel : ViewModel() {
             configured = ready,
             serverUrl = saved?.serverUrl,
             promptForServer = !ready,
+            checkingSession = ready,
             sessionStatusLabel = if (ready) "Initializing" else "Server URL required",
         ),
     )
@@ -188,6 +191,7 @@ class AuthViewModel : ViewModel() {
                     it.copy(
                         configured = true,
                         sessionStatusLabel = "Authenticated",
+                        checkingSession = false,
                         signedIn = true,
                         busy = false,
                         lastError = null,
@@ -202,12 +206,18 @@ class AuthViewModel : ViewModel() {
                 }
             }
             SessionStatus.Initializing -> {
-                _state.update { it.copy(sessionStatusLabel = "Initializing", busy = true) }
+                _state.update { current ->
+                    current.copy(
+                        sessionStatusLabel = "Initializing",
+                        busy = current.busy || !current.checkingSession,
+                    )
+                }
             }
             is SessionStatus.NotAuthenticated -> {
                 _state.update {
                     it.copy(
                         sessionStatusLabel = if (status.isSignOut) "Signed out" else "Not authenticated",
+                        checkingSession = false,
                         signedIn = false,
                         busy = false,
                         userId = null,
@@ -224,6 +234,7 @@ class AuthViewModel : ViewModel() {
                 _state.update {
                     it.copy(
                         sessionStatusLabel = "Refresh failure",
+                        checkingSession = false,
                         lastError = status.cause.toString(),
                         busy = false,
                     )
