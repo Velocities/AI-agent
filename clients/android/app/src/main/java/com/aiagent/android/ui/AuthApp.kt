@@ -16,6 +16,17 @@ private const val ROUTE_SIGNED_IN = "signed_in"
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    if (state.promptForServer || state.editingServer) {
+        ServerUrlScreen(
+            initialUrl = state.serverUrl.orEmpty(),
+            required = state.promptForServer,
+            busy = state.serverBusy,
+            error = state.serverError,
+            onSubmit = viewModel::submitServerUrl,
+            onCancel = if (state.promptForServer) null else viewModel::cancelServerEdit,
+        )
+        return
+    }
     val navController = rememberNavController()
 
     LaunchedEffect(state.signedIn) {
@@ -37,10 +48,15 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             SignInScreen(
                 state = state,
                 onSignIn = viewModel::signInWithDiscord,
+                onChangeServer = viewModel::beginServerEdit,
             )
         }
         composable(ROUTE_SIGNED_IN) {
-            ChatScreen(auth = state, onSignOut = viewModel::signOut)
+            ChatScreen(
+                auth = state,
+                onSignOut = viewModel::signOut,
+                onChangeServer = viewModel::beginServerEdit,
+            )
         }
     }
 }

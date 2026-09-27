@@ -96,7 +96,7 @@ Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
 
 **3. Run the server and the client.**
 
-Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key). In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`.
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key) on the **server**. In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`. The chat client does not read those values from `.env`. The first `ai-agent login` or `ai-agent` asks for the server URL (`http://127.0.0.1:8000` on this machine), saves it, and downloads Supabase settings from `GET /api/client-config`. Change it later with `ai-agent server-url https://agent.example.com` or `/server` in the chat. A different URL signs you out.
 
 Recommended — one terminal for model + API (`ai-agent serve` starts Ollama when needed and does not require setting `LLM_HOST`):
 
@@ -372,10 +372,10 @@ That installs FastAPI and Uvicorn with the rest of the project. It does not inst
 | Variable | Example | Purpose |
 |----------|---------|---------|
 | `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` | Project URL. Signing keys are fetched from here. |
-| `SUPABASE_ANON_KEY` | publishable key | Same key as Android `local.properties`. |
+| `SUPABASE_ANON_KEY` | publishable key | Served to chat clients by `GET /api/client-config`. Not the service-role key. |
 | `API_BIND_HOST` | `127.0.0.1` | Must stay a loopback address. |
 | `API_BIND_PORT` | `8000` | Local port the tunnel targets. |
-| `API_BASE_URL` | `http://127.0.0.1:8000` on the server; **`https://agent.example.com`** from your PC (no `:8000` — Cloudflare uses port 443) | Where the CLI sends chats |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | Not read by chat clients. They ask for a server URL and save it. |
 | `CONVERSATION_DATABASE` | empty | SQLite file on this machine. Set a SQLAlchemy URL to put chats somewhere else later. |
 
 If vLLM is already using port 8000, pick another `API_BIND_PORT` and use that port in the tunnel config.
@@ -409,7 +409,7 @@ The first start creates the conversation SQLite file and applies the Alembic mig
 
 `{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
 
-**CLI on your PC.** In the repo on Windows/macOS/Linux, set `API_BASE_URL` to the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
+**CLI on your PC.** The first `ai-agent login` or `ai-agent` asks for the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. The CLI saves that URL and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Change it with `ai-agent server-url https://agent.example.com` (or `/server` in the chat); a different URL signs you out. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
 
 **CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
 
@@ -418,7 +418,7 @@ ai-agent login
 ai-agent
 ```
 
-`/new` starts a chat, `/list` shows chats. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app can open the same chats after you set `API_BASE_URL`.
+`/new` starts a chat, `/list` shows chats, `/server` shows or changes the saved server URL. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app asks for the same server URL on first launch and can open the same chats.
 
 **6. Open the tunnel** from the same machine:
 
@@ -683,17 +683,17 @@ Set these when running `ai-agent-llm`. See [Path B](#path-b-two-window-workflow-
 
 ### Public API (`ai-agent-serve`)
 
-See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HOST` for the model. Clients call `API_BASE_URL`.
+See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HOST` for the model. Chat clients store their own server URL and load Supabase settings from `GET /api/client-config`.
 
 | Variable | Description |
 |----------|-------------|
 | `API_BIND_HOST` | Loopback listen address (default `127.0.0.1`). `0.0.0.0` is refused. |
 | `API_BIND_PORT` | Listen port (default `8000`) |
 | `SUPABASE_URL` | Supabase project URL for JWT signing keys |
-| `SUPABASE_ANON_KEY` | Publishable key sent when fetching those keys |
+| `SUPABASE_ANON_KEY` | Publishable key. `GET /api/client-config` returns it to chat clients. |
 | `SUPABASE_JWT_AUDIENCE` | Expected `aud` claim (default `authenticated`) |
 | `SUPABASE_JWT_SECRET` | Legacy HS256 secret. Leave empty for current projects. |
-| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `API_BASE_URL` | Unused by chat clients (default `http://127.0.0.1:8000`). They save a server URL instead. |
 | `CLI_OAUTH_PORT` | Loopback port for `ai-agent login` (default `53682`) |
 | `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
@@ -770,7 +770,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `SUPABASE_ANON_KEY` | Publishable Supabase key (not the service-role key) |
 | `SUPABASE_JWT_AUDIENCE` | Expected token audience (default `authenticated`) |
 | `SUPABASE_JWT_SECRET` | Legacy HS256 secret; empty when the project uses signing keys |
-| `API_BASE_URL` | URL the CLI calls (default `http://127.0.0.1:8000`) |
+| `API_BASE_URL` | Unused by chat clients (default `http://127.0.0.1:8000`). They save a server URL instead. |
 | `CLI_OAUTH_PORT` | Loopback port for Discord sign-in (default `53682`) |
 | `CONVERSATION_DATABASE` | SQLAlchemy URL for chats. Empty uses the on-machine SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds to wait for a command approval (default `900`) |
@@ -789,7 +789,7 @@ Inference is split into **client** and **server** packages (see [`ai_agent/llm/A
 | `ai_agent.llm.server` | `ai-agent-llm` | `AgentLlmFacade` + `LlmEngine` (`OllamaEngine` or `VLLMEngine`) |
 | `ai_agent.llm.http` | both | Shared HTTP transport only |
 
-`ai-agent-serve` connects to whatever URL is in `LLM_HOST`. Engine choice is `LLM_ENGINE` on `ai-agent-llm`. The `ai-agent` command is the chat client: it uses `API_BASE_URL` and a Supabase access token. `ai-agent serve` starts the engine and the API together and points the API at the facade it just bound.
+`ai-agent-serve` connects to whatever URL is in `LLM_HOST`. Engine choice is `LLM_ENGINE` on `ai-agent-llm`. The `ai-agent` command is the chat client: it uses a saved server URL and a Supabase access token. `ai-agent serve` starts the engine and the API together and points the API at the facade it just bound.
 
 | Piece | Role |
 |-------|------|

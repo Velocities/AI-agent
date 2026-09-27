@@ -13,13 +13,6 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
-fun escapeBuildConfigString(value: String): String =
-    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
-
-val supabaseUrl = localProperties.getProperty("SUPABASE_URL", "")
-val supabaseAnonKey = localProperties.getProperty("SUPABASE_ANON_KEY", "")
-val apiBaseUrl = localProperties.getProperty("API_BASE_URL", "")
-
 // Each debug surface has its own flag so one feature can be inspected at a time.
 // Off unless set: `-PNAME=true` on the Gradle command line wins over local.properties.
 fun debugFlag(name: String): String {
@@ -41,9 +34,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        buildConfigField("String", "SUPABASE_URL", escapeBuildConfigString(supabaseUrl))
-        buildConfigField("String", "SUPABASE_ANON_KEY", escapeBuildConfigString(supabaseAnonKey))
-        buildConfigField("String", "API_BASE_URL", escapeBuildConfigString(apiBaseUrl))
         buildConfigField("boolean", "AUTH_DEBUG", debugFlag("AUTH_DEBUG"))
     }
 

@@ -97,3 +97,9 @@ def save_conversation_id(conversation_id: str) -> None:
         encoding="utf-8",
     )
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def clear_conversation_id() -> None:
+    path = client_state_path()
+    if path.exists():
+        path.unlink()

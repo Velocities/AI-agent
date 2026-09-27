@@ -3,7 +3,6 @@ package com.aiagent.android.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aiagent.android.AiAgentApp
-import com.aiagent.android.BuildConfig
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.ApprovalRequest
@@ -25,7 +24,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 
 data class ChatUiState(
-    val apiConfigured: Boolean = BuildConfig.API_BASE_URL.isNotBlank(),
+    val apiConfigured: Boolean = false,
     val conversations: List<ConversationSummary> = emptyList(),
     val loadingConversations: Boolean = false,
     val currentId: String? = null,
@@ -49,8 +48,12 @@ data class ChatUiState(
 }
 
 class ChatViewModel : ViewModel() {
-    private val api = AgentApi(BuildConfig.API_BASE_URL)
-    private val _state = MutableStateFlow(ChatUiState())
+    private fun serverUrl(): String =
+        AiAgentApp.instance.serverConfig.load()?.serverUrl.orEmpty()
+
+    private fun api(): AgentApi = AgentApi(serverUrl())
+
+    private val _state = MutableStateFlow(ChatUiState(apiConfigured = serverUrl().isNotBlank()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var turnJob: Job? = null
@@ -65,7 +68,7 @@ class ChatViewModel : ViewModel() {
         if (!_state.value.apiConfigured) return
         viewModelScope.launch {
             _state.update { it.copy(loadingConversations = true) }
-            call { token -> api.listConversations(token) }?.let { rows ->
+            call { token -> api().listConversations(token) }?.let { rows ->
                 _state.update { it.copy(conversations = rows, accessMessage = null) }
             }
             _state.update { it.copy(loadingConversations = false) }
@@ -107,7 +110,7 @@ class ChatViewModel : ViewModel() {
     fun deleteConversation(id: String) {
         if (id == _state.value.currentId) stopTurn()
         viewModelScope.launch {
-            val deleted = call { token -> api.deleteConversation(token, id) } != null
+            val deleted = call { token -> api().deleteConversation(token, id) } != null
             if (deleted) {
                 _state.update { state ->
                     val clear = state.currentId == id
@@ -132,7 +135,7 @@ class ChatViewModel : ViewModel() {
             _state.update {
                 it.copy(running = true, pendingUserText = content, streamingText = "", statusText = null, error = null)
             }
-            val conversationId = _state.value.currentId ?: call { token -> api.createConversation(token) }?.let { created ->
+            val conversationId = _state.value.currentId ?: call { token -> api().createConversation(token) }?.let { created ->
                 _state.update { it.copy(currentId = created.id, conversations = listOf(created) + it.conversations) }
                 created.id
             }
@@ -141,7 +144,7 @@ class ChatViewModel : ViewModel() {
                 return@launch
             }
             call(isStream = true) { token ->
-                api.streamTurn(
+                api().streamTurn(
                     token,
                     conversationId,
                     content,
@@ -176,7 +179,7 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(resolvingApproval = true) }
             call { token ->
-                api.resolveApproval(token, request.conversationId, request.approvalId, approved, grantScope)
+                api().resolveApproval(token, request.conversationId, request.approvalId, approved, grantScope)
             }
             _state.update { state ->
                 state.copy(
@@ -204,7 +207,7 @@ class ChatViewModel : ViewModel() {
      * streamed reply stay on screen until that copy arrives, so nothing blinks out.
      */
     private suspend fun reloadMessages(id: String) {
-        val rows = call { token -> api.listMessages(token, id) }
+        val rows = call { token -> api().listMessages(token, id) }
         _state.update { state ->
             if (state.currentId != id) return@update state
             if (rows == null) return@update state.copy(loadingMessages = false)
@@ -264,7 +267,7 @@ class ChatViewModel : ViewModel() {
             null
         } catch (error: IOException) {
             if (isStream && stopRequested) return null
-            _state.update { it.copy(error = "Can't reach ${BuildConfig.API_BASE_URL}: ${error.message ?: "network error"}") }
+            _state.update { it.copy(error = "Can't reach ${serverUrl()}: ${error.message ?: "network error"}") }
             null
         }
     }

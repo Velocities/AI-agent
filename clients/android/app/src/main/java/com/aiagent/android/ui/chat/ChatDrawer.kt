@@ -59,6 +59,7 @@ fun ChatDrawerContent(
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
     onSignOut: () -> Unit,
+    onChangeServer: () -> Unit,
     onShowAuthDebug: () -> Unit,
 ) {
     var pendingDelete by remember { mutableStateOf<ConversationSummary?>(null) }
@@ -110,7 +111,12 @@ fun ChatDrawerContent(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-        AccountRow(auth = auth, onSignOut = onSignOut, onShowAuthDebug = onShowAuthDebug)
+        AccountRow(
+            auth = auth,
+            onSignOut = onSignOut,
+            onChangeServer = onChangeServer,
+            onShowAuthDebug = onShowAuthDebug,
+        )
     }
 
     pendingDelete?.let { conversation ->
@@ -174,7 +180,12 @@ private fun HistoryRow(
 }
 
 @Composable
-private fun AccountRow(auth: AuthUiState, onSignOut: () -> Unit, onShowAuthDebug: () -> Unit) {
+private fun AccountRow(
+    auth: AuthUiState,
+    onSignOut: () -> Unit,
+    onChangeServer: () -> Unit,
+    onShowAuthDebug: () -> Unit,
+) {
     var menuOpen by remember { mutableStateOf(false) }
     val name = auth.displayName ?: auth.email ?: "Signed in"
     Row(
@@ -218,6 +229,13 @@ private fun AccountRow(auth: AuthUiState, onSignOut: () -> Unit, onShowAuthDebug
                         },
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text("Change server") },
+                    onClick = {
+                        menuOpen = false
+                        onChangeServer()
+                    },
+                )
                 DropdownMenuItem(
                     text = { Text("Sign out") },
                     leadingIcon = { Icon(AppIcons.Logout, contentDescription = null) },

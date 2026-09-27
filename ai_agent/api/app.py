@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 
 from ai_agent.api.approvals import ApprovalBroker
 from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
+from ai_agent.api.client_config import CLIENT_CONFIG_PATH, ClientConfigBody, client_config_for
 from ai_agent.api.conversations import router as conversation_router
 from ai_agent.api.deps import get_current_user, require_deployment_access
 from ai_agent.config import Settings
@@ -48,6 +49,16 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get(CLIENT_CONFIG_PATH, response_model=ClientConfigBody)
+    def client_config() -> ClientConfigBody:
+        body = client_config_for(settings)
+        if body is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Supabase is not configured on this server.",
+            )
+        return body
 
     @app.get("/api/me")
     def me(user: AuthenticatedUser = Depends(require_deployment_access)) -> dict[str, str]:
