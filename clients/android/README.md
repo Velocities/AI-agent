@@ -28,6 +28,8 @@ The access token from this sign-in is what [`ai-agent-serve`](../../README.md#pa
 
 Open this folder in Android Studio that supports **AGP 8.13** (Otter and later). Install **Android SDK 36**.
 
+Coding practices that keep a possible future iPhone client cheap to add are in [DEVELOPMENT.md](DEVELOPMENT.md). Follow them when changing this app.
+
 ## One-time cloud setup
 
 1. Create a [Discord application](https://discord.com/developers/applications). Under OAuth2, add the **Supabase Discord callback** as a redirect (Supabase Dashboard → Authentication → Providers → Discord shows the exact URL).
