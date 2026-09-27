@@ -228,6 +228,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
         it is ChatItem.Command && it.outcome == CommandOutcome.RUNNING && it.command in awaiting
     }
     val tailCount = listOf(
+        state.pendingUserText != null,
         state.streamingText.isNotEmpty(),
         state.running && state.streamingText.isEmpty(),
         approval != null,
@@ -238,7 +239,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
         if (last >= 0) listState.animateScrollToItem(last)
     }
 
-    if (items.isEmpty() && !state.running && !state.loadingMessages) {
+    if (items.isEmpty() && state.pendingUserText == null && state.streamingText.isEmpty() && !state.running && !state.loadingMessages) {
         CenteredNote("How can I help?", emphasised = true)
         return
     }
@@ -255,6 +256,9 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
                 is ChatItem.Assistant -> AssistantReply(item.markdown)
                 is ChatItem.Command -> CommandCard(item)
             }
+        }
+        state.pendingUserText?.let { text ->
+            item(key = "pending-user") { UserBubble(text) }
         }
         if (state.streamingText.isNotEmpty()) {
             item(key = "streaming") { AssistantReply(state.streamingText) }

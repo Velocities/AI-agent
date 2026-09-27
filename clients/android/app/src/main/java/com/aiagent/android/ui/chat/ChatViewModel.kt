@@ -33,6 +33,8 @@ data class ChatUiState(
     val items: List<ChatItem> = emptyList(),
     val loadingMessages: Boolean = false,
     val streamingText: String = "",
+    /** The message just sent, shown until the server's copy of it arrives. */
+    val pendingUserText: String? = null,
     val statusText: String? = null,
     val running: Boolean = false,
     val pendingApproval: ApprovalRequest? = null,
@@ -72,7 +74,15 @@ class ChatViewModel : ViewModel() {
         if (id == _state.value.currentId) return
         stopTurn()
         _state.update {
-            it.copy(currentId = id, messages = emptyList(), items = emptyList(), loadingMessages = true, pendingApproval = null)
+            it.copy(
+                currentId = id,
+                messages = emptyList(),
+                items = emptyList(),
+                loadingMessages = true,
+                pendingApproval = null,
+                pendingUserText = null,
+                streamingText = "",
+            )
         }
         loadMessages(id)
     }
@@ -81,7 +91,14 @@ class ChatViewModel : ViewModel() {
     fun newChat() {
         stopTurn()
         _state.update {
-            it.copy(currentId = null, messages = emptyList(), items = emptyList(), pendingApproval = null, streamingText = "")
+            it.copy(
+                currentId = null,
+                messages = emptyList(),
+                items = emptyList(),
+                pendingApproval = null,
+                pendingUserText = null,
+                streamingText = "",
+            )
         }
     }
 
@@ -108,13 +125,15 @@ class ChatViewModel : ViewModel() {
         if (content.isEmpty() || _state.value.running) return
         stopRequested = false
         turnJob = viewModelScope.launch {
-            _state.update { it.copy(running = true, streamingText = "", statusText = null, error = null) }
+            _state.update {
+                it.copy(running = true, pendingUserText = content, streamingText = "", statusText = null, error = null)
+            }
             val conversationId = _state.value.currentId ?: call { token -> api.createConversation(token) }?.let { created ->
                 _state.update { it.copy(currentId = created.id, conversations = listOf(created) + it.conversations) }
                 created.id
             }
             if (conversationId == null) {
-                _state.update { it.copy(running = false) }
+                _state.update { it.copy(running = false, pendingUserText = null) }
                 return@launch
             }
             call(isStream = true) { token ->
@@ -128,8 +147,9 @@ class ChatViewModel : ViewModel() {
             }
             turnConnection = null
             _state.update {
-                it.copy(running = false, streamingText = "", statusText = null, pendingApproval = null, resolvingApproval = false)
+                it.copy(running = false, statusText = null, pendingApproval = null, resolvingApproval = false)
             }
+            reloadMessages(conversationId)
             refreshConversations()
         }
     }
@@ -143,8 +163,8 @@ class ChatViewModel : ViewModel() {
         turnConnection = null
         turnJob?.cancel()
         turnJob = null
-        _state.update { it.copy(running = false, streamingText = "", statusText = null, pendingApproval = null) }
-        if (wasRunning && id != null) loadMessages(id)
+        _state.update { it.copy(running = false, statusText = null, pendingApproval = null) }
+        if (wasRunning && id != null) viewModelScope.launch { reloadMessages(id) }
     }
 
     fun answerApproval(approved: Boolean, grantScope: String?) {
@@ -168,13 +188,25 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun loadMessages(id: String) {
-        viewModelScope.launch {
-            val rows = call { token -> api.listMessages(token, id) }
-            _state.update { state ->
-                if (state.currentId != id) return@update state
-                val messages = rows ?: state.messages
-                state.copy(messages = messages, items = Transcript.build(messages), loadingMessages = false)
-            }
+        viewModelScope.launch { reloadMessages(id) }
+    }
+
+    /**
+     * Replaces the transcript with the server's copy. The optimistic user message and the
+     * streamed reply stay on screen until that copy arrives, so nothing blinks out.
+     */
+    private suspend fun reloadMessages(id: String) {
+        val rows = call { token -> api.listMessages(token, id) }
+        _state.update { state ->
+            if (state.currentId != id) return@update state
+            if (rows == null) return@update state.copy(loadingMessages = false)
+            state.copy(
+                messages = rows,
+                items = Transcript.build(rows),
+                loadingMessages = false,
+                pendingUserText = if (state.running) state.pendingUserText else null,
+                streamingText = if (state.running) state.streamingText else "",
+            )
         }
     }
 
@@ -190,11 +222,11 @@ class ChatViewModel : ViewModel() {
                         messages = messages,
                         items = Transcript.build(messages),
                         streamingText = if (event.message.role == "assistant") "" else state.streamingText,
+                        pendingUserText = state.pendingUserText.takeUnless { event.message.role == "user" },
                     )
                 }
                 is TurnEvent.ApprovalRequired -> state.copy(pendingApproval = event.request)
                 is TurnEvent.Done -> state.copy(
-                    streamingText = "",
                     error = event.error?.takeUnless { it in QUIET_DONE_ERRORS }?.let(::describeTurnError),
                 )
                 is TurnEvent.Failed -> state.copy(error = event.message)
@@ -217,6 +249,7 @@ class ChatViewModel : ViewModel() {
                 when {
                     error.isAccessGate -> it.copy(accessMessage = error.message)
                     error.status == 401 -> it.copy(error = "The server rejected your sign-in. Sign out and sign in again.")
+                    error.status == 405 -> it.copy(error = "The server is running an older ai-agent. Restart it to use this feature.")
                     else -> it.copy(error = error.message)
                 }
             }
