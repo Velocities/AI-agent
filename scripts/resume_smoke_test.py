@@ -10,7 +10,7 @@ import logging
 import sys
 import time
 
-from ai_agent.cli.app import build_agent, configure_logging, run_error_notice
+from ai_agent.agent.factory import build_agent, configure_logging, run_error_notice
 
 PROMPT = (
     "Write a detailed reference on Python error handling. Cover the exception "

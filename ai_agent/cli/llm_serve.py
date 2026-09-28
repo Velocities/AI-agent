@@ -5,7 +5,7 @@ import logging
 from rich.console import Console
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
-from ai_agent.cli.app import configure_logging, configure_stdio_encoding
+from ai_agent.agent.factory import configure_logging, configure_stdio_encoding
 from ai_agent.cli.errors import startup_should_exit
 from ai_agent.config import Settings
 from ai_agent.llm.server.engine.base import LlmEngine

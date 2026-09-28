@@ -11,8 +11,8 @@ from ai_agent.api.app import create_app
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.approval.session import ApprovalSession
-from ai_agent.cli.credentials import StoredSession, save_session, session_path
-from ai_agent.cli.login import authorize_url, exchange_code, pkce_pair
+from ai_agent_cli.credentials import StoredSession, save_session, session_path
+from ai_agent_cli.login import authorize_url, exchange_code, pkce_pair
 from ai_agent.commands.ast import SingleCommand
 from ai_agent.config import ConfirmationMode, Settings
 from ai_agent.conversations.db import open_store_at

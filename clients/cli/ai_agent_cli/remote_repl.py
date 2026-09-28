@@ -4,17 +4,17 @@ import httpx
 from rich.console import Console
 
 from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
-from ai_agent.cli.api_client import AgentApiClient, AgentApiError
-from ai_agent.cli.api_url import public_api_base_url_hint
-from ai_agent.cli.credentials import (
+from ai_agent_cli.api_client import AgentApiClient, AgentApiError
+from ai_agent_cli.api_url import public_api_base_url_hint
+from ai_agent_cli.credentials import (
     load_conversation_id,
     load_session,
     save_conversation_id,
     save_session,
     session_is_fresh,
 )
-from ai_agent.cli.login import refresh_session
-from ai_agent.cli.server_config import ServerConfig, ensure_server_config, set_server_url
+from ai_agent_cli.login import refresh_session
+from ai_agent_cli.server_config import ServerConfig, ensure_server_config, set_server_url
 
 
 def run_remote_repl() -> int:

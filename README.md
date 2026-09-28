@@ -1040,12 +1040,14 @@ ai_agent/
   audit/          # Audit logging
   api/            # Public HTTP API (`ai-agent-serve`)
   conversations/  # SQLite transcript store and Alembic migrations
-  cli/            # Terminal (`ai-agent`, `serve`, `config`, `host-setup`, `ai-agent-llm`)
+  cli/            # Server terminal ops (`serve`, `config`, `host-setup`, `ai-agent-llm`)
+  agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)
   service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
+clients/cli/      # Terminal chat client (`ai_agent_cli`: login, HTTP API REPL)
 clients/android/  # Discord sign-in, then reads chats from ai-agent-serve
 deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
 deploy/systemd/   # Ubuntu service unit and installer (`ai-agent.service`)
@@ -1053,7 +1055,7 @@ supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
 
-Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
+CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
 
 ---
 

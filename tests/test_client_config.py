@@ -9,14 +9,14 @@ from rich.console import Console
 
 from ai_agent.api.app import create_app
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH
-from ai_agent.cli.credentials import (
+from ai_agent_cli.credentials import (
     StoredSession,
     load_conversation_id,
     load_session,
     save_conversation_id,
     save_session,
 )
-from ai_agent.cli.server_config import (
+from ai_agent_cli.server_config import (
     ensure_server_config,
     load_server_config,
     normalize_server_url,
