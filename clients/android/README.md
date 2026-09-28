@@ -1,4 +1,4 @@
-# AI Agent — Android client (0.1.0)
+# AI Agent — Android client
 
 Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, then a chat screen in the usual mobile chatbot layout.
 
@@ -29,6 +29,12 @@ The access token from this sign-in is what [`ai-agent-serve`](../../README.md#pa
 Open this folder in Android Studio that supports **AGP 8.13** (Otter and later). Install **Android SDK 36**.
 
 Coding practices that keep a possible future iPhone client cheap to add are in [DEVELOPMENT.md](DEVELOPMENT.md). Follow them when changing this app.
+
+## Install a released APK
+
+Each [GitHub Release](https://github.com/Velocities/AI-agent/releases) has `ai-agent-android-vX.Y.Z.apk` (and a `.sha256` checksum). Download it on the phone and open it; allow **Install unknown apps** for your browser or Files app if asked. You do not need to build anything. The server and Supabase setup below still apply.
+
+The app version comes from the repository's [`VERSION`](../../VERSION) file. Releases are built by GitHub Actions; see [`RELEASING.md`](../../RELEASING.md), including how release signing works.
 
 ## One-time cloud setup
 

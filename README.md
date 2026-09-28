@@ -19,6 +19,13 @@ ai-agent login    # once, in the browser
 ai-agent          # chat client
 ```
 
+**Only need the chat client?** If someone already runs the server for you, install the published packages instead of cloning:
+
+- CLI: `pip install ai-agent` (upgrade with `pip install --upgrade ai-agent`), then `ai-agent server-url https://agent.example.com`, `ai-agent login`, `ai-agent`.
+- Android: download `ai-agent-android-vX.Y.Z.apk` from [GitHub Releases](https://github.com/Velocities/AI-agent/releases).
+
+Maintainers: the release process is in [`RELEASING.md`](RELEASING.md).
+
 On an Ubuntu server, use [Path G — Ubuntu production (systemd)](#path-g-ubuntu-production-systemd) (`sudo systemctl enable --now ai-agent`) instead of leaving a terminal open. Details: [`deploy/systemd/README.md`](deploy/systemd/README.md).
 
 **Requirements:**
@@ -1053,6 +1060,9 @@ deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
 deploy/systemd/   # Ubuntu service unit and installer (`ai-agent.service`)
 supabase/         # SQL migrations (profiles only for now)
 tests/
+.github/workflows/  # CI builds (build.yml) and tag-triggered releases (release.yml)
+VERSION           # Shared release version for the CLI package and Android app
+RELEASING.md      # How to cut a release
 ```
 
 CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).

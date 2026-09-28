@@ -1,0 +1,107 @@
+# Publishes a frontend release when a vMAJOR.MINOR.PATCH tag is pushed.
+# Nothing is published unless every build and test job in build.yml passes.
+# See RELEASING.md for the full procedure and one-time setup.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and test
+    uses: ./.github/workflows/build.yml
+    with:
+      release-tag: ${{ github.ref_name }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  publish-pypi:
+    name: Publish CLI to PyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ai-agent/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-dist
+          path: dist/
+
+      - name: Publish with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build.outputs.version }}
+      APK_SIGNED: ${{ needs.build.outputs.apk-signed }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk
+          path: assets/
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-dist
+          path: assets/
+
+      - name: Write release notes
+        run: |
+          apk="ai-agent-android-v$VERSION.apk"
+          {
+            echo "## Install"
+            echo
+            echo "**Android:** download [\`$apk\`](https://github.com/$GH_REPO/releases/download/$TAG/$apk) and open it on your phone. \`$apk.sha256\` has its SHA-256 checksum."
+            echo
+            if [[ "$APK_SIGNED" != "true" ]]; then
+              echo "> [!WARNING]"
+              echo "> This APK is signed with a temporary debug key, not a stable release key. Android will refuse to install it over a previous version; uninstall the old app first (this clears its saved server URL and sign-in)."
+              echo
+            fi
+            echo "**CLI:**"
+            echo
+            echo '```bash'
+            echo "pip install --upgrade ai-agent==$VERSION"
+            echo '```'
+            echo
+            echo "PyPI: https://pypi.org/project/ai-agent/$VERSION/"
+          } > notes.md
+          cat notes.md
+
+      - name: Create or update the release
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading assets to it."
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* \
+              --verify-tag \
+              --title "AI Agent $TAG" \
+              --notes-file notes.md \
+              --generate-notes
+          fi
+          gh release view "$TAG" --json url,assets --jq '"Release: \(.url)\nAssets: \([.assets[].name] | join(", "))"'
