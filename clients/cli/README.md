@@ -18,13 +18,25 @@ The `ai-agent` console script still lives in the main Python package (`ai_agent.
 
 Server-side terminal commands (`ai-agent serve`, `config`, `host-setup`, `ai-agent-llm`, …) remain under `ai_agent/cli/` in the server package.
 
-## Usage
+## Install
 
-Install the project from the repo root (`pip install -e ".[dev]"`), then:
+Released versions are on [PyPI](https://pypi.org/project/ai-agent/) as part of the `ai-agent` package:
 
 ```bash
+pip install ai-agent            # or: pipx install ai-agent
+pip install --upgrade ai-agent  # later, to update
+```
+
+For development, install the project from the repo root instead (`pip install -e ".[dev]"`).
+
+## Usage
+
+```bash
+ai-agent server-url https://agent.example.com   # once
 ai-agent login
 ai-agent
 ```
+
+Releases are built and published by GitHub Actions; see [`RELEASING.md`](../../RELEASING.md).
 
 See the root [README](../../README.md) for server setup and Cloudflare tunnel notes.

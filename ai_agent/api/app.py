@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from ai_agent import __version__
 from ai_agent.api.approvals import ApprovalBroker
 from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH, ClientConfigBody, client_config_for
@@ -37,7 +38,7 @@ def create_app(
     else:
         resolved = None
 
-    app = FastAPI(title="AI Agent", version="0.1.0")
+    app = FastAPI(title="AI Agent", version=__version__)
     app.state.verifier = resolved
     app.state.settings = settings
     app.state.store = store

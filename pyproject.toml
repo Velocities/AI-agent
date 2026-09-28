@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-agent"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Self-hosted AI server administration agent with argv-based command execution"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "alembic>=1.13",
     "fastapi>=0.115",
@@ -22,6 +22,12 @@ dependencies = [
     "uvicorn>=0.32",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Velocities/AI-agent"
+Source = "https://github.com/Velocities/AI-agent"
+Issues = "https://github.com/Velocities/AI-agent/issues"
+Releases = "https://github.com/Velocities/AI-agent/releases"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
@@ -32,6 +38,9 @@ dev = [
 ai-agent = "ai_agent.cli.app:main"
 ai-agent-llm = "ai_agent.cli.llm_serve:main"
 ai-agent-serve = "ai_agent.api.serve:main"
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
 
 [tool.setuptools.packages.find]
 where = [".", "clients/cli"]

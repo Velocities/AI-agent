@@ -23,6 +23,23 @@ fun debugFlag(name: String): String {
     }
 }
 
+// The repo-root VERSION file is the single release version for the CLI and this app.
+// versionCode must increase with every release, so it is derived as MAJOR*1_000_000 + MINOR*1_000 + PATCH.
+val appVersionName: String = rootProject.file("../../VERSION").readText().trim()
+val appVersionCode: Int = run {
+    val match = Regex("""(\d+)\.(\d+)\.(\d+)""").matchEntire(appVersionName)
+        ?: throw GradleException("VERSION must be MAJOR.MINOR.PATCH, got '$appVersionName'")
+    val (major, minor, patch) = match.destructured.toList().map { it.toInt() }
+    if (minor > 999 || patch > 999) {
+        throw GradleException("VERSION minor and patch must be at most 999, got '$appVersionName'")
+    }
+    major * 1_000_000 + minor * 1_000 + patch
+}
+
+// Release signing comes only from the environment (CI secrets), never from files in the repo.
+// Without it, release builds fall back to the debug key so the APK is still installable.
+val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "com.aiagent.android"
     compileSdk = 36
@@ -31,14 +48,31 @@ android {
         applicationId = "com.aiagent.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         buildConfigField("boolean", "AUTH_DEBUG", debugFlag("AUTH_DEBUG"))
     }
 
+    signingConfigs {
+        if (releaseKeystorePath != null) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = if (releaseKeystorePath != null) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("ANDROID_KEYSTORE_PATH is not set; signing the release APK with the debug key.")
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

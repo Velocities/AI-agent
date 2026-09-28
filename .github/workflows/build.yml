@@ -1,0 +1,228 @@
+# Builds and tests both frontend clients. Runs on every PR and push to main,
+# and is called by release.yml, which publishes only after every job here passes.
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      release-tag:
+        description: Git tag being released (vMAJOR.MINOR.PATCH). Must match the VERSION file.
+        type: string
+        required: true
+    outputs:
+      version:
+        value: ${{ jobs.version.outputs.version }}
+      apk-signed:
+        description: "'true' when the APK was signed with the release key rather than a debug key."
+        value: ${{ jobs.android.outputs.signed }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read VERSION and check it against the release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=VERSION::VERSION must be MAJOR.MINOR.PATCH, got '$version'"
+            exit 1
+          fi
+          if [[ -n "$RELEASE_TAG" && "$RELEASE_TAG" != "v$version" ]]; then
+            echo "::error file=VERSION::Tag '$RELEASE_TAG' does not match VERSION '$version'. Tag must be 'v$version'."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: \`$version\`" >> "$GITHUB_STEP_SUMMARY"
+
+  python-tests:
+    name: Python tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -ra
+
+  cli-package:
+    name: Build CLI package
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build tools
+        run: python -m pip install "build>=1.2" "twine>=6.1"
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check distributions
+        run: |
+          python -m twine check --strict dist/*
+          for f in "dist/ai_agent-$VERSION.tar.gz" "dist/ai_agent-$VERSION-py3-none-any.whl"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::Expected $f, found: $(ls dist)"
+              exit 1
+            fi
+          done
+
+      - name: Smoke-test the wheel in a clean virtualenv
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install "dist/ai_agent-$VERSION-py3-none-any.whl"
+          /tmp/smoke/bin/python - <<'EOF'
+          import os
+          from importlib.metadata import version
+          import ai_agent, ai_agent_cli, ai_agent.cli.app
+          installed = version("ai-agent")
+          assert installed == os.environ["VERSION"], f"installed {installed}, expected {os.environ['VERSION']}"
+          assert ai_agent.__version__ == installed, ai_agent.__version__
+          print(f"ai-agent {installed} OK")
+          EOF
+          test -x /tmp/smoke/bin/ai-agent
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ inputs.release-tag && 90 || 7 }}
+
+  android:
+    name: Build Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APK_NAME: ai-agent-android-v${{ needs.version.outputs.version }}.apk
+    defaults:
+      run:
+        working-directory: clients/android
+    steps:
+      - uses: actions/checkout@v7
+
+      # Caches ~/.gradle/caches and ~/.gradle/wrapper (downloaded dependencies and the
+      # Gradle distribution). The key hashes every file that pins a dependency or tool
+      # version, so any change starts from an empty cache. Build outputs are never cached.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            clients/android/**/*.gradle.kts
+            clients/android/gradle.properties
+            clients/android/gradle/libs.versions.toml
+            clients/android/gradle/wrapper/gradle-wrapper.properties
+
+      # Caching is handled above; this validates the wrapper jar checksum and adds a build summary.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: true
+          validate-wrappers: true
+
+      - name: Decode release signing key
+        id: signing
+        if: inputs.release-tag != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" ]]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; the release APK is signed with a throwaway debug key. See RELEASING.md."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keystore="$RUNNER_TEMP/release.keystore"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests and release build
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.release-tag && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.release-tag && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.release-tag && secrets.ANDROID_KEY_PASSWORD || '' }}
+        run: ./gradlew --console=plain :app:testReleaseUnitTest :app:assembleRelease
+
+      - name: Verify and rename APK
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          if [[ ! -f "$apk" ]]; then
+            echo "::error::$apk was not produced; found: $(ls app/build/outputs/apk/release/)"
+            exit 1
+          fi
+          build_tools="$(printf '%s\n' "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$build_tools/apksigner" verify --print-certs "$apk"
+          apk_version="$("$build_tools/aapt2" dump badging "$apk" | sed -n "s/.* versionName='\([^']*\)'.*/\1/p")"
+          if [[ "$apk_version" != "$VERSION" ]]; then
+            echo "::error::APK versionName '$apk_version' does not match VERSION '$VERSION'"
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$apk" "dist/$APK_NAME"
+          (cd dist && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
+
+      - name: Remove decoded signing key
+        if: always() && steps.signing.outputs.signed == 'true'
+        run: rm -f "$ANDROID_KEYSTORE_PATH"
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-reports
+          path: clients/android/app/build/reports/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: clients/android/dist/
+          if-no-files-found: error
+          retention-days: ${{ inputs.release-tag && 90 || 7 }}

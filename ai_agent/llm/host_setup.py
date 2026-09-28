@@ -28,7 +28,7 @@ def merge_authorized_key(path: Path, public_key: str) -> bool:
 
 def windows_authorized_keys_path(*, home: Path, admin_account: bool) -> Path:
     if admin_account:
-        return Path(r"C:\ProgramData\ssh\administrators_authorized_keys")
+        return Path("C:/ProgramData/ssh/administrators_authorized_keys")
     return home / ".ssh" / "authorized_keys"
 
 
