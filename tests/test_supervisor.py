@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.api.turns import _default_agent_factory, _run_turn
+from ai_agent.api.turns import AgentFactoryNotConfigured, _run_turn
 from ai_agent.config import LlmTransport, Settings
 from ai_agent.llm.server.process.ollama import OllamaEngineProcess
 from ai_agent.service.notify import sd_notify
@@ -25,22 +25,23 @@ def test_settings_for_api_uses_the_facade_over_http() -> None:
     assert settings.llm_transport == LlmTransport.SSH
 
 
-def test_default_agent_factory_keeps_the_passed_settings(monkeypatch) -> None:
-    captured: dict = {}
+def test_run_turn_refuses_without_an_agent_factory() -> None:
+    store = MagicMock()
+    store.list_messages.return_value = []
 
-    def capture(**kwargs):
-        captured.update(kwargs)
-        return MagicMock()
-
-    monkeypatch.setattr("ai_agent.api.turns.build_agent", capture)
-    settings = Settings()
-    _default_agent_factory(
-        settings=settings,
-        prompter=None,
-        session=None,
-        audit_user="user",
-    )
-    assert captured["settings"] is settings
+    with pytest.raises(AgentFactoryNotConfigured):
+        _run_turn(
+            settings=Settings(),
+            store=store,
+            broker=MagicMock(),
+            sessions={},
+            user_id="user",
+            conversation_id="conv",
+            content="hi",
+            emit=lambda _event: None,
+            cancel=threading.Event(),
+            agent_factory=None,
+        )
 
 
 def test_run_turn_passes_settings_into_the_factory() -> None:
