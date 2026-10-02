@@ -380,22 +380,13 @@ def _two_target_file(tmp_path: Path, *, file_default: str | None = None) -> Path
     return path
 
 
-def test_build_agent_reads_the_default_target_from_env_file(tmp_path, monkeypatch) -> None:
-    """AGENT_DEFAULT_TARGET used to be read from os.environ, which pydantic
-    never populates from .env, so the setting was silently dropped."""
-    monkeypatch.delenv("AGENT_DEFAULT_TARGET", raising=False)
-    targets = _two_target_file(tmp_path)
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        f"AGENT_DEFAULT_TARGET=lab\nAGENT_EXECUTION_TARGETS_FILE={targets}\n",
-        encoding="utf-8",
-    )
-
-    settings = Settings(_env_file=str(env_file))
+def test_build_agent_without_user_id_uses_local_only(tmp_path) -> None:
+    """Serve/chat paths pass user_id + target_repo; standalone build_agent is local-only."""
+    settings = Settings()
     agent = build_agent(settings=settings, audit_user="tester")
 
-    assert settings.agent_default_target == "lab"
-    assert agent.router.default_name == "lab"
+    assert agent.router.default_name == "local"
+    assert set(agent.router.names()) == {"local"}
 
 
 def test_unknown_default_target_is_rejected(tmp_path: Path) -> None:
@@ -404,7 +395,7 @@ def test_unknown_default_target_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(TargetConfigError) as exc:
         load_router(executor, _two_target_file(tmp_path), default_override="typo")
 
-    assert "AGENT_DEFAULT_TARGET" in str(exc.value)
+    assert "typo" in str(exc.value)
     assert "lab, local" in str(exc.value)
 
 

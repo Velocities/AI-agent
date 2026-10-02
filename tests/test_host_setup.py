@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import MagicMock
 
 from ai_agent.cli.confirm import confirm
@@ -31,9 +31,9 @@ def test_normalize_and_merge_authorized_key(tmp_path: Path) -> None:
 
 def test_windows_admin_uses_programdata() -> None:
     path = windows_authorized_keys_path(home=Path("C:/Users/x"), admin_account=True)
-    assert path.name == "administrators_authorized_keys"
+    assert PureWindowsPath(str(path)).name == "administrators_authorized_keys"
     user = windows_authorized_keys_path(home=Path("C:/Users/x"), admin_account=False)
-    assert user.name == "authorized_keys"
+    assert PureWindowsPath(str(user)).name == "authorized_keys"
 
 
 def test_linux_authorized_keys_under_home() -> None:

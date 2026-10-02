@@ -23,7 +23,7 @@ class _Verifier:
 
 @pytest.fixture
 def access_store(tmp_path) -> DeploymentAccessStore:
-    _store, access = open_stores_at(f"sqlite:///{tmp_path / 'db.sqlite3'}")
+    _store, access, _repo = open_stores_at(f"sqlite:///{tmp_path / 'db.sqlite3'}")
     return access
 
 
@@ -57,7 +57,7 @@ def test_approve_after_deny(access_store: DeploymentAccessStore) -> None:
 
 
 def test_api_me_pending(tmp_path, access_store: DeploymentAccessStore) -> None:
-    _store, access = open_stores_at(f"sqlite:///{tmp_path / 'api.sqlite3'}")
+    _store, access, _repo = open_stores_at(f"sqlite:///{tmp_path / 'api.sqlite3'}")
     app = create_app(
         __import__("ai_agent.config", fromlist=["Settings"]).Settings(),
         _Verifier(),
@@ -73,7 +73,7 @@ def test_api_me_pending(tmp_path, access_store: DeploymentAccessStore) -> None:
 
 
 def test_api_me_approved(tmp_path) -> None:
-    store, access = open_stores_at(f"sqlite:///{tmp_path / 'ok.sqlite3'}")
+    store, access, _repo = open_stores_at(f"sqlite:///{tmp_path / 'ok.sqlite3'}")
     access.approve(USER, linux_username="deployuser")
     app = create_app(
         __import__("ai_agent.config", fromlist=["Settings"]).Settings(),
@@ -88,7 +88,7 @@ def test_api_me_approved(tmp_path) -> None:
 
 
 def test_api_me_denied(tmp_path) -> None:
-    store, access = open_stores_at(f"sqlite:///{tmp_path / 'no.sqlite3'}")
+    store, access, _repo = open_stores_at(f"sqlite:///{tmp_path / 'no.sqlite3'}")
     access.deny(USER)
     app = create_app(
         __import__("ai_agent.config", fromlist=["Settings"]).Settings(),

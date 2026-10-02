@@ -318,18 +318,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     targets = sub.add_parser(
         "execution-target",
-        help="Add or list named command-execution targets (local / ssh / docker).",
+        help="Per-user SSH/Docker targets (SQLite). See docs/execution-targets.md.",
     )
     targets.add_argument(
         "action",
         nargs="?",
-        choices=["add", "list", "show", "wizard", "trust"],
-        help="add (default) walks through creating a target; list shows names; trust fetches an SSH host key.",
+        choices=["add", "list", "show", "wizard", "trust", "import-yaml"],
+        help="Manage targets for the subject Supabase user (login session or --user-id).",
     )
     targets.add_argument(
         "target_name",
         nargs="?",
-        help="SSH target name for the trust action.",
+        help="SSH target name for trust, or YAML path for import-yaml.",
+    )
+    targets.add_argument(
+        "--user-id",
+        metavar="UUID",
+        help="Subject Supabase user id (default: ai-agent login session).",
+    )
+    targets.add_argument(
+        "--service-db",
+        action="store_true",
+        help="Use the systemd service user's database.",
     )
 
     args = parser.parse_args(argv)
@@ -375,7 +385,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "execution-target":
         from ai_agent.cli.execution_target_cmd import main as targets_main
 
-        forwarded = [args.action or "add"]
+        forwarded: list[str] = []
+        if getattr(args, "service_db", False):
+            forwarded.append("--service-db")
+        if getattr(args, "user_id", None):
+            forwarded.extend(["--user-id", args.user_id])
+        forwarded.append(args.action or "add")
         if getattr(args, "target_name", None):
             forwarded.append(args.target_name)
         return targets_main(forwarded)

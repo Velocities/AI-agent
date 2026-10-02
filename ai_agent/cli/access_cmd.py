@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     console.print(f"[dim]Database: {db_path}[/dim]\n")
 
     try:
-        _store, access = open_stores_at(url)
+        _store, access, _repo = open_stores_at(url)
     except PermissionError:
         console.print(
             "[red]Permission denied[/red] reading the service database.\n"
@@ -194,7 +194,7 @@ def _cmd_list(
         return 0
     if fallback_path.resolve() != primary_path.resolve():
         try:
-            _store, fallback_access = open_stores_at(service_user_database_url())
+            _store, fallback_access, _repo = open_stores_at(service_user_database_url())
         except OSError:
             _print_database_mismatch_hint(console, settings)
             return 0

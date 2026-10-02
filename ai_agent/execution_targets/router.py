@@ -39,7 +39,7 @@ class ExecutionTargetRouter:
             allowed = ", ".join(sorted(targets))
             raise TargetConfigError(
                 f"Default execution target {default_name!r} is not configured. "
-                f"Set AGENT_DEFAULT_TARGET to one of: {allowed}"
+                f"Choose one of: {allowed}"
             )
         self._targets = dict(targets)
         self.default_name = default_name

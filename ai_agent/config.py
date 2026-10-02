@@ -155,18 +155,6 @@ class Settings(BaseSettings):
         default=Path("/tmp/ai-agent"),
         alias="AGENT_SCRATCH_DIR",
     )
-    # Legacy global YAML (docs/execution-targets.md). Replaced by per-user SQLite;
-    # these settings will be removed after SecureKeyStore targets ship.
-    agent_execution_targets_file: Path = Field(
-        default=Path("execution_targets.yaml"),
-        alias="AGENT_EXECUTION_TARGETS_FILE",
-    )
-    agent_default_target: str = Field(
-        default="local",
-        alias="AGENT_DEFAULT_TARGET",
-        description="Legacy global default; will be dropped (implicit local per user).",
-    )
-
     api_bind_host: str = Field(
         default="127.0.0.1",
         alias="API_BIND_HOST",

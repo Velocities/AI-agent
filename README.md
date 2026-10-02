@@ -724,10 +724,22 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 
 ### Command execution (independent of LLM)
 
-| Variable | Description |
-|----------|-------------|
-| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`). Must name a configured target or the agent refuses to start. Overrides `default_target` in the targets file. |
+Per-user SSH/Docker targets are stored in the deployment SQLite database and
+on-disk keys under each approved Linux user's home. Chat clients do not load
+target config; `ai-agent serve` resolves targets per turn. See
+[`docs/execution-targets.md`](docs/execution-targets.md). When the model omits
+`target`, the server uses **`local`** only.
+
+Configure on the server (after `ai-agent login` or with `--user-id`):
+
+```bash
+ai-agent config execution-target list
+ai-agent config execution-target add
+ai-agent config execution-target import-yaml execution_targets.yaml
+```
+
+Legacy global `execution_targets.yaml` is import-only; it is not used at runtime
+on `ai-agent serve`.
 
 ### Full reference (all variables)
 
@@ -762,8 +774,6 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
-| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`). Must name a configured target or the agent refuses to start. Overrides `default_target` in the targets file. |
 | `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
 | `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
 | `SUPABASE_URL` | Supabase project URL used to verify access tokens |
@@ -1071,13 +1081,16 @@ This is separate from where the LLM runs (`LLM_HOST` / `remote-provider`).
 **Simple single-machine chat (planned v2):**
 [`docs/local-in-process-chat.md`](docs/local-in-process-chat.md)
 
-Today's CLI still uses a **legacy global** `execution_targets.yaml` (gitignored).
-That path is being replaced by per-user records on the server; see the doc above.
+Targets are **per Supabase user** in the deployment database. Every
+`config execution-target` command requires a subject user id from
+`ai-agent login` or `--user-id`. Omitting `target` in a tool call always means
+**`local`** (this machine, as the approved Linux user).
 
-```bat
+```bash
 ai-agent config execution-target list
 ai-agent config execution-target add
 ai-agent config execution-target trust home-server
+ai-agent config execution-target import-yaml execution_targets.yaml
 ```
 
 ## Roadmap (not yet implemented)

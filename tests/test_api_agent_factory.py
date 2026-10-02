@@ -75,8 +75,8 @@ def spy(monkeypatch):
 
 def _stores(tmp_path, name="api.sqlite3"):
     path = tmp_path / name
-    store, access = open_stores_at(f"sqlite:///{path}")
-    return store, access, path
+    store, access, repo = open_stores_at(f"sqlite:///{path}")
+    return store, access, repo, path
 
 
 def _strip_linux_username(path) -> None:
@@ -95,10 +95,10 @@ def _strip_linux_username(path) -> None:
     con.close()
 
 
-def _app(tmp_path, access, store, *, wire_factory=True):
+def _app(tmp_path, access, store, repo, *, wire_factory=True):
     app = create_app(_settings(), _Tokens(), store=store, access_store=access)
     if wire_factory:
-        app.state.agent_factory = build_api_agent_factory(access)
+        app.state.agent_factory = build_api_agent_factory(access, repo)
     return app
 
 
@@ -111,23 +111,25 @@ def _auth(client, store, *, token="alice"):
 
 
 def test_approved_user_maps_to_their_linux_account(tmp_path, spy) -> None:
-    _store, access, _path = _stores(tmp_path)
+    _store, access, repo, _path = _stores(tmp_path)
     access.approve(ALICE, linux_username="deployuser")
 
-    factory = build_api_agent_factory(access)
+    factory = build_api_agent_factory(access, repo)
     settings = _settings()
     factory(settings=settings, prompter=None, session=None, audit_user=ALICE)
 
     assert spy[0]["run_as_linux_user"] == "deployuser"
+    assert spy[0]["user_id"] == ALICE
+    assert spy[0]["target_repo"] is repo
     assert spy[0]["settings"].agent_scratch_dir == settings.agent_scratch_dir / "deployuser"
 
 
 def test_scratch_dir_is_not_shared_between_users(tmp_path, spy) -> None:
-    _store, access, _path = _stores(tmp_path)
+    _store, access, repo, _path = _stores(tmp_path)
     other = "22222222-2222-4222-8222-222222222222"
     access.approve(ALICE, linux_username="alice_unix")
     access.approve(other, linux_username="bob_unix")
-    factory = build_api_agent_factory(access)
+    factory = build_api_agent_factory(access, repo)
 
     factory(settings=_settings(), prompter=None, session=None, audit_user=ALICE)
     factory(settings=_settings(), prompter=None, session=None, audit_user=other)
@@ -137,8 +139,8 @@ def test_scratch_dir_is_not_shared_between_users(tmp_path, spy) -> None:
 
 def test_unapproved_user_is_never_given_a_linux_account(tmp_path, spy) -> None:
     """The factory refuses to map; the route gate is what blocks the request."""
-    _store, access, _path = _stores(tmp_path)
-    factory = build_api_agent_factory(access)
+    _store, access, repo, _path = _stores(tmp_path)
+    factory = build_api_agent_factory(access, repo)
 
     factory(settings=_settings(), prompter=None, session=None, audit_user=ALICE)
 
@@ -149,7 +151,7 @@ def test_unapproved_user_is_never_given_a_linux_account(tmp_path, spy) -> None:
 
 
 def test_iter_turn_events_fails_closed_without_a_factory(tmp_path, spy) -> None:
-    store, _access, _path = _stores(tmp_path)
+    store, _access, _repo, _path = _stores(tmp_path)
     conversation = store.create_conversation(ALICE)
 
     events = [
@@ -171,9 +173,9 @@ def test_iter_turn_events_fails_closed_without_a_factory(tmp_path, spy) -> None:
 
 
 def test_start_turn_returns_503_without_a_factory(tmp_path, spy) -> None:
-    store, access, _path = _stores(tmp_path)
+    store, access, repo, _path = _stores(tmp_path)
     access.approve(ALICE, linux_username="deployuser")
-    app = _app(tmp_path, access, store, wire_factory=False)
+    app = _app(tmp_path, access, store, repo, wire_factory=False)
     client = TestClient(app)
     conversation_id, headers = _auth(client, store)
 
@@ -190,9 +192,9 @@ def test_start_turn_returns_503_without_a_factory(tmp_path, spy) -> None:
 
 def test_refused_turn_leaves_the_conversation_usable(tmp_path, spy) -> None:
     """A 503 must not leave the broker holding the conversation."""
-    store, access, _path = _stores(tmp_path)
+    store, access, repo, _path = _stores(tmp_path)
     access.approve(ALICE, linux_username="deployuser")
-    app = _app(tmp_path, access, store, wire_factory=False)
+    app = _app(tmp_path, access, store, repo, wire_factory=False)
     client = TestClient(app)
     conversation_id, headers = _auth(client, store)
     body = {"content": "whoami"}
@@ -201,7 +203,7 @@ def test_refused_turn_leaves_the_conversation_usable(tmp_path, spy) -> None:
         f"/api/conversations/{conversation_id}/turns", json=body, headers=headers
     ).status_code == 503
 
-    app.state.agent_factory = build_api_agent_factory(access)
+    app.state.agent_factory = build_api_agent_factory(access, repo)
     retry = client.post(
         f"/api/conversations/{conversation_id}/turns", json=body, headers=headers
     )
@@ -229,9 +231,9 @@ def _approved_but_unmapped(access, path) -> None:
 def test_turn_is_refused_when_the_user_has_no_linux_mapping(
     tmp_path, spy, setup, code
 ) -> None:
-    store, access, path = _stores(tmp_path)
+    store, access, repo, path = _stores(tmp_path)
     setup(access, path)
-    client = TestClient(_app(tmp_path, access, store))
+    client = TestClient(_app(tmp_path, access, store, repo))
     conversation_id, headers = _auth(client, store)
 
     response = client.post(
@@ -249,9 +251,9 @@ def test_turn_is_refused_when_the_user_has_no_linux_mapping(
 
 
 def test_approved_turn_runs_as_the_approved_linux_user(tmp_path, spy) -> None:
-    store, access, _path = _stores(tmp_path)
+    store, access, repo, _path = _stores(tmp_path)
     access.approve(ALICE, linux_username="deployuser")
-    client = TestClient(_app(tmp_path, access, store))
+    client = TestClient(_app(tmp_path, access, store, repo))
     conversation_id, headers = _auth(client, store)
 
     response = client.post(

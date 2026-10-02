@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine, make_url
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
+from ai_agent.execution_targets.repository import UserExecutionTargetRepository
 
 
 def default_database_path() -> Path:
@@ -74,12 +75,18 @@ def open_store(settings: Settings) -> ConversationStore:
     return open_stores(settings)[0]
 
 
-def open_stores(settings: Settings) -> tuple[ConversationStore, DeploymentAccessStore]:
+def open_stores(
+    settings: Settings,
+) -> tuple[ConversationStore, DeploymentAccessStore, UserExecutionTargetRepository]:
     url = database_url(settings)
     upgrade_database(url)
     engine = _engine(url)
     _restrict_sqlite_file(url)
-    return ConversationStore(engine), DeploymentAccessStore(engine)
+    return (
+        ConversationStore(engine),
+        DeploymentAccessStore(engine),
+        UserExecutionTargetRepository(engine),
+    )
 
 
 def open_store_at(url: str) -> ConversationStore:
@@ -87,10 +94,16 @@ def open_store_at(url: str) -> ConversationStore:
     return open_stores_at(url)[0]
 
 
-def open_stores_at(url: str) -> tuple[ConversationStore, DeploymentAccessStore]:
+def open_stores_at(
+    url: str,
+) -> tuple[ConversationStore, DeploymentAccessStore, UserExecutionTargetRepository]:
     upgrade_database(url)
     engine = _engine(url)
-    return ConversationStore(engine), DeploymentAccessStore(engine)
+    return (
+        ConversationStore(engine),
+        DeploymentAccessStore(engine),
+        UserExecutionTargetRepository(engine),
+    )
 
 
 def _engine(url: str) -> Engine:

@@ -64,3 +64,20 @@ class DeploymentAccessRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ExecutionTargetRow(Base):
+    """Named SSH/Docker command destinations owned by one Supabase user."""
+
+    __tablename__ = "execution_target"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_execution_target_user_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    type: Mapped[str] = mapped_column(String(16))
+    spec_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
