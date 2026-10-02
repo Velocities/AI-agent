@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from getpass import getuser
 from pathlib import Path
@@ -82,10 +81,12 @@ def build_agent(
         linux_username=run_as_linux_user,
     )
     try:
+        # Legacy global YAML router. API turns will load per user_id from SQLite;
+        # AGENT_DEFAULT_TARGET / default_override will be removed (see docs/execution-targets.md).
         router = load_router(
             executor,
             settings.agent_execution_targets_file,
-            default_override=os.environ.get("AGENT_DEFAULT_TARGET"),
+            default_override=settings.agent_default_target,
         )
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")

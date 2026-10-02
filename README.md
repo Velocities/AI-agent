@@ -727,7 +727,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | Variable | Description |
 |----------|-------------|
 | `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`). Must name a configured target or the agent refuses to start. Overrides `default_target` in the targets file. |
 
 ### Full reference (all variables)
 
@@ -763,7 +763,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `AGENT_POLICY_FILE` | Override policy YAML path |
 | `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
 | `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`). Must name a configured target or the agent refuses to start. Overrides `default_target` in the targets file. |
 | `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
 | `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
 | `SUPABASE_URL` | Supabase project URL used to verify access tokens |
@@ -1061,25 +1061,24 @@ CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Android clien
 
 ## Execution targets
 
-Approved commands run on a **named target** from configuration. The model picks a name such as `local` or `home-server`. It cannot supply a hostname, SSH key, or container ID.
-
-| Type | Meaning |
-|------|---------|
-| `local` | This machine (always present). The usual default when the model omits `target`. |
-| `ssh` | Remote host. One generated ed25519 key per target under `.ai-agent/execution-targets/<name>/`. |
-| `docker` | `docker exec` into an existing container. Optional `user` (wizard default `root`) maps to `docker exec -u`, so you do not need sudo or a password inside the image. |
-
+Approved commands run on a **named target**. The model picks a name such as
+`local` or `home-server`; it cannot supply a hostname, SSH key, or container ID.
 This is separate from where the LLM runs (`LLM_HOST` / `remote-provider`).
 
+**Full design (multi-user, SQLite, key storage, who configures what):**
+[`docs/execution-targets.md`](docs/execution-targets.md)
+
+**Simple single-machine chat (planned v2):**
+[`docs/local-in-process-chat.md`](docs/local-in-process-chat.md)
+
+Today's CLI still uses a **legacy global** `execution_targets.yaml` (gitignored).
+That path is being replaced by per-user records on the server; see the doc above.
+
 ```bat
-ai-agent config execution-target
 ai-agent config execution-target list
+ai-agent config execution-target add
 ai-agent config execution-target trust home-server
 ```
-
-The wizard can reuse **host / user / port** from `~/.ssh/config`, then generates a **new** key for the agent. Existing personal keys are not copied and are not used at runtime.
-
-SSH public keys belong in the remote user's `authorized_keys`. Host keys are stored per target (not in `~/.ssh`).
 
 ## Roadmap (not yet implemented)
 

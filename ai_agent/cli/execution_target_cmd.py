@@ -1,3 +1,11 @@
+"""CLI for the legacy global execution_targets.yaml file.
+
+Will be reworked to require a Supabase user_id (from ai-agent login session or
+--user-id) and to use SQLite + SecureKeyStore. See docs/execution-targets.md.
+Do not extend YAML behavior; this file's YAML usage will be removed after v2
+target storage ships.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
