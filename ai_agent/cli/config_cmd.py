@@ -339,7 +339,10 @@ def main(argv: list[str] | None = None) -> int:
     targets.add_argument(
         "--service-db",
         action="store_true",
-        help="Use the systemd service user's database.",
+        help=(
+            "Use the deployment database (CONVERSATION_DATABASE from .env, or "
+            "/var/lib/ai-agent/conversations.db)."
+        ),
     )
 
     args = parser.parse_args(argv)

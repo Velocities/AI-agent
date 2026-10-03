@@ -10,11 +10,14 @@ from rich.console import Console
 from ai_agent.cli.confirm import confirm
 from ai_agent.cli.target_subject import TargetSubjectError, resolve_subject_user_id
 from ai_agent.config import Settings
+from ai_agent.cli.access_cmd import (
+    _looks_like_sqlite_open_failure,
+    _print_shared_db_permission_hint,
+)
 from ai_agent.conversations.db import (
     database_display_path,
-    database_url,
+    database_url_for_admin_cli,
     open_stores_at,
-    service_user_database_url,
 )
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.execution_targets.repository import UserExecutionTargetRepository
@@ -36,14 +39,8 @@ def _prompt(console: Console, label: str, default: str = "") -> str:
     return value or default
 
 
-def _database_url_for_cli(settings: Settings, *, service_db: bool) -> str:
-    if service_db:
-        return service_user_database_url()
-    return database_url(settings)
-
-
 def _open_repo(settings: Settings, *, service_db: bool) -> tuple[str, UserExecutionTargetRepository, object]:
-    url = _database_url_for_cli(settings, service_db=service_db)
+    url = database_url_for_admin_cli(settings, service_db=service_db)
     _store, access, repo = open_stores_at(url)
     return url, repo, access
 
@@ -340,7 +337,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--service-db",
         action="store_true",
-        help="Use the systemd service user's database path.",
+        help=(
+            "Use the deployment database (CONVERSATION_DATABASE from .env, or "
+            "/var/lib/ai-agent/conversations.db)."
+        ),
     )
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("list", help="List targets for the subject user.")
@@ -372,9 +372,22 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         url, repo, access = _open_repo(settings, service_db=args.service_db)
-    except OSError as exc:
+    except (OSError, PermissionError) as exc:
+        db_path = database_display_path(
+            database_url_for_admin_cli(settings, service_db=args.service_db)
+        )
         console.print(f"[red]Could not open database:[/red] {exc}")
+        _print_shared_db_permission_hint(console, Path(db_path))
         return 1
+    except Exception as exc:
+        if _looks_like_sqlite_open_failure(exc):
+            db_path = database_display_path(
+                database_url_for_admin_cli(settings, service_db=args.service_db)
+            )
+            console.print(f"[red]Could not open database:[/red] {exc}")
+            _print_shared_db_permission_hint(console, Path(db_path))
+            return 1
+        raise
 
     db_path = database_display_path(url)
     key_store = OSSecureKeyStore()

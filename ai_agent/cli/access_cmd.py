@@ -12,9 +12,9 @@ from ai_agent.config import Settings
 from ai_agent.conversations.db import (
     database_display_path,
     database_url,
+    database_url_for_admin_cli,
+    deployment_database_url,
     open_stores_at,
-    service_user_database_path,
-    service_user_database_url,
     shared_deployment_database_path,
 )
 from ai_agent.deployment.access import AccessStatus
@@ -25,7 +25,10 @@ def _service_db_parent() -> argparse.ArgumentParser:
     common.add_argument(
         "--service-db",
         action="store_true",
-        help="Use the systemd service user's database (when CONVERSATION_DATABASE is unset).",
+        help=(
+            "Use the deployment database (CONVERSATION_DATABASE from .env, or "
+            "/var/lib/ai-agent/conversations.db)."
+        ),
     )
     return common
 
@@ -78,7 +81,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     console = Console()
     settings = Settings()
-    url = _database_url_for_cli(settings, service_db=getattr(args, "service_db", False))
+    url = database_url_for_admin_cli(
+        settings, service_db=getattr(args, "service_db", False)
+    )
     db_path = database_display_path(url)
 
     if args.command == "bootstrap-help":
@@ -164,12 +169,6 @@ def _run_list(
         raise
 
 
-def _database_url_for_cli(settings: Settings, *, service_db: bool) -> str:
-    if service_db:
-        return service_user_database_url()
-    return database_url(settings)
-
-
 def _cmd_list(
     console: Console,
     access,
@@ -187,14 +186,16 @@ def _cmd_list(
     if settings.conversation_database.strip():
         return 0
 
-    fallback_path = service_user_database_path()
+    fallback_path = shared_deployment_database_path()
     primary_path = Path(database_display_path(database_url(settings)))
     if not _path_readable(fallback_path):
         _print_database_mismatch_hint(console, settings)
         return 0
     if fallback_path.resolve() != primary_path.resolve():
         try:
-            _store, fallback_access, _repo = open_stores_at(service_user_database_url())
+            _store, fallback_access, _repo = open_stores_at(
+                deployment_database_url(settings)
+            )
         except OSError:
             _print_database_mismatch_hint(console, settings)
             return 0

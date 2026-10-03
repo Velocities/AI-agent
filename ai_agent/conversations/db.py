@@ -56,6 +56,27 @@ def database_url(settings: Settings) -> str:
     return f"sqlite:///{path}"
 
 
+def deployment_database_url(settings: Settings) -> str:
+    """SQLite URL used by `ai-agent serve` on this host.
+
+    Reads ``CONVERSATION_DATABASE`` from settings (``.env`` in the service
+    WorkingDirectory). When unset, uses the shared ``StateDirectory`` file under
+    ``/var/lib/ai-agent/conversations.db`` — not the service user's
+    ``~/.local/share/...`` path.
+    """
+    configured = settings.conversation_database.strip()
+    if configured:
+        return configured
+    return shared_deployment_database_url()
+
+
+def database_url_for_admin_cli(settings: Settings, *, service_db: bool) -> str:
+    """Pick the database for server-side ``config access`` / ``execution-target``."""
+    if service_db:
+        return deployment_database_url(settings)
+    return database_url(settings)
+
+
 def database_display_path(url: str) -> str:
     made = make_url(url)
     if made.drivername.startswith("sqlite") and made.database:
