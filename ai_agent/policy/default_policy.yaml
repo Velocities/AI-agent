@@ -15,21 +15,6 @@ forbidden_patterns:
   # date is read-only except when setting the clock (-s / --set, alone or in a flag group).
   - pattern: '^(\S*/)?date( .*)? (-[A-Za-z]*s|--set)'
 
-filesystem:
-  readable_paths:
-    - /etc
-    - /var/log
-    - /proc
-    - /sys
-    - /run
-    - /tmp
-    - /home
-    - /opt
-    - /usr
-    - /lib
-  writable_redirect_paths:
-    - /tmp/ai-agent
-
 network:
   allowed_hosts:
     - 127.0.0.1

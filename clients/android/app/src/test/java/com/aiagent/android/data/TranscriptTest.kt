@@ -9,6 +9,15 @@ import org.junit.Test
 
 class TranscriptTest {
 
+    @Test
+    fun rendersFindExecWithPlusTerminator() {
+        val expr = Json.parseToJsonElement(
+            """{"type":"single","argv":["find",".","-name","*.py","-exec","grep","-l","x","{}","+"]}""",
+        ).jsonObject
+        val rendered = CommandText.render(expr)
+        assertEquals("find . -name '*.py' -exec grep -l x '{}' +", rendered)
+    }
+
     private fun meta(raw: String): JsonObject = Json.parseToJsonElement(raw).jsonObject
 
     private fun message(position: Int, role: String, content: String = "", metadata: String = "{}") =

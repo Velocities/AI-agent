@@ -58,16 +58,9 @@ class NetworkPolicy:
 
 
 @dataclass
-class FilesystemPolicy:
-    readable_paths: list[Path] = field(default_factory=list)
-    writable_redirect_paths: list[Path] = field(default_factory=list)
-
-
-@dataclass
 class PolicyConfig:
     rules: list[PolicyRule]
     forbidden_patterns: list[dict]
-    filesystem: FilesystemPolicy
     network: NetworkPolicy
     fallback_risk: RiskLevel = RiskLevel.FORBIDDEN
     fallback_reason: str = "No matching policy rule"
@@ -93,9 +86,9 @@ class PolicyEngine:
         }
     )
 
-    def __init__(self, config: PolicyConfig, scratch_dir: Path):
+    def __init__(self, config: PolicyConfig, scratch_dir: Path | None = None):
         self.config = config
-        self.scratch_dir = scratch_dir.resolve()
+        _ = scratch_dir  # kept for call-site compatibility; paths are enforced by the OS
 
     @classmethod
     def from_yaml(cls, path: Path, scratch_dir: Path) -> "PolicyEngine":
@@ -120,20 +113,11 @@ class PolicyEngine:
             )
             for item in raw.get("rules", [])
         ]
-        fs = raw.get("filesystem", {})
         net = raw.get("network", {})
         fallback = raw.get("fallback", {})
-        readable_paths = [Path(p) for p in fs.get("readable_paths", [])]
-        readable_paths.extend(cls._extra_readable_paths_for_platform())
         config = PolicyConfig(
             rules=rules,
             forbidden_patterns=raw.get("forbidden_patterns", []),
-            filesystem=FilesystemPolicy(
-                readable_paths=readable_paths,
-                writable_redirect_paths=[
-                    Path(p) for p in fs.get("writable_redirect_paths", [])
-                ],
-            ),
             network=NetworkPolicy(
                 allowed_hosts=set(net.get("allowed_hosts", [])),
                 allowed_methods=set(net.get("allowed_methods", ["GET", "HEAD"])),
@@ -144,13 +128,6 @@ class PolicyEngine:
             fallback_reason=fallback.get("reason", "No matching policy rule"),
         )
         return cls(config, scratch_dir)
-
-    @staticmethod
-    def _extra_readable_paths_for_platform() -> list[Path]:
-        extras = [Path.home(), Path.cwd()]
-        if platform.system() == "Windows":
-            extras.append(Path("C:/Users"))
-        return extras
 
     def allowed_binaries(self) -> list[str]:
         return sorted({rule.binary for rule in self.config.rules})
@@ -269,26 +246,12 @@ class PolicyEngine:
         )
 
     def _validate_redirect(self, expr: RedirectCommand) -> PolicyDecision:
-        target = Path(expr.path).resolve()
-        allowed_roots = [
-            path.resolve() for path in self.config.filesystem.writable_redirect_paths
-        ]
-        allowed_roots.append(self.scratch_dir)
-        if not any(self._is_under(target, root) for root in allowed_roots):
-            return PolicyDecision(
-                expr=expr,
-                effective_risk=RiskLevel.FORBIDDEN,
-                segments=[],
-                allowed=False,
-                reason=f"Redirect target not allowed: {expr.path}",
-                redirect_path=expr.path,
-            )
         return PolicyDecision(
             expr=expr,
             effective_risk=RiskLevel.REVERSIBLE,
             segments=[],
             allowed=True,
-            reason="Redirect target allowed",
+            reason="Redirect allowed; path permissions enforced by the OS",
             redirect_path=expr.path,
         )
 
@@ -318,17 +281,6 @@ class PolicyEngine:
                 reason=self.config.fallback_reason,
                 cwd=cwd,
             )
-
-        if rule.path_args:
-            path_error = self._validate_path_args(argv, rule.path_args)
-            if path_error:
-                return SegmentDecision(
-                    argv=argv,
-                    binary=binary,
-                    risk=RiskLevel.FORBIDDEN,
-                    reason=path_error,
-                    cwd=cwd,
-                )
 
         if rule.network:
             network_error = self._validate_network(argv, binary)
@@ -395,20 +347,6 @@ class PolicyEngine:
             if token in joined:
                 return f"PowerShell script contains forbidden token: {token}"
 
-        for index, arg in enumerate(script_parts):
-            if arg in {"-Path", "-LiteralPath"} and index + 1 < len(script_parts):
-                path_error = self._validate_readable_path(script_parts[index + 1])
-                if path_error:
-                    return path_error
-        return None
-
-    def _validate_readable_path(self, raw_path: str) -> str | None:
-        resolved = Path(raw_path).expanduser().resolve()
-        if not any(
-            self._is_under(resolved, root.resolve())
-            for root in self.config.filesystem.readable_paths
-        ):
-            return f"Path not allowed by filesystem policy: {raw_path}"
         return None
 
     @staticmethod
@@ -436,28 +374,6 @@ class PolicyEngine:
             if "pattern" in pattern and re.search(pattern["pattern"], joined):
                 return True
         return False
-
-    def _validate_path_args(self, argv: list[str], mode: str) -> str | None:
-        path_candidates = [
-            arg
-            for arg in argv[1:]
-            if not arg.startswith("-") and self._looks_like_path(arg)
-        ]
-        if not path_candidates:
-            if mode == "true":
-                return "Path argument required but missing"
-            return None
-        for raw_path in path_candidates:
-            path_error = self._validate_readable_path(raw_path)
-            if path_error:
-                return path_error
-        return None
-
-    @staticmethod
-    def _looks_like_path(arg: str) -> bool:
-        if re.match(r"^[A-Za-z]:[\\/]", arg):
-            return True
-        return arg.startswith(("/", "./", "../", "~"))
 
     def _validate_network(self, argv: list[str], binary: str) -> str | None:
         for flag in self.config.network.forbid_upload_flags:
@@ -503,12 +419,11 @@ class PolicyEngine:
         return "GET"
 
     @staticmethod
-    def _is_under(path: Path, root: Path) -> bool:
-        try:
-            path.relative_to(root)
+    def forbidden_semicolon_usage(argv: list[str]) -> bool:
+        """True when argv uses shell semicolon chaining (always forbidden)."""
+        if ";" in argv:
             return True
-        except ValueError:
-            return False
+        return any(";" in arg for arg in argv)
 
 
 def summarize_segments(decision: PolicyDecision) -> str:

@@ -4,7 +4,9 @@ COMMAND_EXPR_SCHEMA = {
     "type": "object",
     "description": (
         "Structured command expression using argv arrays. Never use shell strings. "
-        "Supported types: single, pipe, and, or, redirect."
+        "No semicolons in argv (use run_commands for multiple singles, or and/or). "
+        "Repo search: grep -R in run_commands. find -exec must end with argv "
+        "'{}' then '+', never ';'. Types: single, pipe, and, or, redirect."
     ),
     "properties": {
         "type": {
@@ -53,9 +55,10 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
                 "name": "run_command",
                 "description": (
                     "Execute one structured command expression on a configured "
-                    "execution target. Use argv arrays and supported chain operators "
-                    "only. Use this to inspect files, services, docker, logs, or run "
-                    "approved actions."
+                    "execution target. Use argv arrays only (no shell, no ';' in argv). "
+                    "For several READ_ONLY steps (e.g. multiple grep -R searches), "
+                    "use run_commands instead. find -exec requires separate argv "
+                    "elements ending with '{}' then '+'."
                 ),
                 "parameters": {
                     "type": "object",
@@ -77,7 +80,10 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
                 "name": "run_commands",
                 "description": (
                     "Execute a batch of READ_ONLY inspection commands on one "
-                    "configured execution target with one user approval."
+                    "configured execution target with one user approval. "
+                    "Preferred for repo/code search: multiple grep -R singles in "
+                    "commands=[...]. Every command must be its own CommandExpr; "
+                    "never join steps with semicolons."
                 ),
                 "parameters": {
                     "type": "object",
@@ -141,7 +147,8 @@ SCHEMA_NUDGE = (
 COMMAND_DUMP_NUDGE = (
     "The JSON you wrote is assistant text, not a tool call, so nothing ran. "
     "Call run_command (or run_commands) now with target, command, and reason. "
-    "Do not print CommandExpr JSON. Redirect paths must be under the scratch directory."
+    "Do not print CommandExpr JSON. No semicolons in argv — use run_commands for "
+    "multiple grep -R steps. find -exec needs argv ending with '{}' then '+'."
 )
 
 

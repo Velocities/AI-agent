@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 
+from ai_agent.agent.context import gather_runtime_context
 from ai_agent.agent.loop import AgentLoop, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
@@ -107,6 +108,7 @@ def build_agent(
     audit_path = Path(settings.agent_audit_log) if settings.agent_audit_log else None
     audit = AuditLogger(log_path=audit_path, user=audit_user or getuser())
     llm = create_llm_provider(settings)
+    runtime = gather_runtime_context(settings, linux_username=run_as_linux_user)
 
     return AgentLoop(
         settings=settings,
@@ -117,6 +119,7 @@ def build_agent(
         prompter=prompter,
         session=session,
         router=router,
+        runtime_context=runtime,
     )
 
 

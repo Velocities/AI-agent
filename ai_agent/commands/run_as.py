@@ -6,8 +6,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_agent.commands.ast import CommandExpr
+from ai_agent.commands.ast import CommandExpr, RedirectCommand
 from ai_agent.commands.executor import CommandExecutor, CommandResult
+from ai_agent.execution_targets.remote_script import render_posix_script
 from ai_agent.deployment.identity import normalize_linux_username
 
 # Same order as getpass.getuser(), without importing the Unix-only pwd module
@@ -100,6 +101,23 @@ class RunAsCommandExecutor(CommandExecutor):
         )
         return completed.returncode, completed.stdout or "", completed.stderr or ""
 
+    def _run_redirect(self, expr: RedirectCommand) -> tuple[int, str, str]:
+        if _runs_as_current_user(self._linux_username):
+            return super()._run_redirect(expr)
+        rendered = render_posix_script(expr)
+        shell_argv = ["bash", "-lc", rendered]
+        wrapped, env = _wrap_argv_for_user(shell_argv, self._account)
+        completed = subprocess.run(
+            wrapped,
+            cwd=self._account.home,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=self.timeout,
+            env=env,
+        )
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+
     def _safe_env(self) -> dict[str, str]:
         if _runs_as_current_user(self._linux_username):
             return super()._safe_env()
@@ -113,7 +131,7 @@ def build_command_executor(
     scratch_dir: Path,
     linux_username: str | None,
 ) -> CommandExecutor:
-    if linux_username and not _runs_as_current_user(linux_username):
+    if linux_username and os.name == "posix" and _posix_run_as_available():
         return RunAsCommandExecutor(
             timeout,
             output_limit,
@@ -121,6 +139,14 @@ def build_command_executor(
             linux_username=linux_username,
         )
     return CommandExecutor(timeout, output_limit, scratch_dir)
+
+
+def _posix_run_as_available() -> bool:
+    try:
+        import pwd  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
 
 
 def lookup_posix_account(username: str) -> PosixAccount:

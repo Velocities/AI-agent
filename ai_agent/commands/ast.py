@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SingleCommand(BaseModel):
@@ -16,6 +16,27 @@ class SingleCommand(BaseModel):
         if not value:
             raise ValueError("argv must not be empty")
         return value
+
+    @model_validator(mode="after")
+    def validate_find_exec_argv(self) -> "SingleCommand":
+        if "-exec" not in self.argv:
+            return self
+        if "{}" not in self.argv:
+            raise ValueError(
+                "find -exec requires '{}' as its own argv string after the inner command, "
+                "then '+' as the last argv element (semicolons are forbidden)."
+            )
+        if self.argv[-1] != "+":
+            raise ValueError(
+                "find -exec must end with '+' as its own argv string "
+                '(example: ["find",".","-name","*.py","-exec","grep","-l","pat","{}","+"]). '
+                "Do not use ';'. Prefer grep -R or run_commands for searches."
+            )
+        exec_index = self.argv.index("-exec")
+        brace_index = self.argv.index("{}")
+        if brace_index <= exec_index:
+            raise ValueError("find -exec: '{}' must appear after '-exec' and its command argv.")
+        return self
 
 
 class PipeCommand(BaseModel):

@@ -553,13 +553,11 @@ Run the agent as user `ai`:
 
 **Important:** Adding `ai` to the `docker` group grants significant privilege (Docker socket ≈ root). Document and accept this consciously on home servers.
 
-### Filesystem policy
+### Filesystem access
 
-Path arguments (`cat`, `grep`, `ls`, etc.) must fall under configured readable roots (see policy YAML).
+Path arguments and redirect targets are **not** filtered by a static allow-list in policy. Commands run as the authorized Linux user for `local` (see access approval `--run-as`) or as each SSH/Docker target’s configured user; **the OS decides** what can be read or written.
 
-Redirects (`>`, `>>`, `2>`) are only allowed into configured writable directories (default: `/tmp/ai-agent`).
-
-Always canonicalize paths and reject traversal outside allowed roots.
+Use redirects (`>`, `>>`, `2>`) only via structured `CommandExpr` JSON, not shell metacharacters in argv.
 
 ### Network tools (localhost health checks only)
 
@@ -720,7 +718,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `AGENT_OUTPUT_LIMIT` | Max stdout/stderr returned to model |
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
-| `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+| `AGENT_SCRATCH_DIR` | Optional per-user temp area (API appends the Linux username); not a path allow-list |
 
 ### Command execution (independent of LLM)
 
@@ -773,7 +771,7 @@ on `ai-agent serve`.
 | `AGENT_OUTPUT_LIMIT` | Max stdout/stderr returned to model |
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
-| `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+| `AGENT_SCRATCH_DIR` | Optional per-user temp area (API appends the Linux username); not a path allow-list |
 | `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
 | `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
 | `SUPABASE_URL` | Supabase project URL used to verify access tokens |
