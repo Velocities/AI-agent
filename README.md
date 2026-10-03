@@ -51,7 +51,7 @@ If you have never run this project, use this table once. You can ignore the othe
 
 **One process vs two:** In normal use you want **one** server process. `ai-agent serve` (and the systemd service) starts the inference engine, the local LLM facade, and the loopback API together. Paths B and the old `ai-agent-llm` + `ai-agent-serve` pair exist so you can debug each layer separately.
 
-**Two different “users” on a server:** The **systemd service** runs as the Linux account `ai` (created by the installer). Approved **shell commands** from the agent also run as that same `ai` user when the default `local` execution target is used. That user must not have sudo.
+**Two different users on a server:** The **systemd service** runs as the Linux account `ai` (created by the installer) and must not have sudo. Approved **local commands and file writes** run as the Linux account from `ai-agent config access approve … --run-as`, under that account's UID/GID and normal filesystem permissions.
 
 ### Prerequisites (every path)
 

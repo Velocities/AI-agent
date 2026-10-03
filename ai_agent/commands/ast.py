@@ -73,8 +73,31 @@ class RedirectCommand(BaseModel):
     path: str
 
 
+class WriteFileCommand(BaseModel):
+    type: Literal["write_file"] = "write_file"
+    path: str
+    content: str
+    append: bool = False
+
+    @field_validator("path")
+    @classmethod
+    def path_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("write_file path must not be empty")
+        if "\0" in value:
+            raise ValueError("write_file path must not contain NUL")
+        return value
+
+
 CommandExpr = Annotated[
-    Union[SingleCommand, PipeCommand, AndCommand, OrCommand, RedirectCommand],
+    Union[
+        SingleCommand,
+        PipeCommand,
+        AndCommand,
+        OrCommand,
+        RedirectCommand,
+        WriteFileCommand,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -82,6 +105,7 @@ PipeCommand.model_rebuild()
 AndCommand.model_rebuild()
 OrCommand.model_rebuild()
 RedirectCommand.model_rebuild()
+WriteFileCommand.model_rebuild()
 
 
 def iter_leaves(expr: CommandExpr) -> list[SingleCommand]:
@@ -96,6 +120,8 @@ def iter_leaves(expr: CommandExpr) -> list[SingleCommand]:
         return iter_leaves(expr.left) + iter_leaves(expr.right)
     if isinstance(expr, RedirectCommand):
         return iter_leaves(expr.cmd)
+    if isinstance(expr, WriteFileCommand):
+        return []
     raise TypeError(f"Unknown command expression type: {type(expr)!r}")
 
 

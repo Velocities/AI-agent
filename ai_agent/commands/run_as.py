@@ -6,7 +6,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_agent.commands.ast import CommandExpr, RedirectCommand
+import sys
+
+from ai_agent.commands.ast import CommandExpr, RedirectCommand, WriteFileCommand
 from ai_agent.commands.executor import CommandExecutor, CommandResult
 from ai_agent.execution_targets.remote_script import render_posix_script
 from ai_agent.deployment.identity import normalize_linux_username
@@ -92,6 +94,26 @@ class RunAsCommandExecutor(CommandExecutor):
         wrapped, env = _wrap_argv_for_user(shell_argv, self._account)
         completed = subprocess.run(
             wrapped,
+            cwd=self._account.home,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=self.timeout,
+            env=env,
+        )
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+
+    def _run_write_file(self, expr: WriteFileCommand) -> tuple[int, str, str]:
+        if _runs_as_current_user(self._linux_username):
+            return super()._run_write_file(expr)
+        helper = [sys.executable, "-m", "ai_agent.commands.write_file_entry"]
+        if expr.append:
+            helper.append("--append")
+        helper.append(expr.path)
+        wrapped, env = _wrap_argv_for_user(helper, self._account)
+        completed = subprocess.run(
+            wrapped,
+            input=expr.content,
             cwd=self._account.home,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

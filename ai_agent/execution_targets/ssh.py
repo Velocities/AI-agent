@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_agent.commands.ast import CommandExpr, SingleCommand
+from ai_agent.commands.ast import CommandExpr, SingleCommand, WriteFileCommand
 from ai_agent.commands.executor import CommandExecutor, CommandResult
 from ai_agent.commands.render import render_command
 from ai_agent.execution_targets.base import ExecutionTarget
@@ -68,6 +68,16 @@ class SshExecutionTarget(ExecutionTarget):
         ]
 
     def run(self, expr: CommandExpr) -> CommandResult:
+        if isinstance(expr, WriteFileCommand):
+            return CommandResult(
+                success=False,
+                exit_status=127,
+                stdout="",
+                stderr="write_file is only supported on target local",
+                duration_ms=0,
+                rendered=render_command(expr),
+                metadata={"execution_target": self.name},
+            )
         if not self.identity_file.is_file():
             return CommandResult(
                 success=False,

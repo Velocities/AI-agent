@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_agent.commands.ast import CommandExpr, SingleCommand
+from ai_agent.commands.ast import CommandExpr, SingleCommand, WriteFileCommand
 from ai_agent.commands.executor import CommandExecutor, CommandResult
 from ai_agent.commands.render import render_command
 from ai_agent.execution_targets.base import ExecutionTarget
@@ -52,6 +52,16 @@ class DockerExecutionTarget(ExecutionTarget):
         ]
 
     def run(self, expr: CommandExpr) -> CommandResult:
+        if isinstance(expr, WriteFileCommand):
+            return CommandResult(
+                success=False,
+                exit_status=127,
+                stdout="",
+                stderr="write_file is only supported on target local",
+                duration_ms=0,
+                rendered=render_command(expr),
+                metadata={"execution_target": self.name},
+            )
         result = self._executor.run(SingleCommand(argv=self.docker_argv(expr)))
         result.rendered = render_command(expr)
         result.metadata = {

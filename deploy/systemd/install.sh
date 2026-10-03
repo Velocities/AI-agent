@@ -42,16 +42,6 @@ service_group=$(id -gn "${service_user}")
 install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
 install -d -o "${service_user}" -g "${service_group}" -m 0750 /tmp/ai-agent
 
-home_dir=$(getent passwd "${service_user}" | cut -d: -f6)
-protect_home=true
-if [[ "${home_dir}" == /home/* || "${home_dir}" == /root/* ]]; then
-  # Conversation storage defaults to this user's home.
-  protect_home=false
-elif [[ "${root}" == /home/* || "${root}" == /root/* ]]; then
-  # The checkout must be readable. Writes stay in the service home and /tmp.
-  protect_home=read-only
-fi
-
 can_run_exec() {
   runuser -u "${service_user}" -- test -x "${exec_start}"
 }
@@ -116,7 +106,7 @@ elif ! runuser -u "${service_user}" -- test -r "${root}/.env"; then
   fi
 fi
 
-# Must match StateDirectory=ai-agent; ProtectSystem=strict leaves only that writable.
+# Shared by the service account and the admin group. StateDirectory creates it.
 shared_db="/var/lib/ai-agent/conversations.db"
 shared_db_url="sqlite:///${shared_db}"
 if [[ -f "${shared_db}" ]]; then
@@ -171,8 +161,7 @@ python3 - \
   "${service_group}" \
   "${root}" \
   "${exec_start}" \
-  "${venv}/bin" \
-  "${protect_home}" <<'PY'
+  "${venv}/bin" <<'PY'
 import sys
 from pathlib import Path
 
@@ -184,7 +173,6 @@ from pathlib import Path
     root,
     exec_start,
     venv_bin,
-    protect_home,
 ) = sys.argv[1:]
 
 
@@ -202,7 +190,6 @@ replacements = {
     "@WORKING_DIRECTORY@": escape(root),
     "@EXEC_START@": escape(exec_start),
     "@PATH@": path,
-    "@PROTECT_HOME@": protect_home,
 }
 for key, value in replacements.items():
     if key not in text:
@@ -218,7 +205,8 @@ cat <<EOF
 Installed ${dest}
 Service user: ${service_user}
 Working directory: ${root}
-ProtectHome=${protect_home}
+Local commands run as each approved user's UID/GID (setpriv).
+The unit does not remount the filesystem.
 
 The unit is not started and not enabled.
 

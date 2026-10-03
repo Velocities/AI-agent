@@ -23,8 +23,8 @@ def default_database_path() -> Path:
 def shared_deployment_database_path() -> Path:
     """Single SQLite file for systemd + admin CLI (see CONVERSATION_DATABASE).
 
-    Must stay under the unit's StateDirectory=ai-agent; ProtectSystem=strict
-    makes the rest of /var/lib read-only for the service.
+    Lives in the unit's StateDirectory=ai-agent so the service account and the
+    admin group share one database.
     """
     return Path("/var/lib/ai-agent") / "conversations.db"
 

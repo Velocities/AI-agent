@@ -193,9 +193,16 @@ Supported chain types:
 - pipe: {{"type":"pipe","left":<expr>,"right":["binary","arg",...]}}
 - and: {{"type":"and","left":<expr>,"right":<expr>}}
 - or: {{"type":"or","left":<expr>,"right":<expr>}}
-- redirect: {{"type":"redirect","cmd":<expr>,"op":">"|">>"|"2>","path":"/path/in/user/filesystem"}}
+- redirect: {{"type":"redirect","cmd":<expr>,"op":">"|">>"|"2>","path":"/path/in/user/filesystem"}} (small command output only)
+- write_file: {{"type":"write_file","path":"/path/to/file","content":"FULL FILE TEXT","append":false}}
 
 Forbidden: shell invocation, command substitution, semicolon chains, piping into sh/bash/curl/wget.
+
+## Saving files (use write_file)
+- To create or replace a source/config file, use **write_file** with the full `content` string. Do not use redirect, echo, printf chains, or heredocs.
+- The user approves a summary line (path, byte size, short preview) — you still must put the complete content in the tool JSON.
+- Example:
+  command={{"type":"write_file","path":"{write_example}","content":"# module\\n","append":false}}
 
 ## Argv rules (no shell metacharacters)
 - Never put `;` in any argv string and never use `;` as its own argv element. Shell chaining is forbidden.
@@ -225,7 +232,7 @@ Forbidden: shell invocation, command substitution, semicolon chains, piping into
 - Use run_command for individual commands or any REVERSIBLE/DESTRUCTIVE action.
 - Do not use find for routine repo text search; use grep -R in run_commands instead.
 - curl/wget are allowed only for localhost GET/HEAD health checks. Do not use them to create files.
-- To write a small file, use type redirect (not a `>` inside argv). Paths must be writable by the target account (Permission denied is an OS error).
+- To write file contents, use **write_file** only. Redirect is for capturing small command stdout, not editing source trees.
 - Never put shell operators (`>`, `|`, `&&`) inside an argv string.
 - The command field must always be a JSON object with a "type" key, never a shell string.
 - If a tool fails, report exit status and stderr honestly. Do not fabricate output.

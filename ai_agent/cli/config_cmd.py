@@ -291,30 +291,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     service_access = sub.add_parser(
         "service-access",
-        help="Explain systemd service user vs local command execution; plan ACL grants.",
+        help="Explain the systemd service user vs the Linux UID that runs local commands.",
     )
     sa_sub = service_access.add_subparsers(dest="sa_command")
     sa_sub.add_parser("show", help="Who runs local commands on the server.")
     sa_plan = sa_sub.add_parser(
         "plan",
-        help="Print sudo grant-access commands for an operator login.",
+        help="Show the --run-as account that executes local commands.",
     )
     sa_plan.add_argument(
         "operator",
         nargs="?",
-        help="Operator Linux user (default: $USER).",
-    )
-    sa_plan.add_argument(
-        "--list-home",
-        action="store_true",
-        help="Suggest --list-home so ai can ls the operator home directory.",
-    )
-    sa_plan.add_argument(
-        "--read",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="Extra paths for grant-access.sh --read.",
+        help="Linux account for --run-as (default: $USER).",
     )
     targets = sub.add_parser(
         "execution-target",
@@ -363,13 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         forwarded: list[str] = []
         if getattr(args, "sa_command", None):
             forwarded.append(args.sa_command)
-            if args.sa_command == "plan":
-                if getattr(args, "operator", None):
-                    forwarded.append(args.operator)
-                if getattr(args, "list_home", False):
-                    forwarded.append("--list-home")
-                for path in getattr(args, "read", []) or []:
-                    forwarded.extend(["--read", path])
+            if args.sa_command == "plan" and getattr(args, "operator", None):
+                forwarded.append(args.operator)
         return service_access_main(forwarded or None)
     if args.command == "remote-provider":
         if args.action == "test":

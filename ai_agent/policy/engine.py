@@ -14,6 +14,7 @@ from ai_agent.commands.ast import (
     PipeCommand,
     RedirectCommand,
     SingleCommand,
+    WriteFileCommand,
     iter_leaves,
 )
 from ai_agent.policy.risk import RiskLevel
@@ -139,6 +140,16 @@ class PolicyEngine:
     def evaluate(self, expr: CommandExpr, *, piped_to: str | None = None) -> PolicyDecision:
         segments: list[SegmentDecision] = []
         redirect_path: str | None = None
+
+        if isinstance(expr, WriteFileCommand):
+            return PolicyDecision(
+                expr=expr,
+                effective_risk=RiskLevel.REVERSIBLE,
+                segments=[],
+                allowed=True,
+                reason="write_file allowed; path permissions enforced by the OS",
+                redirect_path=expr.path,
+            )
 
         if isinstance(expr, RedirectCommand):
             redirect_path = expr.path
