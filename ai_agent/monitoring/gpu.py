@@ -1,10 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from ai_agent.mqtt import topics
 from ai_agent.mqtt.publisher import MqttPublisher
 import json
+
 @dataclass
 class GPUTelemetry:
     """Data class for all info related to the GPU."""
@@ -174,6 +175,10 @@ def publish_gpu_data(publisher: MqttPublisher) -> None:
 
     # TODO: agree payload schema with Android monitoring layer.
     for telemetry in gpu_data:
-        # Format the telemetry object data as a JSON string.
-        json_data = json.dumps(telemetry)
-        publisher.publish(topics.GPU_TELEMETRY, json_data)
+        # Serialize the telemetry object data, then format it as a JSON string
+        # for publishing to the MQTT broker.
+        json_data = json.dumps( asdict(telemetry) )
+        publisher.publish(
+            topics.GPU_TELEMETRY,
+            json_data,
+        )
