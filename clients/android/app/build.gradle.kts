@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.ktor.client.android)
+    implementation(libs.paho.mqtt.v3)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

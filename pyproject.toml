@@ -27,6 +27,9 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
 ]
+mqtt = [
+    "paho-mqtt>=2.1",
+]
 
 [project.scripts]
 ai-agent = "ai_agent.cli.app:main"
