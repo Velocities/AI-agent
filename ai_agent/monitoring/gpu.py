@@ -2,9 +2,49 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from ai_agent.monitoring.custom_exceptions import GPUTelemetryNotSupportedError
 from ai_agent.mqtt import topics
 from ai_agent.mqtt.publisher import MqttPublisher
 import json
+
+# AMD SMI sets err_info from these status names when the library cannot
+# provide a reading. Driver-not-loaded and library-load failures are different
+# statuses and stay as library errors so the other vendor can still be tried.
+_AMD_UNSUPPORTED_STATUS_NAMES = (
+    "AMDSMI_STATUS_NOT_SUPPORTED",
+    "AMDSMI_STATUS_NOT_YET_IMPLEMENTED",
+)
+
+
+def _is_nvml_not_supported(exc: BaseException, nvml: object) -> bool:
+    """True when NVML reports that this reading is not supported on the device."""
+    not_supported = getattr(nvml, "NVMLError_NotSupported", None)
+    if not_supported is not None and isinstance(exc, not_supported):
+        return True
+    code = getattr(nvml, "NVML_ERROR_NOT_SUPPORTED", None)
+    return code is not None and getattr(exc, "value", None) == code
+
+
+def _is_amd_not_supported(exc: BaseException, amdsmi: object) -> bool:
+    """True when AMD SMI reports that this feature is not supported or not implemented."""
+    library_error = getattr(amdsmi, "AmdSmiLibraryException", None)
+    if library_error is None or not isinstance(exc, library_error):
+        return False
+
+    err_info = getattr(exc, "err_info", None)
+    if isinstance(err_info, str) and any(
+        err_info.startswith(name) for name in _AMD_UNSUPPORTED_STATUS_NAMES
+    ):
+        return True
+
+    err_code = getattr(exc, "err_code", None)
+    wrapper = getattr(amdsmi, "amdsmi_wrapper", None)
+    if err_code is None or wrapper is None:
+        return False
+    return any(
+        err_code == getattr(wrapper, name, None) for name in _AMD_UNSUPPORTED_STATUS_NAMES
+    )
+
 
 @dataclass
 class GPUTelemetry:
@@ -43,106 +83,167 @@ class GPUTelemetryCollector(ABC):
         """Collect data from the GPU."""
         raise NotImplementedError("Subclass must implement this method")
 
+# Helper that handles our custom exceptions (avoids unnecessary
+# nesting in try/except blocks)
+class _NvmlExceptionWrapper:
+    def __init__(self, pynvml):
+        # This allows pynvml to be replaced with a mock for testing
+        self._pynvml = pynvml
+
+    def call(self, operation, *args):
+        try:
+            return operation(*args)
+        except Exception as exc:
+            if _is_nvml_not_supported(exc, self._pynvml):
+                raise GPUTelemetryNotSupportedError(exc) from exc
+            raise
+    
+    def optional_metric(self, operation, *args):
+        try:
+            return operation(*args)
+        except Exception as exc:
+            if _is_nvml_not_supported(exc, self._pynvml):
+                return None
+            raise
 
 def collect_nvidia_gpu_data() -> list[GPUTelemetry]:
-    from pynvml import (
-        nvmlInit,
-        nvmlShutdown,
-        nvmlDeviceGetCount,
-        nvmlDeviceGetHandleByIndex,
-        nvmlDeviceGetName,
-        nvmlDeviceGetTemperature,
-        nvmlDeviceGetMemoryInfo,
-        nvmlDeviceGetPowerUsage,
-        nvmlDeviceGetFanSpeed,
-        NVML_TEMPERATURE_GPU,
-    )
+    import pynvml
 
-    nvmlInit()
+    nvml_exception_wrapper = _NvmlExceptionWrapper(pynvml)
+
+    nvml_exception_wrapper.call(pynvml.nvmlInit)
 
     try:
-        gpus: list[GPUTelemetry] = []
+        device_count = nvml_exception_wrapper.call(pynvml.nvmlDeviceGetCount)
 
-        for index in range(nvmlDeviceGetCount()):
-            handle = nvmlDeviceGetHandleByIndex(index)
+        all_gpu_telemetry_data: list[GPUTelemetry] = []
 
-            memory = nvmlDeviceGetMemoryInfo(handle)
+        for index in range(device_count):
+            name = nvml_exception_wrapper.call(pynvml.nvmlDeviceGetName, handle)
+            handle = nvml_exception_wrapper.call(pynvml.nvmlDeviceGetHandleByIndex, index)
+            memory = nvml_exception_wrapper.call(pynvml.nvmlDeviceGetMemoryInfo, handle)
+            temperature_celsius = float(
+                nvml_exception_wrapper.call(
+                    pynvml.nvmlDeviceGetTemperature,
+                    handle,
+                    pynvml.NVML_TEMPERATURE_GPU,
+                )
+            )
 
-            gpus.append(
+            power_usage_mw = nvml_exception_wrapper.optional_metric(pynvml.nvmlDeviceGetPowerUsage, handle)
+            power_usage_watts = power_usage_mw / 1000.0 if power_usage_mw is not None else None
+
+            all_gpu_telemetry_data.append(
                 GPUTelemetry(
-                    name=nvmlDeviceGetName(handle),
+                    name=name,
                     index=index,
-                    temperature_celsius=float(
-                        nvmlDeviceGetTemperature(
-                            handle,
-                            NVML_TEMPERATURE_GPU,
-                        )
-                    ),
+                    temperature_celsius=temperature_celsius,
                     memory_used_bytes=memory.used,
                     memory_total_bytes=memory.total,
-                    power_usage_watts=(
-                        nvmlDeviceGetPowerUsage(handle) / 1000.0
-                    ),
-                    fan_speed_percent=float(
-                        nvmlDeviceGetFanSpeed(handle)
+                    power_usage_watts=power_usage_watts,
+                    fan_speed_percent=nvml_exception_wrapper.optional_metric(
+                        pynvml.nvmlDeviceGetFanSpeed,
+                        handle,
                     ),
                 )
             )
 
-        return gpus
+        return all_gpu_telemetry_data
 
     finally:
-        nvmlShutdown()
+        pynvml.nvmlShutdown()
+
+# Helper that handles our custom exceptions (avoids unnecessary
+# nesting in try/except blocks)
+class _AmdSmiExceptionWrapper:
+    def __init__(self, amdsmi):
+        # This allows amdsmi to be replaced with a mock for testing
+        self._amdsmi = amdsmi
+
+    def call(self, operation, *args):
+        try:
+            return operation(*args)
+        except Exception as exc:
+            if _is_amd_not_supported(exc, self._amdsmi):
+                raise GPUTelemetryNotSupportedError(exc) from exc
+            raise
+    
+    def optional_metric(self, operation, *args):
+        try:
+            return operation(*args)
+        except Exception as exc:
+            if _is_amd_not_supported(exc, self._amdsmi):
+                return None
+            raise
 
 def collect_amd_gpu_data() -> list[GPUTelemetry]:
     from amd_smi import amdsmi
 
-    amdsmi.amdsmi_init()
+    amd_smi_exception_wrapper = _AmdSmiExceptionWrapper(amdsmi)
+
+    amd_smi_exception_wrapper.call(amdsmi.amdsmi_init)
 
     try:
-        devices = amdsmi.amdsmi_get_processor_handles()
-        gpus: list[GPUTelemetry] = []
+        devices = amd_smi_exception_wrapper.call(amdsmi.amdsmi_get_processor_handles)
+
+        all_gpu_telemetry_data: list[GPUTelemetry] = []
 
         for index, device in enumerate(devices):
-            name_info = amdsmi.amdsmi_get_gpu_asic_info(device)
-            vram = amdsmi.amdsmi_get_gpu_vram_usage(device)
-            power = amdsmi.amdsmi_get_power_info(device)
-
-            temperature = amdsmi.amdsmi_get_temp_metric(
-                device,
-                amdsmi.AmdSmiTemperatureType.EDGE,
-                amdsmi.AmdSmiTemperatureMetric.CURRENT,
+            name_info = amd_smi_exception_wrapper.call(amdsmi.amdsmi_get_gpu_asic_info, device)
+            vram = amd_smi_exception_wrapper.call(amdsmi.amdsmi_get_gpu_vram_usage, device)
+            temperature_celsius = (
+                amd_smi_exception_wrapper.call(
+                    amdsmi.amdsmi_get_temp_metric,
+                    device,
+                    amdsmi.AmdSmiTemperatureType.EDGE,
+                    amdsmi.AmdSmiTemperatureMetric.CURRENT,
+                )
+                / 1000.0
             )
 
-            # One caveat on the AMD fan field:
-            # AMD SMI's get_gpu_fan_speed() returns a value relative to the device's maximum
-            # (rather than universally guaranteeing a 0–100 value).
-            # Newer AMD SMI also exposes amdsmi_get_gpu_fan_speed_max()
-            # Below, we normalize the fan speed to a 0–100 value.
-            fan_speed = amdsmi.amdsmi_get_gpu_fan_speed(device, 0)
-            fan_speed_max = amdsmi.amdsmi_get_gpu_fan_speed_max(device, 0)
+            power_info = amd_smi_exception_wrapper.optional_metric(
+                amdsmi.amdsmi_get_power_info,
+                device,
+            )
+            power_usage_watts = (
+                float(power_info["current_socket_power"]) if power_info is not None else None
+            )
+
+            # AMD SMI's get_gpu_fan_speed() is relative to the device maximum,
+            # so the percent below uses amdsmi_get_gpu_fan_speed_max() when it is available.
+            fan_speed_raw = amd_smi_exception_wrapper.optional_metric(
+                amdsmi.amdsmi_get_gpu_fan_speed,
+                device,
+                0,
+            )
+
+            fan_speed_max_raw = amd_smi_exception_wrapper.optional_metric(
+                amdsmi.amdsmi_get_gpu_fan_speed_max,
+                device,
+                0,
+            )
 
             fan_speed_percent = (
-                (fan_speed / fan_speed_max) * 100
-                if fan_speed_max > 0
+                (fan_speed_raw / fan_speed_max_raw) * 100
+                if fan_speed_raw is not None
+                and fan_speed_max_raw is not None
+                and fan_speed_max_raw > 0
                 else None
             )
 
-            gpus.append(
+            all_gpu_telemetry_data.append(
                 GPUTelemetry(
                     name=name_info["market_name"],
                     index=index,
-                    temperature_celsius=temperature / 1000.0,
+                    temperature_celsius=temperature_celsius,
                     memory_used_bytes=vram["vram_used"] * 1024 * 1024,
                     memory_total_bytes=vram["vram_total"] * 1024 * 1024,
-                    power_usage_watts=float(
-                        power["current_socket_power"]
-                    ),
+                    power_usage_watts=power_usage_watts,
                     fan_speed_percent=fan_speed_percent,
                 )
             )
 
-        return gpus
+        return all_gpu_telemetry_data
 
     finally:
         amdsmi.amdsmi_shut_down()
@@ -163,8 +264,11 @@ def collect_gpu_data() -> list[GPUTelemetry]:
     for collector in GPU_COLLECTORS:
         try:
             telemetry.extend(collector())
+        except GPUTelemetryNotSupportedError:
+            # The vendor library is installed, but it cannot monitor this GPU.
+            raise
         except Exception:
-            # GPU/vendor not available on this system.
+            # Vendor library or driver is not available on this system.
             continue
 
     return telemetry
