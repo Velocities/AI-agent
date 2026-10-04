@@ -19,7 +19,7 @@ from ai_agent.monitoring.gpu import (
 )
 
 
-class _LibraryCalls:
+class _LibraryCallAdapter:
     """Run one vendor-library call and apply that vendor's not-supported rule.
 
     ``call`` turns an unsupported required reading into GPUTelemetryNotSupportedError.
@@ -96,18 +96,18 @@ class GpuTelemetryBackend(ABC):
 
 
 class _NvmlDevice(GpuDevice):
-    def __init__(self, index: int, handle, pynvml, calls: _LibraryCalls) -> None:
+    def __init__(self, index: int, handle, pynvml, call_adapter: _LibraryCallAdapter) -> None:
         super().__init__(index)
         self._handle = handle
         self._pynvml = pynvml
-        self._calls = calls
+        self._call_adapter = call_adapter
 
     def name(self) -> str:
-        return self._calls.call(self._pynvml.nvmlDeviceGetName, self._handle)
+        return self._call_adapter.call(self._pynvml.nvmlDeviceGetName, self._handle)
 
     def temperature_celsius(self) -> float:
         return float(
-            self._calls.call(
+            self._call_adapter.call(
                 self._pynvml.nvmlDeviceGetTemperature,
                 self._handle,
                 self._pynvml.NVML_TEMPERATURE_GPU,
@@ -115,12 +115,12 @@ class _NvmlDevice(GpuDevice):
         )
 
     def memory_bytes(self) -> tuple[int, int]:
-        memory = self._calls.call(self._pynvml.nvmlDeviceGetMemoryInfo, self._handle)
+        memory = self._call_adapter.call(self._pynvml.nvmlDeviceGetMemoryInfo, self._handle)
         return memory.used, memory.total
 
     def power_usage_watts(self) -> float | None:
         # NVML reports power in milliwatts.
-        power_mw = self._calls.optional_metric(
+        power_mw = self._call_adapter.optional_metric(
             self._pynvml.nvmlDeviceGetPowerUsage,
             self._handle,
         )
@@ -129,7 +129,7 @@ class _NvmlDevice(GpuDevice):
         return power_mw / 1000.0
 
     def fan_speed_percent(self) -> float | None:
-        return self._calls.optional_metric(
+        return self._call_adapter.optional_metric(
             self._pynvml.nvmlDeviceGetFanSpeed,
             self._handle,
         )
@@ -141,54 +141,54 @@ class NvmlGpuBackend(GpuTelemetryBackend):
     def __init__(self, pynvml=None) -> None:
         # None imports pynvml when the session opens. Tests can pass a fake module.
         self._pynvml = pynvml
-        self._calls: _LibraryCalls | None = None
+        self._call_adapter: _LibraryCallAdapter | None = None
 
     def initialize(self) -> None:
         pynvml = self._pynvml
         if pynvml is None:
             import pynvml
-        calls = _LibraryCalls(lambda exc: _is_nvml_not_supported(exc, pynvml))
-        calls.call(pynvml.nvmlInit)
+        call_adapter = _LibraryCallAdapter(lambda exc: _is_nvml_not_supported(exc, pynvml))
+        call_adapter.call(pynvml.nvmlInit)
         self._pynvml = pynvml
-        self._calls = calls
+        self._call_adapter = call_adapter
 
     def devices(self) -> Sequence[GpuDevice]:
-        pynvml, calls = self._session()
-        count = calls.call(pynvml.nvmlDeviceGetCount)
+        pynvml, call_adapter = self._session()
+        count = call_adapter.call(pynvml.nvmlDeviceGetCount)
         return [
             _NvmlDevice(
                 index,
-                calls.call(pynvml.nvmlDeviceGetHandleByIndex, index),
+                call_adapter.call(pynvml.nvmlDeviceGetHandleByIndex, index),
                 pynvml,
-                calls,
+                call_adapter,
             )
             for index in range(count)
         ]
 
     def shutdown(self) -> None:
-        pynvml, _calls = self._session()
+        pynvml, _call_adapter = self._session()
         pynvml.nvmlShutdown()
 
     def _session(self):
-        if self._pynvml is None or self._calls is None:
+        if self._pynvml is None or self._call_adapter is None:
             raise RuntimeError("NVML backend is not initialized")
-        return self._pynvml, self._calls
+        return self._pynvml, self._call_adapter
 
 
 class _AmdSmiDevice(GpuDevice):
-    def __init__(self, index: int, handle, amdsmi, calls: _LibraryCalls) -> None:
+    def __init__(self, index: int, handle, amdsmi, call_adapter: _LibraryCallAdapter) -> None:
         super().__init__(index)
         self._handle = handle
         self._amdsmi = amdsmi
-        self._calls = calls
+        self._call_adapter = call_adapter
 
     def name(self) -> str:
-        name_info = self._calls.call(self._amdsmi.amdsmi_get_gpu_asic_info, self._handle)
+        name_info = self._call_adapter.call(self._amdsmi.amdsmi_get_gpu_asic_info, self._handle)
         return name_info["market_name"]
 
     def temperature_celsius(self) -> float:
         # AMD SMI reports edge temperature in millidegrees Celsius.
-        temperature = self._calls.call(
+        temperature = self._call_adapter.call(
             self._amdsmi.amdsmi_get_temp_metric,
             self._handle,
             self._amdsmi.AmdSmiTemperatureType.EDGE,
@@ -198,11 +198,11 @@ class _AmdSmiDevice(GpuDevice):
 
     def memory_bytes(self) -> tuple[int, int]:
         # AMD SMI reports VRAM in mebibytes.
-        vram = self._calls.call(self._amdsmi.amdsmi_get_gpu_vram_usage, self._handle)
+        vram = self._call_adapter.call(self._amdsmi.amdsmi_get_gpu_vram_usage, self._handle)
         return vram["vram_used"] * 1024 * 1024, vram["vram_total"] * 1024 * 1024
 
     def power_usage_watts(self) -> float | None:
-        power_info = self._calls.optional_metric(
+        power_info = self._call_adapter.optional_metric(
             self._amdsmi.amdsmi_get_power_info,
             self._handle,
         )
@@ -213,12 +213,12 @@ class _AmdSmiDevice(GpuDevice):
     def fan_speed_percent(self) -> float | None:
         # AMD SMI's get_gpu_fan_speed() is relative to the device maximum,
         # so the percent below uses amdsmi_get_gpu_fan_speed_max() when it is available.
-        fan_speed_raw = self._calls.optional_metric(
+        fan_speed_raw = self._call_adapter.optional_metric(
             self._amdsmi.amdsmi_get_gpu_fan_speed,
             self._handle,
             0,
         )
-        fan_speed_max_raw = self._calls.optional_metric(
+        fan_speed_max_raw = self._call_adapter.optional_metric(
             self._amdsmi.amdsmi_get_gpu_fan_speed_max,
             self._handle,
             0,
@@ -238,33 +238,33 @@ class AmdSmiGpuBackend(GpuTelemetryBackend):
     def __init__(self, amdsmi=None) -> None:
         # None imports amd_smi.amdsmi when the session opens. Tests can pass a fake module.
         self._amdsmi = amdsmi
-        self._calls: _LibraryCalls | None = None
+        self._call_adapter: _LibraryCallAdapter | None = None
 
     def initialize(self) -> None:
         amdsmi = self._amdsmi
         if amdsmi is None:
             from amd_smi import amdsmi
-        calls = _LibraryCalls(lambda exc: _is_amd_not_supported(exc, amdsmi))
-        calls.call(amdsmi.amdsmi_init)
+        call_adapter = _LibraryCallAdapter(lambda exc: _is_amd_not_supported(exc, amdsmi))
+        call_adapter.call(amdsmi.amdsmi_init)
         self._amdsmi = amdsmi
-        self._calls = calls
+        self._call_adapter = call_adapter
 
     def devices(self) -> Sequence[GpuDevice]:
-        amdsmi, calls = self._session()
-        handles = calls.call(amdsmi.amdsmi_get_processor_handles)
+        amdsmi, call_adapter = self._session()
+        handles = call_adapter.call(amdsmi.amdsmi_get_processor_handles)
         return [
-            _AmdSmiDevice(index, handle, amdsmi, calls)
+            _AmdSmiDevice(index, handle, amdsmi, call_adapter)
             for index, handle in enumerate(handles)
         ]
 
     def shutdown(self) -> None:
-        amdsmi, _calls = self._session()
+        amdsmi, _call_adapter = self._session()
         amdsmi.amdsmi_shut_down()
 
     def _session(self):
-        if self._amdsmi is None or self._calls is None:
+        if self._amdsmi is None or self._call_adapter is None:
             raise RuntimeError("AMD SMI backend is not initialized")
-        return self._amdsmi, self._calls
+        return self._amdsmi, self._call_adapter
 
 
 # A further vendor, such as Intel Level Zero, would be another backend here.
