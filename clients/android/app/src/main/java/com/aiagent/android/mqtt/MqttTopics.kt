@@ -4,6 +4,6 @@ package com.aiagent.android.mqtt
 object MqttTopics {
     const val PREFIX = "ai-agent"
 
-    /** GPU temperature metric (payload format TBD). */
-    const val GPU_TEMPERATURE = "$PREFIX/monitoring/gpu/temperature"
+    /** One JSON object per GPU. Fields match server GPUTelemetry. */
+    const val GPU_TELEMETRY = "$PREFIX/monitoring/gpu/telemetry"
 }

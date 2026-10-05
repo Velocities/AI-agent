@@ -1,8 +1,7 @@
-"""Prototype for vendor-backed GPU telemetry.
+"""Collect GPU telemetry from vendor libraries.
 
-publish_gpu_data() still calls ai_agent.monitoring.gpu. This module is the
-proposed split: collect_gpu_data() opens each backend, reads its devices, and
-builds GPUTelemetry. A backend knows how to talk to one vendor library.
+collect_gpu_data() opens each backend, reads its devices, and builds
+GPUTelemetry. A backend knows how to talk to one vendor library.
 NvmlGpuBackend uses NVML. AmdSmiGpuBackend uses ROCm AMD SMI.
 """
 
@@ -10,13 +9,63 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from ai_agent.monitoring.custom_exceptions import GPUTelemetryNotSupportedError
-from ai_agent.monitoring.gpu import (
-    GPUTelemetry,
-    _is_amd_not_supported,
-    _is_nvml_not_supported,
+
+# AMD SMI sets err_info from these status names when the library cannot
+# provide a reading. Driver-not-loaded and library-load failures are different
+# statuses and stay as library errors so the other vendor can still be tried.
+_AMD_UNSUPPORTED_STATUS_NAMES = (
+    "AMDSMI_STATUS_NOT_SUPPORTED",
+    "AMDSMI_STATUS_NOT_YET_IMPLEMENTED",
 )
+
+
+def _is_nvml_not_supported(exc: BaseException, nvml: object) -> bool:
+    """True when NVML reports that this reading is not supported on the device."""
+    not_supported = getattr(nvml, "NVMLError_NotSupported", None)
+    if not_supported is not None and isinstance(exc, not_supported):
+        return True
+    code = getattr(nvml, "NVML_ERROR_NOT_SUPPORTED", None)
+    return code is not None and getattr(exc, "value", None) == code
+
+
+def _is_amd_not_supported(exc: BaseException, amdsmi: object) -> bool:
+    """True when AMD SMI reports that this feature is not supported or not implemented."""
+    library_error = getattr(amdsmi, "AmdSmiLibraryException", None)
+    if library_error is None or not isinstance(exc, library_error):
+        return False
+
+    err_info = getattr(exc, "err_info", None)
+    if isinstance(err_info, str) and any(
+        err_info.startswith(name) for name in _AMD_UNSUPPORTED_STATUS_NAMES
+    ):
+        return True
+
+    err_code = getattr(exc, "err_code", None)
+    wrapper = getattr(amdsmi, "amdsmi_wrapper", None)
+    if err_code is None or wrapper is None:
+        return False
+    return any(
+        err_code == getattr(wrapper, name, None) for name in _AMD_UNSUPPORTED_STATUS_NAMES
+    )
+
+
+@dataclass
+class GPUTelemetry:
+    """Data class for all info related to the GPU."""
+    # These two give us the GPU's identity
+    name: str
+    index: int
+    # Below are all the telemetry data we want to collect
+    temperature_celsius: float
+    memory_used_bytes: int
+    memory_total_bytes: int
+    # power_usage_watts and fan_speed_percent may not be available on every GPU,
+    # so we make them optional.
+    power_usage_watts: float | None = None # We want to convert to milliwatts, so we use float
+    fan_speed_percent: float | None = None
 
 
 class _LibraryCallAdapter:

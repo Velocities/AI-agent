@@ -2,5 +2,5 @@
 
 TOPIC_PREFIX = "ai-agent"
 
-# First monitoring metric: GPU temperature (payload format TBD — see monitoring/gpu.py).
-GPU_TEMPERATURE = f"{TOPIC_PREFIX}/monitoring/gpu/temperature"
+# One JSON object per GPU. Fields match GPUTelemetry in monitoring/gpu_telemetry.py.
+GPU_TELEMETRY = f"{TOPIC_PREFIX}/monitoring/gpu/telemetry"
