@@ -75,7 +75,7 @@ def spy(monkeypatch):
 
 def _stores(tmp_path, name="api.sqlite3"):
     path = tmp_path / name
-    store, access, repo = open_stores_at(f"sqlite:///{path}")
+    store, access, repo, _admins = open_stores_at(f"sqlite:///{path}")
     return store, access, repo, path
 
 

@@ -140,6 +140,7 @@ Shared Docker targets are not part of the initial per-user model. If shared targ
 | Actor | Action | Mechanism |
 |-------|--------|-----------|
 | **Administrator** | Allow/deny deployment access; link user to Linux account | `ai-agent config access approve <user_id> --run-as <linux_user>` (and related access commands). |
+| **Administrator** | Grant or revoke host-monitoring access | `ai-agent config monitoring grant <user_id>` / `revoke` / `list`. Separate from deployment access; see the README section "Monitoring admins". |
 | **End user** | Add/list/trust SSH or Docker targets **for themselves** | Server-side configuration using **`user_id` from the authenticated session** (see below). |
 | **Administrator (on behalf of another user)** | Same target commands, explicit subject | Same commands with **`user_id` required**; admin passes the subject user's id when managing their targets. |
 | **Chat clients** (`ai-agent` after login, Android) | Chat only | **No** target configuration in the client. Server enforces scope on each `/turns` request. |

@@ -41,7 +41,7 @@ def _prompt(console: Console, label: str, default: str = "") -> str:
 
 def _open_repo(settings: Settings, *, service_db: bool) -> tuple[str, UserExecutionTargetRepository, object]:
     url = database_url_for_admin_cli(settings, service_db=service_db)
-    _store, access, repo = open_stores_at(url)
+    _store, access, repo, _admins = open_stores_at(url)
     return url, repo, access
 
 

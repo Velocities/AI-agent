@@ -263,6 +263,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.access_cmd import main as access_main
 
         return access_main(raw[1:])
+    if raw and raw[0] == "monitoring":
+        from ai_agent.cli.monitoring_cmd import main as monitoring_main
+
+        return monitoring_main(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="ai-agent config",
@@ -288,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "access",
         help="Approve or deny Supabase users for this deployment (local whitelist).",
+    )
+    sub.add_parser(
+        "monitoring",
+        help="Grant or revoke host-monitoring admins (local SQLite allowlist).",
     )
     service_access = sub.add_parser(
         "service-access",

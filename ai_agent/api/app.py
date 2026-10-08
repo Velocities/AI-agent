@@ -11,6 +11,7 @@ from ai_agent.api.deps import get_current_user, require_deployment_access
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
+from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
 
 __all__ = ["create_app", "get_current_user"]
 
@@ -22,6 +23,7 @@ def create_app(
     configure_auth: bool = True,
     store: ConversationStore | None = None,
     access_store: DeploymentAccessStore | None = None,
+    monitoring_admin_store: MonitoringAdminStore | None = None,
     broker: ApprovalBroker | None = None,
     enforce_access: bool = True,
 ) -> FastAPI:
@@ -43,6 +45,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.access_store = access_store if enforce_access else None
+    app.state.monitoring_admin_store = monitoring_admin_store
     app.state.broker = broker or ApprovalBroker()
     app.state.approval_sessions = {}
     app.state.agent_factory = None

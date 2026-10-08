@@ -309,6 +309,22 @@ ai-agent config access approve YOUR_SUPABASE_USER_ID --run-as YOUR_LINUX_USERNAM
 
 Sign in on your PC with `ai-agent login`, run `ai-agent` once (you will see the whitelist message), then approve the `user_id` shown in `list`.
 
+**4b. Monitoring admins (current behavior)**
+
+Host monitoring in the Android app uses a separate SQLite allowlist from deployment access. Approving someone with `ai-agent config access approve` does not make them a monitoring admin, and granting monitoring does not let them run agent commands.
+
+Run these on the server, against the same database as `config access`. Add `--service-db` when the API uses the shared deployment database:
+
+```bash
+ai-agent config monitoring grant YOUR_SUPABASE_USER_ID --service-db
+ai-agent config monitoring list --service-db
+ai-agent config monitoring revoke YOUR_SUPABASE_USER_ID --service-db
+```
+
+The user id is the Supabase id from `ai-agent config access list-all` or the Android auth debug panel. `grant` is safe to repeat; the original row stays. `revoke` deletes that row, and revoking an id that is not an admin exits with an error so a typo is visible. The API reads the table on each request, so a revoke applies without a restart. The Android app asks once at sign-in, so the Monitoring button remains until the next sign-in, while GPU fetches start returning 403 immediately.
+
+This is a first cut. Revise `ai_agent/deployment/monitoring_admin_store.py`, `ai_agent/cli/monitoring_cmd.py`, `ai_agent/api/monitoring.py`, and this section together before treating the rules as final.
+
 **5. Verify**
 
 ```bash

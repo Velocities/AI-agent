@@ -36,7 +36,7 @@ def _executor(tmp_path: Path) -> CommandExecutor:
 
 
 def _repo(tmp_path: Path) -> UserExecutionTargetRepository:
-    _store, _access, repo = open_stores_at(f"sqlite:///{tmp_path / 'targets.sqlite3'}")
+    _store, _access, repo, _admins = open_stores_at(f"sqlite:///{tmp_path / 'targets.sqlite3'}")
     return repo
 
 

@@ -66,6 +66,22 @@ class DeploymentAccessRow(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class MonitoringAdminRow(Base):
+    """Supabase users allowed to read host monitoring on this deployment.
+
+    Separate from deployment_access: agent approval does not grant monitoring,
+    and a monitoring admin is not approved to run agent commands. Grant and
+    revoke behavior lives in ai_agent/deployment/monitoring_admin_store.py and
+    ai_agent/cli/monitoring_cmd.py. Revise those with the README section
+    "Monitoring admins" before treating the rules as final.
+    """
+
+    __tablename__ = "monitoring_admin"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class ExecutionTargetRow(Base):
     """Named SSH/Docker command destinations owned by one Supabase user."""
 
