@@ -211,6 +211,11 @@ class Settings(BaseSettings):
         alias="SUPABASE_JWT_SECRET",
         description="Legacy HS256 JWT secret. Current Supabase projects use signing keys and leave this empty.",
     )
+    monitoring_admin_user_ids: str = Field(
+        default="",
+        alias="MONITORING_ADMIN_USER_IDS",
+        description="Comma-separated Supabase user ids allowed to read host monitoring.",
+    )
 
     def policy_path(self) -> Path:
         if self.agent_policy_file:

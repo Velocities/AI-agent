@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +62,7 @@ fun ChatDrawerContent(
     onSignOut: () -> Unit,
     onChangeServer: () -> Unit,
     onShowAuthDebug: () -> Unit,
+    onOpenMonitoring: (() -> Unit)? = null,
 ) {
     var pendingDelete by remember { mutableStateOf<ConversationSummary?>(null) }
 
@@ -72,6 +74,17 @@ fun ChatDrawerContent(
             Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text("New chat")
+        }
+        if (onOpenMonitoring != null) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onOpenMonitoring,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(48.dp),
+            ) {
+                Icon(AppIcons.Monitor, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Monitoring")
+            }
         }
         Spacer(Modifier.height(8.dp))
         if (chat.loadingConversations && chat.conversations.isEmpty()) {

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -78,6 +79,17 @@ class AgentApi(private val baseUrl: String) {
     fun deleteConversation(accessToken: String, conversationId: String) {
         request("DELETE", "/api/conversations/$conversationId", accessToken)
     }
+
+    /** True when this account is on the server's monitoring admin list. */
+    fun isMonitoringAdmin(accessToken: String): Boolean {
+        val body = request("GET", "/api/monitoring/access", accessToken)
+        val flag = json.parseToJsonElement(body).jsonObject["is_admin"]
+        return flag is JsonPrimitive && flag.booleanOrNull == true
+    }
+
+    /** Latest GPU readings. The caller polls this; the page does not. */
+    fun gpuTelemetryJson(accessToken: String): String =
+        request("GET", "/api/monitoring/gpus", accessToken)
 
     fun resolveApproval(
         accessToken: String,

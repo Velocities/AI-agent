@@ -40,6 +40,12 @@ object AppIcons {
     )
     val ExpandMore = icon("expand_more", "M16.59,8.59L12,13.17 7.41,8.59 6,10l6,6 6,-6z")
     val ExpandLess = icon("expand_less", "M12,8l-6,6 1.41,1.41L12,10.83l4.59,4.58L18,14z")
+    val ArrowBack = icon("arrow_back", "M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z")
+    val Monitor = icon(
+        "monitor",
+        "M20,3H4C2.9,3 2,3.9 2,5v11c0,1.1 0.9,2 2,2h3l-1,1v2h12v-2l-1,-1h3c1.1,0 2,-0.9 2,-2V5" +
+            "C22,3.9 21.1,3 20,3zM20,16H4V5h16V16z",
+    )
     val Logout = icon(
         "logout",
         "M17,7l-1.41,1.41L18.17,11H8v2h10.17l-2.58,2.58L17,17l5,-5zM4,5h8V3H4c-1.1,0 -2,0.9 -2,2v14" +
