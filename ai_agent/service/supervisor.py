@@ -97,12 +97,24 @@ def _stop_facade(httpd, thread: threading.Thread) -> None:
         logger.warning("LLM facade thread did not exit within 5s")
 
 
-def _run_api(settings: Settings, store, access_store, console: Console) -> int:
+def _run_api(
+    settings: Settings,
+    store,
+    access_store,
+    target_repo,
+    monitoring_admins,
+    console: Console,
+) -> int:
     host = settings.api_bind_host.strip()
     port = settings.api_bind_port
     display = "127.0.0.1" if host.lower() == "localhost" else host
-    app = create_app(settings, store=store, access_store=access_store)
-    app.state.agent_factory = build_api_agent_factory(access_store)
+    app = create_app(
+        settings,
+        store=store,
+        access_store=access_store,
+        monitoring_admin_store=monitoring_admins,
+    )
+    app.state.agent_factory = build_api_agent_factory(access_store, target_repo)
     listening = f"http://{display}:{port}"
     logger.info("API listening at %s", listening)
     console.print(f"[bold]API:[/bold] {listening}")
@@ -133,6 +145,8 @@ def _serve_with_engine(
     console: Console,
     store,
     access_store,
+    target_repo,
+    monitoring_admins,
     process,
 ) -> int:
     sd_notify(f"Warming {settings.llm_model}")
@@ -180,7 +194,9 @@ def _serve_with_engine(
     thread.start()
     api_settings = settings_for_api(settings, endpoint)
     try:
-        return _run_api(api_settings, store, access_store, console)
+        return _run_api(
+            api_settings, store, access_store, target_repo, monitoring_admins, console
+        )
     finally:
         sd_notify("Stopping", stopping=True)
         logger.info("Stopping LLM facade")
@@ -204,7 +220,7 @@ def run(settings: Settings, console: Console) -> int:
 
     sd_notify("Opening conversation database")
     try:
-        store, access_store = open_stores(settings)
+        store, access_store, target_repo, monitoring_admins = open_stores(settings)
     except Exception as exc:
         logger.error("Could not open conversation database: %s", exc)
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
@@ -213,7 +229,15 @@ def run(settings: Settings, console: Console) -> int:
     sd_notify(f"Starting {settings.llm_engine.value}")
     try:
         with managed_engine_process(settings, console) as process:
-            return _serve_with_engine(settings, console, store, access_store, process)
+            return _serve_with_engine(
+                settings,
+                console,
+                store,
+                access_store,
+                target_repo,
+                monitoring_admins,
+                process,
+            )
     except EngineProcessError:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
 

@@ -263,6 +263,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.access_cmd import main as access_main
 
         return access_main(raw[1:])
+    if raw and raw[0] == "monitoring":
+        from ai_agent.cli.monitoring_cmd import main as monitoring_main
+
+        return monitoring_main(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="ai-agent config",
@@ -289,47 +293,52 @@ def main(argv: list[str] | None = None) -> int:
         "access",
         help="Approve or deny Supabase users for this deployment (local whitelist).",
     )
+    sub.add_parser(
+        "monitoring",
+        help="Grant or revoke host-monitoring admins (local SQLite allowlist).",
+    )
     service_access = sub.add_parser(
         "service-access",
-        help="Explain systemd service user vs local command execution; plan ACL grants.",
+        help="Explain the systemd service user vs the Linux UID that runs local commands.",
     )
     sa_sub = service_access.add_subparsers(dest="sa_command")
     sa_sub.add_parser("show", help="Who runs local commands on the server.")
     sa_plan = sa_sub.add_parser(
         "plan",
-        help="Print sudo grant-access commands for an operator login.",
+        help="Show the --run-as account that executes local commands.",
     )
     sa_plan.add_argument(
         "operator",
         nargs="?",
-        help="Operator Linux user (default: $USER).",
-    )
-    sa_plan.add_argument(
-        "--list-home",
-        action="store_true",
-        help="Suggest --list-home so ai can ls the operator home directory.",
-    )
-    sa_plan.add_argument(
-        "--read",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="Extra paths for grant-access.sh --read.",
+        help="Linux account for --run-as (default: $USER).",
     )
     targets = sub.add_parser(
         "execution-target",
-        help="Add or list named command-execution targets (local / ssh / docker).",
+        help="Per-user SSH/Docker targets (SQLite). See docs/execution-targets.md.",
     )
     targets.add_argument(
         "action",
         nargs="?",
-        choices=["add", "list", "show", "wizard", "trust"],
-        help="add (default) walks through creating a target; list shows names; trust fetches an SSH host key.",
+        choices=["add", "list", "show", "wizard", "trust", "import-yaml"],
+        help="Manage targets for the subject Supabase user (login session or --user-id).",
     )
     targets.add_argument(
         "target_name",
         nargs="?",
-        help="SSH target name for the trust action.",
+        help="SSH target name for trust, or YAML path for import-yaml.",
+    )
+    targets.add_argument(
+        "--user-id",
+        metavar="UUID",
+        help="Subject Supabase user id (default: ai-agent login session).",
+    )
+    targets.add_argument(
+        "--service-db",
+        action="store_true",
+        help=(
+            "Use the deployment database (CONVERSATION_DATABASE from .env, or "
+            "/var/lib/ai-agent/conversations.db)."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -350,13 +359,8 @@ def main(argv: list[str] | None = None) -> int:
         forwarded: list[str] = []
         if getattr(args, "sa_command", None):
             forwarded.append(args.sa_command)
-            if args.sa_command == "plan":
-                if getattr(args, "operator", None):
-                    forwarded.append(args.operator)
-                if getattr(args, "list_home", False):
-                    forwarded.append("--list-home")
-                for path in getattr(args, "read", []) or []:
-                    forwarded.extend(["--read", path])
+            if args.sa_command == "plan" and getattr(args, "operator", None):
+                forwarded.append(args.operator)
         return service_access_main(forwarded or None)
     if args.command == "remote-provider":
         if args.action == "test":
@@ -375,7 +379,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "execution-target":
         from ai_agent.cli.execution_target_cmd import main as targets_main
 
-        forwarded = [args.action or "add"]
+        forwarded: list[str] = []
+        if getattr(args, "service_db", False):
+            forwarded.append("--service-db")
+        if getattr(args, "user_id", None):
+            forwarded.extend(["--user-id", args.user_id])
+        forwarded.append(args.action or "add")
         if getattr(args, "target_name", None):
             forwarded.append(args.target_name)
         return targets_main(forwarded)

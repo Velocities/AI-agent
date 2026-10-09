@@ -115,6 +115,20 @@ ai-agent config access bootstrap-help
 
 Pending users receive a clear message in the CLI until you approve them on **this** server.
 
+### Monitoring admins (current behavior)
+
+Host monitoring is a second allowlist in the same SQLite file. It does not follow from `config access approve`, and granting it does not approve agent commands.
+
+```bash
+ai-agent config monitoring grant <user_id>
+ai-agent config monitoring list
+ai-agent config monitoring revoke <user_id>
+```
+
+Use `--service-db` the same way as `config access` when you mean the shared deployment database. `grant` can be repeated. `revoke` removes the row; revoking an unknown id fails so a typo is obvious. The API sees the change on the next request. The Android Monitoring button is decided at sign-in, so it stays until the user signs in again.
+
+Revise this section with `ai_agent/deployment/monitoring_admin_store.py`, `ai_agent/cli/monitoring_cmd.py`, and the README section "Monitoring admins" before treating the rules as final.
+
 The shared database lives under `/var/lib/ai-agent/` (mode `2770`, group `ai`). Your login user must be in group `ai` and have a fresh group session (`newgrp ai` or re-login). SQLite needs **group write on the directory** (for `-wal` / `-shm`), not only `660` on the `.db` file. The unit uses `StateDirectoryMode=0770` and `UMask=0007` so the service keeps group-readable files. Re-run `sudo deploy/systemd/install.sh` after pulling, or:
 
 ```bash

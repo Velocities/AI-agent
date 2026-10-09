@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SingleCommand(BaseModel):
@@ -16,6 +16,27 @@ class SingleCommand(BaseModel):
         if not value:
             raise ValueError("argv must not be empty")
         return value
+
+    @model_validator(mode="after")
+    def validate_find_exec_argv(self) -> "SingleCommand":
+        if "-exec" not in self.argv:
+            return self
+        if "{}" not in self.argv:
+            raise ValueError(
+                "find -exec requires '{}' as its own argv string after the inner command, "
+                "then '+' as the last argv element (semicolons are forbidden)."
+            )
+        if self.argv[-1] != "+":
+            raise ValueError(
+                "find -exec must end with '+' as its own argv string "
+                '(example: ["find",".","-name","*.py","-exec","grep","-l","pat","{}","+"]). '
+                "Do not use ';'. Prefer grep -R or run_commands for searches."
+            )
+        exec_index = self.argv.index("-exec")
+        brace_index = self.argv.index("{}")
+        if brace_index <= exec_index:
+            raise ValueError("find -exec: '{}' must appear after '-exec' and its command argv.")
+        return self
 
 
 class PipeCommand(BaseModel):
@@ -52,8 +73,31 @@ class RedirectCommand(BaseModel):
     path: str
 
 
+class WriteFileCommand(BaseModel):
+    type: Literal["write_file"] = "write_file"
+    path: str
+    content: str
+    append: bool = False
+
+    @field_validator("path")
+    @classmethod
+    def path_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("write_file path must not be empty")
+        if "\0" in value:
+            raise ValueError("write_file path must not contain NUL")
+        return value
+
+
 CommandExpr = Annotated[
-    Union[SingleCommand, PipeCommand, AndCommand, OrCommand, RedirectCommand],
+    Union[
+        SingleCommand,
+        PipeCommand,
+        AndCommand,
+        OrCommand,
+        RedirectCommand,
+        WriteFileCommand,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -61,6 +105,7 @@ PipeCommand.model_rebuild()
 AndCommand.model_rebuild()
 OrCommand.model_rebuild()
 RedirectCommand.model_rebuild()
+WriteFileCommand.model_rebuild()
 
 
 def iter_leaves(expr: CommandExpr) -> list[SingleCommand]:
@@ -75,6 +120,8 @@ def iter_leaves(expr: CommandExpr) -> list[SingleCommand]:
         return iter_leaves(expr.left) + iter_leaves(expr.right)
     if isinstance(expr, RedirectCommand):
         return iter_leaves(expr.cmd)
+    if isinstance(expr, WriteFileCommand):
+        return []
     raise TypeError(f"Unknown command expression type: {type(expr)!r}")
 
 

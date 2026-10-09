@@ -6,15 +6,25 @@ import queue
 import threading
 from collections.abc import Iterator
 
-from ai_agent.agent.loop import AgentCancelled, AgentLoop
+from ai_agent.agent.loop import AgentCancelled
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.api.transcript import message_from_record, message_metadata, message_payload
 from ai_agent.approval.session import ApprovalSession
-from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore
 
 logger = logging.getLogger(__name__)
+
+AGENT_FACTORY_MISSING_MESSAGE = "Agent execution is not configured on this server."
+
+
+class AgentFactoryNotConfigured(RuntimeError):
+    """No agent factory was supplied for a turn.
+
+    The factory is what binds a turn to the requesting user's approved Linux
+    account. Without it the agent would run as the service account, so a turn
+    with no factory must fail instead of falling back to an unmapped agent.
+    """
 
 
 def iter_turn_events(
@@ -102,8 +112,9 @@ def _run_turn(
         cancel=cancel,
         timeout=settings.agent_approval_timeout,
     )
-    factory = agent_factory or _default_agent_factory
-    agent = factory(
+    if agent_factory is None:
+        raise AgentFactoryNotConfigured(AGENT_FACTORY_MISSING_MESSAGE)
+    agent = agent_factory(
         settings=settings,
         prompter=prompter,
         session=session,
@@ -175,19 +186,4 @@ def _drive_agent(
             "message": result.final_message,
             "error": result.error,
         }
-    )
-
-
-def _default_agent_factory(
-    *,
-    settings: Settings,
-    prompter,
-    session,
-    audit_user: str,
-) -> AgentLoop:
-    return build_agent(
-        prompter=prompter,
-        session=session,
-        audit_user=audit_user,
-        settings=settings,
     )

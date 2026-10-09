@@ -13,9 +13,11 @@ from ai_agent.commands.ast import (
     PipeCommand,
     RedirectCommand,
     SingleCommand,
+    WriteFileCommand,
     iter_pipe_segments,
 )
 from ai_agent.commands.render import render_command
+from ai_agent.commands.write_file import perform_write_file
 
 
 @dataclass
@@ -103,6 +105,8 @@ class CommandExecutor:
             return self._execute(expr.right)
         if isinstance(expr, RedirectCommand):
             return self._run_redirect(expr)
+        if isinstance(expr, WriteFileCommand):
+            return self._run_write_file(expr)
         raise TypeError(f"Unsupported expression: {type(expr)!r}")
 
     def _run_single(
@@ -190,6 +194,14 @@ class CommandExecutor:
             return code, "", ""
         finally:
             stream.close()
+
+    def _run_write_file(self, expr: WriteFileCommand) -> tuple[int, str, str]:
+        return perform_write_file(
+            expr.path,
+            expr.content,
+            append=expr.append,
+            max_bytes=self.output_limit,
+        )
 
     def _limit_output(self, text: str) -> tuple[str, bool]:
         if len(text) <= self.output_limit:

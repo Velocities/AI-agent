@@ -3,6 +3,7 @@ package com.aiagent.android.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aiagent.android.AiAgentApp
+import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.Profile
 import com.aiagent.android.data.SavedServer
 import com.aiagent.android.data.SupabaseModule
@@ -44,6 +45,8 @@ data class AuthUiState(
     val discordIdentities: String? = null,
     val tokenExpiresAt: String? = null,
     val profileJson: String? = null,
+    /** Host monitoring is shown only for ids in the server's admin list. */
+    val isAdmin: Boolean = false,
     val lastError: String? = null,
     val busy: Boolean = false,
 )
@@ -187,6 +190,7 @@ class AuthViewModel : ViewModel() {
                 val session = status.session
                 val user = session.user
                 val profile = user?.id?.let { loadProfile(it) }
+                val admin = loadIsAdmin()
                 _state.update {
                     it.copy(
                         configured = true,
@@ -202,6 +206,7 @@ class AuthViewModel : ViewModel() {
                         discordIdentities = discordIdentities(session),
                         tokenExpiresAt = session.expiresAt.toString(),
                         profileJson = profile?.let { row -> json.encodeToString(row) } ?: "(no profiles row)",
+                        isAdmin = admin,
                     )
                 }
             }
@@ -227,6 +232,7 @@ class AuthViewModel : ViewModel() {
                         discordIdentities = null,
                         tokenExpiresAt = null,
                         profileJson = null,
+                        isAdmin = false,
                     )
                 }
             }
@@ -240,6 +246,18 @@ class AuthViewModel : ViewModel() {
                     )
                 }
             }
+        }
+    }
+
+    private suspend fun loadIsAdmin(): Boolean {
+        val url = AiAgentApp.instance.serverConfig.load()?.serverUrl ?: return false
+        val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull() ?: return false
+        return try {
+            withContext(Dispatchers.IO) { AgentApi(url).isMonitoringAdmin(token) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
         }
     }
 

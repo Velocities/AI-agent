@@ -58,7 +58,7 @@ def main() -> int:
         )
 
     try:
-        store, access_store = open_stores(settings)
+        store, access_store, target_repo, monitoring_admins = open_stores(settings)
     except Exception as exc:
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
         return 1
@@ -78,8 +78,13 @@ def main() -> int:
         "The database file is not served. Ctrl+C to stop.[/dim]\n"
     )
 
-    app = create_app(settings, store=store, access_store=access_store)
-    app.state.agent_factory = build_api_agent_factory(access_store)
+    app = create_app(
+        settings,
+        store=store,
+        access_store=access_store,
+        monitoring_admin_store=monitoring_admins,
+    )
+    app.state.agent_factory = build_api_agent_factory(access_store, target_repo)
     uvicorn.run(
         app,
         host=host,

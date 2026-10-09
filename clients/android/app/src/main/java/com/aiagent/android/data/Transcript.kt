@@ -152,6 +152,7 @@ object CommandText {
         "and" -> "${wrap(expr["left"])} && ${wrap(expr["right"])}"
         "or" -> "${wrap(expr["left"])} || ${wrap(expr["right"])}"
         "redirect" -> "${wrap(expr["cmd"])} ${expr.string("op") ?: ">"} ${quote(expr.string("path").orEmpty())}"
+        "write_file" -> renderWriteFile(expr)
         else -> "(command)"
     }
 
@@ -170,5 +171,22 @@ object CommandText {
         part.isEmpty() -> "''"
         safe.matches(part) -> part
         else -> "'" + part.replace("'", "'\"'\"'") + "'"
+    }
+
+    private fun renderWriteFile(expr: JsonObject): String {
+        val mode = if ((expr["append"] as? JsonPrimitive)?.booleanOrNull == true) {
+            "--append"
+        } else {
+            "--truncate"
+        }
+        val path = expr.string("path").orEmpty()
+        val content = expr.string("content").orEmpty()
+        val bytes = content.encodeToByteArray().size
+        val lines = if (content.isEmpty()) 0 else content.count { it == '\n' } + 1
+        val preview = content.replace("\n", "\\n").take(72).let {
+            if (content.length > 72) "$it..." else it
+        }
+        val base = "write_file $mode --path ${quote(path)} --bytes $bytes --lines $lines"
+        return if (preview.isEmpty()) base else "$base # preview: ${quote(preview)}"
     }
 }

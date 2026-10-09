@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from getpass import getuser
 from pathlib import Path
@@ -9,6 +8,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 
+from ai_agent.agent.context import gather_runtime_context
 from ai_agent.agent.loop import AgentLoop, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
@@ -16,7 +16,12 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.run_as import build_command_executor
 from ai_agent.config import Settings
-from ai_agent.execution_targets.router import load_router
+from ai_agent.deployment.access import AccessStatus
+from ai_agent.deployment.access_store import DeploymentAccessStore
+from ai_agent.execution_targets.build_router import build_router_for_user
+from ai_agent.execution_targets.repository import UserExecutionTargetRepository
+from ai_agent.execution_targets.router import ExecutionTargetRouter
+from ai_agent.execution_targets.secure_key_store import OSSecureKeyStore, SecureKeyStore
 from ai_agent.execution_targets.store import TargetConfigError
 from ai_agent.llm import create_llm_provider
 from ai_agent.policy.engine import PolicyEngine
@@ -69,6 +74,10 @@ def build_agent(
     session: ApprovalSession | None = None,
     settings: Settings | None = None,
     run_as_linux_user: str | None = None,
+    user_id: str | None = None,
+    target_repo: UserExecutionTargetRepository | None = None,
+    access_store: DeploymentAccessStore | None = None,
+    key_store: SecureKeyStore | None = None,
 ) -> AgentLoop:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
@@ -82,10 +91,12 @@ def build_agent(
         linux_username=run_as_linux_user,
     )
     try:
-        router = load_router(
-            executor,
-            settings.agent_execution_targets_file,
-            default_override=os.environ.get("AGENT_DEFAULT_TARGET"),
+        router = _build_router(
+            executor=executor,
+            user_id=user_id,
+            target_repo=target_repo,
+            access_store=access_store,
+            key_store=key_store,
         )
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")
@@ -97,6 +108,7 @@ def build_agent(
     audit_path = Path(settings.agent_audit_log) if settings.agent_audit_log else None
     audit = AuditLogger(log_path=audit_path, user=audit_user or getuser())
     llm = create_llm_provider(settings)
+    runtime = gather_runtime_context(settings, linux_username=run_as_linux_user)
 
     return AgentLoop(
         settings=settings,
@@ -107,7 +119,37 @@ def build_agent(
         prompter=prompter,
         session=session,
         router=router,
+        runtime_context=runtime,
     )
+
+
+def _build_router(
+    *,
+    executor,
+    user_id: str | None,
+    target_repo: UserExecutionTargetRepository | None,
+    access_store: DeploymentAccessStore | None,
+    key_store: SecureKeyStore | None,
+) -> ExecutionTargetRouter:
+    if user_id and target_repo is not None and access_store is not None:
+        record = access_store.get(user_id)
+        if record is None or record.status != AccessStatus.APPROVED:
+            raise TargetConfigError("User is not approved for command execution.")
+        linux = record.linux_username.strip()
+        if not linux:
+            raise TargetConfigError(
+                "Linux username is required. Approve with: "
+                "ai-agent config access approve <user_id> --run-as <linux_user>"
+            )
+        store = key_store or OSSecureKeyStore()
+        return build_router_for_user(
+            user_id=user_id,
+            linux_username=linux,
+            executor=executor,
+            target_repo=target_repo,
+            key_store=store,
+        )
+    return ExecutionTargetRouter.local_only(executor)
 
 
 def warmup_agent(agent: AgentLoop, console: Console) -> bool:

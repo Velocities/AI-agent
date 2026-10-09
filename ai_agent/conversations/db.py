@@ -12,6 +12,8 @@ from sqlalchemy.engine import Engine, make_url
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
+from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
+from ai_agent.execution_targets.repository import UserExecutionTargetRepository
 
 
 def default_database_path() -> Path:
@@ -22,8 +24,8 @@ def default_database_path() -> Path:
 def shared_deployment_database_path() -> Path:
     """Single SQLite file for systemd + admin CLI (see CONVERSATION_DATABASE).
 
-    Must stay under the unit's StateDirectory=ai-agent; ProtectSystem=strict
-    makes the rest of /var/lib read-only for the service.
+    Lives in the unit's StateDirectory=ai-agent so the service account and the
+    admin group share one database.
     """
     return Path("/var/lib/ai-agent") / "conversations.db"
 
@@ -55,6 +57,27 @@ def database_url(settings: Settings) -> str:
     return f"sqlite:///{path}"
 
 
+def deployment_database_url(settings: Settings) -> str:
+    """SQLite URL used by `ai-agent serve` on this host.
+
+    Reads ``CONVERSATION_DATABASE`` from settings (``.env`` in the service
+    WorkingDirectory). When unset, uses the shared ``StateDirectory`` file under
+    ``/var/lib/ai-agent/conversations.db`` — not the service user's
+    ``~/.local/share/...`` path.
+    """
+    configured = settings.conversation_database.strip()
+    if configured:
+        return configured
+    return shared_deployment_database_url()
+
+
+def database_url_for_admin_cli(settings: Settings, *, service_db: bool) -> str:
+    """Pick the database for ``config access``, ``config monitoring``, and ``execution-target``."""
+    if service_db:
+        return deployment_database_url(settings)
+    return database_url(settings)
+
+
 def database_display_path(url: str) -> str:
     made = make_url(url)
     if made.drivername.startswith("sqlite") and made.database:
@@ -74,12 +97,19 @@ def open_store(settings: Settings) -> ConversationStore:
     return open_stores(settings)[0]
 
 
-def open_stores(settings: Settings) -> tuple[ConversationStore, DeploymentAccessStore]:
+def open_stores(
+    settings: Settings,
+) -> tuple[
+    ConversationStore,
+    DeploymentAccessStore,
+    UserExecutionTargetRepository,
+    MonitoringAdminStore,
+]:
     url = database_url(settings)
     upgrade_database(url)
     engine = _engine(url)
     _restrict_sqlite_file(url)
-    return ConversationStore(engine), DeploymentAccessStore(engine)
+    return _stores(engine)
 
 
 def open_store_at(url: str) -> ConversationStore:
@@ -87,10 +117,33 @@ def open_store_at(url: str) -> ConversationStore:
     return open_stores_at(url)[0]
 
 
-def open_stores_at(url: str) -> tuple[ConversationStore, DeploymentAccessStore]:
+def open_stores_at(
+    url: str,
+) -> tuple[
+    ConversationStore,
+    DeploymentAccessStore,
+    UserExecutionTargetRepository,
+    MonitoringAdminStore,
+]:
     upgrade_database(url)
     engine = _engine(url)
-    return ConversationStore(engine), DeploymentAccessStore(engine)
+    return _stores(engine)
+
+
+def _stores(
+    engine: Engine,
+) -> tuple[
+    ConversationStore,
+    DeploymentAccessStore,
+    UserExecutionTargetRepository,
+    MonitoringAdminStore,
+]:
+    return (
+        ConversationStore(engine),
+        DeploymentAccessStore(engine),
+        UserExecutionTargetRepository(engine),
+        MonitoringAdminStore(engine),
+    )
 
 
 def _engine(url: str) -> Engine:

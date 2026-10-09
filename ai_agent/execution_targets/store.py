@@ -1,3 +1,10 @@
+"""Legacy YAML-backed execution target configuration.
+
+Per-user targets in deployment SQLite plus SecureKeyStore will replace this
+module's file-based API. Do not add new features here; see docs/execution-targets.md.
+The YAML helpers will be deleted once the new path is verified in production.
+"""
+
 from __future__ import annotations
 
 import re
@@ -57,6 +64,9 @@ TargetRecord = LocalTargetRecord | SshTargetRecord | DockerTargetRecord
 
 class ExecutionTargetsFile(BaseModel):
     default_target: str = RESERVED_LOCAL_NAME
+    # Lets load_router tell "the file asked for this" apart from "nobody said",
+    # so overriding it can warn instead of discarding the value silently.
+    default_target_from_file: bool = False
     execution_targets: dict[str, TargetRecord] = Field(default_factory=dict)
 
 
@@ -74,6 +84,8 @@ def default_targets_path() -> Path:
 
 
 def execution_target_dir(name: str, *, root: Path | None = None) -> Path:
+    # Legacy layout (global target name). OSSecureKeyStore will use per-user_id paths
+    # under the linked Linux account's home; see docs/execution-targets.md.
     base = root or Path.cwd()
     return base / ".ai-agent" / "execution-targets" / name
 
@@ -96,7 +108,8 @@ def load_targets_file(path: Path) -> ExecutionTargetsFile:
 
 
 def _parse_file(raw: dict[str, Any], *, base: Path) -> ExecutionTargetsFile:
-    default_target = str(raw.get("default_target") or RESERVED_LOCAL_NAME)
+    raw_default = raw.get("default_target")
+    default_target = str(raw_default or RESERVED_LOCAL_NAME)
     items = raw.get("execution_targets") or {}
     if not isinstance(items, dict):
         raise TargetConfigError("execution_targets must be a mapping of name → target")
@@ -106,7 +119,11 @@ def _parse_file(raw: dict[str, Any], *, base: Path) -> ExecutionTargetsFile:
         if not isinstance(spec, dict):
             raise TargetConfigError(f"Target {name!r} must be a mapping")
         targets[str(name)] = _parse_record(str(name), spec, base=base)
-    return ExecutionTargetsFile(default_target=default_target, execution_targets=targets)
+    return ExecutionTargetsFile(
+        default_target=default_target,
+        default_target_from_file=bool(raw_default),
+        execution_targets=targets,
+    )
 
 
 def _parse_record(name: str, spec: dict[str, Any], *, base: Path) -> TargetRecord:

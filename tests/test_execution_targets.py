@@ -1,9 +1,11 @@
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
+from ai_agent.agent.factory import build_agent
 from ai_agent.agent.loop import AgentLoop
 from ai_agent.agent.tools import build_tool_definitions
 from ai_agent.approval.prompt import ApprovalPrompter
@@ -362,3 +364,56 @@ def test_agent_rejects_invented_target(tmp_path: Path) -> None:
     assert captured == []
     tool_msg = agent.messages[-2]
     assert "Unknown execution target" in tool_msg.content
+
+
+def _two_target_file(tmp_path: Path, *, file_default: str | None = None) -> Path:
+    body: dict = {
+        "execution_targets": {
+            "local": {"type": "local"},
+            "lab": {"type": "docker", "container": "nginx"},
+        }
+    }
+    if file_default is not None:
+        body["default_target"] = file_default
+    path = tmp_path / "execution_targets.yaml"
+    path.write_text(yaml.safe_dump(body), encoding="utf-8")
+    return path
+
+
+def test_build_agent_without_user_id_uses_local_only(tmp_path) -> None:
+    """Serve/chat paths pass user_id + target_repo; standalone build_agent is local-only."""
+    settings = Settings()
+    agent = build_agent(settings=settings, audit_user="tester")
+
+    assert agent.router.default_name == "local"
+    assert set(agent.router.names()) == {"local"}
+
+
+def test_unknown_default_target_is_rejected(tmp_path: Path) -> None:
+    executor = CommandExecutor(timeout=1, output_limit=16, scratch_dir=tmp_path)
+
+    with pytest.raises(TargetConfigError) as exc:
+        load_router(executor, _two_target_file(tmp_path), default_override="typo")
+
+    assert "typo" in str(exc.value)
+    assert "lab, local" in str(exc.value)
+
+
+def test_override_warns_before_discarding_the_file_default(tmp_path, caplog) -> None:
+    executor = CommandExecutor(timeout=1, output_limit=16, scratch_dir=tmp_path)
+    path = _two_target_file(tmp_path, file_default="lab")
+
+    with caplog.at_level(logging.WARNING):
+        router = load_router(executor, path, default_override="local")
+
+    assert router.default_name == "local"
+    assert "Ignoring default_target 'lab'" in caplog.text
+
+
+def test_no_warning_when_the_file_omits_a_default(tmp_path, caplog) -> None:
+    executor = CommandExecutor(timeout=1, output_limit=16, scratch_dir=tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        load_router(executor, _two_target_file(tmp_path), default_override="lab")
+
+    assert "Ignoring default_target" not in caplog.text

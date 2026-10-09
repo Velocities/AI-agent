@@ -9,6 +9,7 @@ from ai_agent.commands.ast import (
     PipeCommand,
     RedirectCommand,
     SingleCommand,
+    WriteFileCommand,
 )
 
 
@@ -41,7 +42,34 @@ def _render(expr: CommandExpr) -> str:
     if isinstance(expr, RedirectCommand):
         inner = _wrap(expr.cmd)
         return f"{inner} {expr.op} {shlex.quote(expr.path)}"
+    if isinstance(expr, WriteFileCommand):
+        return render_write_file(expr)
     raise TypeError(f"Unknown expression: {type(expr)!r}")
+
+
+def render_write_file(expr: WriteFileCommand) -> str:
+    """Human-readable approval line; file body is not echoed (injection-safe display)."""
+    mode = "--append" if expr.append else "--truncate"
+    byte_count = len(expr.content.encode("utf-8"))
+    line_count = expr.content.count("\n") + (1 if expr.content else 0)
+    preview = _content_preview(expr.content)
+    parts = [
+        "write_file",
+        mode,
+        f"--path {shlex.quote(expr.path)}",
+        f"--bytes {byte_count}",
+        f"--lines {line_count}",
+    ]
+    if preview:
+        parts.append(f"# preview: {shlex.quote(preview)}")
+    return " ".join(parts)
+
+
+def _content_preview(content: str, limit: int = 72) -> str:
+    single = content.replace("\n", "\\n").replace("\r", "")
+    if len(single) <= limit:
+        return single
+    return single[: limit - 3] + "..."
 
 
 def _wrap(expr: CommandExpr) -> str:

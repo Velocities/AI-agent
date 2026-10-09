@@ -4,14 +4,6 @@ forbidden_patterns:
   - argv_contains: [";"]
   - argv_regex: '^(/bin/sh|/usr/bin/sh|bash|/bin/bash)$'
 
-filesystem:
-  readable_paths:
-    - /tmp
-    - /home
-    - /root
-  writable_redirect_paths:
-    - /tmp/ai-agent
-
 network:
   allowed_hosts:
     - 127.0.0.1

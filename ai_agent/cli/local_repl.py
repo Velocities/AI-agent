@@ -1,3 +1,9 @@
+"""In-process interactive chat on the server (not the default `ai-agent` command).
+
+Planned v2: compose this with the same agent/target paths as ai-agent serve
+instead of global YAML. See docs/local-in-process-chat.md.
+"""
+
 from __future__ import annotations
 
 from rich.console import Console

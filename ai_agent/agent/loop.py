@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ai_agent.agent.context import build_system_prompt, gather_runtime_context
+from ai_agent.agent.context import RuntimeContext, build_system_prompt, gather_runtime_context
 from ai_agent.agent.tools import (
     COMMAND_DUMP_NUDGE,
     CONTINUE_NUDGE,
@@ -17,7 +17,8 @@ from ai_agent.agent.warmup import warmup_llm
 from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
-from ai_agent.commands.ast import parse_command_expr
+from ai_agent.commands.ast import CommandExpr, parse_command_expr
+from ai_agent.commands.validate import command_expression_issue
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.commands.render import render_command
 from ai_agent.config import Settings
@@ -66,6 +67,7 @@ class AgentLoop:
         prompter: ApprovalPrompter,
         session: ApprovalSession,
         router: ExecutionTargetRouter | None = None,
+        runtime_context: RuntimeContext | None = None,
     ):
         self.settings = settings
         self.llm = llm
@@ -76,7 +78,7 @@ class AgentLoop:
         self.prompter = prompter
         self.session = session
         self.tool_definitions = build_tool_definitions(self.router.names())
-        runtime = gather_runtime_context(settings)
+        runtime = runtime_context or gather_runtime_context(settings)
         system_prompt = build_system_prompt(
             runtime,
             policy.allowed_binaries(),
@@ -431,10 +433,10 @@ class AgentLoop:
                 if not isinstance(commands, list):
                     return [self._handle_tool_call(item) for item in tool_calls]
                 for command_data in commands:
-                    try:
-                        expr = parse_command_expr(command_data)
-                    except Exception:
+                    expr, parse_error = self._parse_command_for_tool(command_data)
+                    if parse_error:
                         return [self._handle_tool_call(item) for item in tool_calls]
+                    assert expr is not None
                     target_name, target, target_error = self._resolve_target(
                         call.arguments
                     )
@@ -453,10 +455,12 @@ class AgentLoop:
                     )
                     call_map.append((call, expr, target_name, target))
             elif call.name == "run_command":
-                try:
-                    expr = parse_command_expr(call.arguments.get("command", {}))
-                except Exception:
+                expr, parse_error = self._parse_command_for_tool(
+                    call.arguments.get("command", {})
+                )
+                if parse_error:
                     return [self._handle_tool_call(item) for item in tool_calls]
+                assert expr is not None
                 target_name, target, target_error = self._resolve_target(
                     call.arguments
                 )
@@ -532,10 +536,9 @@ class AgentLoop:
                     tool_call_id=call.id,
                 )
             for command_data in commands:
-                try:
-                    expr = parse_command_expr(command_data)
-                except Exception as exc:
-                    parsed.append(f"Invalid command expression: {exc}")
+                expr, parse_error = self._parse_command_for_tool(command_data)
+                if parse_error:
+                    parsed.append(parse_error)
                     continue
                 parsed.append(expr)
                 pending.append(
@@ -576,16 +579,18 @@ class AgentLoop:
             )
 
         if call.name == "run_command":
-            try:
-                expr = parse_command_expr(call.arguments.get("command", {}))
-            except Exception as exc:
-                payload = {"success": False, "error": f"Invalid command expression: {exc}"}
+            expr, parse_error = self._parse_command_for_tool(
+                call.arguments.get("command", {})
+            )
+            if parse_error:
+                payload = {"success": False, "error": parse_error}
                 return LLMMessage(
                     role="tool",
                     name=call.name,
                     content=json.dumps(payload, ensure_ascii=True),
                     tool_call_id=call.id,
                 )
+            assert expr is not None
 
             target_name, target, target_error = self._resolve_target(call.arguments)
             if target_error:
@@ -634,6 +639,21 @@ class AgentLoop:
             content=json.dumps(payload, ensure_ascii=True),
             tool_call_id=call.id,
         )
+
+    @staticmethod
+    def _parse_command_for_tool(
+        command_data: object,
+    ) -> tuple[CommandExpr | None, str | None]:
+        if not isinstance(command_data, dict):
+            return None, "command must be a JSON object with a type field"
+        try:
+            expr = parse_command_expr(command_data)
+        except Exception as exc:
+            return None, f"Invalid command expression: {exc}"
+        issue = command_expression_issue(expr)
+        if issue:
+            return None, issue
+        return expr, None
 
     def _resolve_target(
         self, arguments: dict

@@ -14,33 +14,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-agent config service-access",
         description=(
-            "Explain how the systemd service user relates to shell command execution, "
-            "and print grant commands for an operator account."
+            "Explain how the systemd service account relates to the Linux UID/GID "
+            "that runs each session's commands and file operations."
         ),
     )
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("show", help="Print who runs local commands on this machine.")
     grant = sub.add_parser(
         "plan",
-        help="Print sudo commands to let the service user access an operator's files.",
+        help="Show how an approved Linux user runs local commands.",
     )
     grant.add_argument(
         "operator",
         nargs="?",
         default=os.environ.get("USER") or os.environ.get("LOGNAME") or "",
-        help="Linux login that owns the checkout (default: current USER).",
-    )
-    grant.add_argument(
-        "--list-home",
-        action="store_true",
-        help="Include --list-home in the suggested grant-access.sh command.",
-    )
-    grant.add_argument(
-        "--read",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="Extra paths for --read (repeatable).",
+        help="Linux account to pass to access approve --run-as (default: current USER).",
     )
 
     args = parser.parse_args(argv)
@@ -61,12 +49,14 @@ def _cmd_show(console: Console) -> int:
         "It does [bold]not[/bold] run shell commands on your PC for server admin tasks."
     )
     console.print(
-        "• [bold]API / agent loop[/bold] (on the model server): runs as the systemd "
-        f"[bold]User=[/bold] from `ai-agent.service` (usually [bold]{_DEFAULT_SERVICE_USER}[/bold])."
+        "• [bold]API / agent loop[/bold] (on the model server): the systemd process stays "
+        f"the [bold]User=[/bold] from `ai-agent.service` (usually [bold]{_DEFAULT_SERVICE_USER}[/bold]), "
+        "and that account is not root."
     )
     console.print(
-        "• [bold]Local execution target[/bold]: shell commands run as that same OS user on "
-        "the server, with policy limits — not as your Discord/Supabase identity.\n"
+        "• [bold]Local execution target[/bold]: each approved session's commands and file "
+        "operations run as the Linux UID/GID from `ai-agent config access approve "
+        "… --run-as`. Unix permissions on those paths are the access control.\n"
     )
     if user:
         console.print(f"Your login on this machine (if SSH'd in): [bold]{user}[/bold]")
@@ -74,8 +64,8 @@ def _cmd_show(console: Console) -> int:
     if unit_user:
         console.print(f"Installed service User=: [bold]{unit_user}[/bold]")
     console.print(
-        "\nIf commands fail with [italic]Permission denied[/italic] under another user's home, "
-        "that is normal until you grant ACLs or run the service as that user. See:\n"
+        "\nA [italic]Permission denied[/italic] on a local command is that Linux account's "
+        "own file permissions. See:\n"
         "  ai-agent config service-access plan"
     )
     return 0
@@ -92,19 +82,11 @@ def _cmd_plan(console: Console, args: argparse.Namespace) -> int:
     if not home.is_dir():
         home = Path.home()
 
-    parts = ["sudo", "deploy/systemd/grant-access.sh", operator]
-    if args.list_home:
-        parts.append("--list-home")
-    for path in args.read:
-        parts.extend(["--read", path])
-    grant_cmd = " ".join(parts)
-
     console.print(
         _format_plan(
             operator=operator,
             service_user=service_user,
             repo=repo,
-            grant_cmd=grant_cmd,
             home=home,
         )
     )
@@ -116,25 +98,26 @@ def _format_plan(
     operator: str,
     service_user: str,
     repo: Path,
-    grant_cmd: str,
     home: Path,
 ) -> str:
     lines = [
-        f"Operator login: {operator} (home {home})",
-        f"Service / command user: {service_user}",
+        f"Linux account for local commands: {operator} (home {home})",
+        f"Service process user: {service_user} (stays this account; not root)",
         f"Checkout (cwd): {repo}",
         "",
-        "Recommended (keeps dedicated service user, grants read access):",
-        f"  {grant_cmd}",
+        "Approve the Supabase user with this Linux account:",
+        f"  ai-agent config access approve <user_id> --run-as {operator}",
         "",
-        "That script installs traverse ACLs, read access under ~/gh_repos by default, "
-        "and optional --list-home to ls the operator home directory.",
+        "The service keeps CAP_SETUID and CAP_SETGID and runs that session's commands",
+        "and file operations with setpriv as this UID/GID. Concurrent users stay",
+        "isolated because each session uses its own credentials. Access to files is",
+        "that account's normal Unix permissions.",
         "",
-        "Alternative (simple personal server — service runs as your login):",
-        f"  sudo AI_AGENT_SERVICE_USER={operator} deploy/systemd/install.sh",
+        "After changing the unit, reinstall and restart:",
+        "  sudo deploy/systemd/install.sh",
         "  sudo systemctl restart ai-agent",
         "",
-        "Then ask the agent to run: id, pwd, whoami — it should report your chosen user.",
+        "Then ask the agent to run: id -u; id -g; whoami",
     ]
     return "\n".join(lines)
 

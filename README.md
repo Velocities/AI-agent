@@ -51,7 +51,7 @@ If you have never run this project, use this table once. You can ignore the othe
 
 **One process vs two:** In normal use you want **one** server process. `ai-agent serve` (and the systemd service) starts the inference engine, the local LLM facade, and the loopback API together. Paths B and the old `ai-agent-llm` + `ai-agent-serve` pair exist so you can debug each layer separately.
 
-**Two different “users” on a server:** The **systemd service** runs as the Linux account `ai` (created by the installer). Approved **shell commands** from the agent also run as that same `ai` user when the default `local` execution target is used. That user must not have sudo.
+**Two different users on a server:** The **systemd service** runs as the Linux account `ai` (created by the installer) and must not have sudo. Approved **local commands and file writes** run as the Linux account from `ai-agent config access approve … --run-as`, under that account's UID/GID and normal filesystem permissions.
 
 ### Prerequisites (every path)
 
@@ -309,6 +309,22 @@ ai-agent config access approve YOUR_SUPABASE_USER_ID --run-as YOUR_LINUX_USERNAM
 
 Sign in on your PC with `ai-agent login`, run `ai-agent` once (you will see the whitelist message), then approve the `user_id` shown in `list`.
 
+**4b. Monitoring admins (current behavior)**
+
+Host monitoring in the Android app uses a separate SQLite allowlist from deployment access. Approving someone with `ai-agent config access approve` does not make them a monitoring admin, and granting monitoring does not let them run agent commands.
+
+Run these on the server, against the same database as `config access`. Add `--service-db` when the API uses the shared deployment database:
+
+```bash
+ai-agent config monitoring grant YOUR_SUPABASE_USER_ID --service-db
+ai-agent config monitoring list --service-db
+ai-agent config monitoring revoke YOUR_SUPABASE_USER_ID --service-db
+```
+
+The user id is the Supabase id from `ai-agent config access list-all` or the Android auth debug panel. `grant` is safe to repeat; the original row stays. `revoke` deletes that row, and revoking an id that is not an admin exits with an error so a typo is visible. The API reads the table on each request, so a revoke applies without a restart. The Android app asks once at sign-in, so the Monitoring button remains until the next sign-in, while GPU fetches start returning 403 immediately.
+
+This is a first cut. Revise `ai_agent/deployment/monitoring_admin_store.py`, `ai_agent/cli/monitoring_cmd.py`, `ai_agent/api/monitoring.py`, and this section together before treating the rules as final.
+
 **5. Verify**
 
 ```bash
@@ -553,13 +569,11 @@ Run the agent as user `ai`:
 
 **Important:** Adding `ai` to the `docker` group grants significant privilege (Docker socket ≈ root). Document and accept this consciously on home servers.
 
-### Filesystem policy
+### Filesystem access
 
-Path arguments (`cat`, `grep`, `ls`, etc.) must fall under configured readable roots (see policy YAML).
+Path arguments and redirect targets are **not** filtered by a static allow-list in policy. Commands run as the authorized Linux user for `local` (see access approval `--run-as`) or as each SSH/Docker target’s configured user; **the OS decides** what can be read or written.
 
-Redirects (`>`, `>>`, `2>`) are only allowed into configured writable directories (default: `/tmp/ai-agent`).
-
-Always canonicalize paths and reject traversal outside allowed roots.
+Use redirects (`>`, `>>`, `2>`) only via structured `CommandExpr` JSON, not shell metacharacters in argv.
 
 ### Network tools (localhost health checks only)
 
@@ -720,14 +734,26 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `AGENT_OUTPUT_LIMIT` | Max stdout/stderr returned to model |
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
-| `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
+| `AGENT_SCRATCH_DIR` | Optional per-user temp area (API appends the Linux username); not a path allow-list |
 
 ### Command execution (independent of LLM)
 
-| Variable | Description |
-|----------|-------------|
-| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+Per-user SSH/Docker targets are stored in the deployment SQLite database and
+on-disk keys under each approved Linux user's home. Chat clients do not load
+target config; `ai-agent serve` resolves targets per turn. See
+[`docs/execution-targets.md`](docs/execution-targets.md). When the model omits
+`target`, the server uses **`local`** only.
+
+Configure on the server (after `ai-agent login` or with `--user-id`):
+
+```bash
+ai-agent config execution-target list
+ai-agent config execution-target add
+ai-agent config execution-target import-yaml execution_targets.yaml
+```
+
+Legacy global `execution_targets.yaml` is import-only; it is not used at runtime
+on `ai-agent serve`.
 
 ### Full reference (all variables)
 
@@ -761,9 +787,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `AGENT_OUTPUT_LIMIT` | Max stdout/stderr returned to model |
 | `AGENT_AUDIT_LOG` | Audit log file path |
 | `AGENT_POLICY_FILE` | Override policy YAML path |
-| `AGENT_SCRATCH_DIR` | Writable scratch dir for redirects |
-| `AGENT_EXECUTION_TARGETS_FILE` | YAML of named command-execution targets (default `execution_targets.yaml`) |
-| `AGENT_DEFAULT_TARGET` | Target used when the model omits `target` (default `local`) |
+| `AGENT_SCRATCH_DIR` | Optional per-user temp area (API appends the Linux username); not a path allow-list |
 | `API_BIND_HOST` | Loopback address for `ai-agent-serve` (default `127.0.0.1`) |
 | `API_BIND_PORT` | Port for `ai-agent-serve` (default `8000`) |
 | `SUPABASE_URL` | Supabase project URL used to verify access tokens |
@@ -1061,25 +1085,27 @@ CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Android clien
 
 ## Execution targets
 
-Approved commands run on a **named target** from configuration. The model picks a name such as `local` or `home-server`. It cannot supply a hostname, SSH key, or container ID.
-
-| Type | Meaning |
-|------|---------|
-| `local` | This machine (always present). The usual default when the model omits `target`. |
-| `ssh` | Remote host. One generated ed25519 key per target under `.ai-agent/execution-targets/<name>/`. |
-| `docker` | `docker exec` into an existing container. Optional `user` (wizard default `root`) maps to `docker exec -u`, so you do not need sudo or a password inside the image. |
-
+Approved commands run on a **named target**. The model picks a name such as
+`local` or `home-server`; it cannot supply a hostname, SSH key, or container ID.
 This is separate from where the LLM runs (`LLM_HOST` / `remote-provider`).
 
-```bat
-ai-agent config execution-target
+**Full design (multi-user, SQLite, key storage, who configures what):**
+[`docs/execution-targets.md`](docs/execution-targets.md)
+
+**Simple single-machine chat (planned v2):**
+[`docs/local-in-process-chat.md`](docs/local-in-process-chat.md)
+
+Targets are **per Supabase user** in the deployment database. Every
+`config execution-target` command requires a subject user id from
+`ai-agent login` or `--user-id`. Omitting `target` in a tool call always means
+**`local`** (this machine, as the approved Linux user).
+
+```bash
 ai-agent config execution-target list
+ai-agent config execution-target add
 ai-agent config execution-target trust home-server
+ai-agent config execution-target import-yaml execution_targets.yaml
 ```
-
-The wizard can reuse **host / user / port** from `~/.ssh/config`, then generates a **new** key for the agent. Existing personal keys are not copied and are not used at runtime.
-
-SSH public keys belong in the remote user's `authorized_keys`. Host keys are stored per target (not in `~/.ssh`).
 
 ## Roadmap (not yet implemented)
 

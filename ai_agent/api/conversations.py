@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
-from ai_agent.api.turns import iter_turn_events
+from ai_agent.api.turns import AGENT_FACTORY_MISSING_MESSAGE, iter_turn_events
 from ai_agent.conversations.store import (
     Conversation,
     ConversationNotFound,
@@ -152,6 +152,10 @@ def start_turn(
 ) -> StreamingResponse:
     if store.get_conversation(user.user_id, conversation_id) is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
+    # Checked before claiming the broker so a refused turn leaves the
+    # conversation free rather than permanently busy.
+    if request.app.state.agent_factory is None:
+        raise HTTPException(status_code=503, detail=AGENT_FACTORY_MISSING_MESSAGE)
     broker = request.app.state.broker
     if not broker.try_begin(conversation_id):
         raise HTTPException(

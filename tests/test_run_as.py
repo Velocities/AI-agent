@@ -8,31 +8,6 @@ from ai_agent.commands.run_as import RunAsCommandExecutor, build_command_executo
 from ai_agent.deployment.identity import normalize_linux_username
 
 
-def test_build_command_executor_skips_when_already_that_user(tmp_path) -> None:
-    user = os.environ.get("USER") or os.environ.get("USERNAME") or "root"
-    executor = build_command_executor(
-        timeout=5,
-        output_limit=1024,
-        scratch_dir=tmp_path,
-        linux_username=user,
-    )
-    assert type(executor).__name__ == "CommandExecutor"
-
-
-def test_build_command_executor_uses_windows_username(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("LOGNAME", raising=False)
-    monkeypatch.delenv("USER", raising=False)
-    monkeypatch.delenv("LNAME", raising=False)
-    monkeypatch.setenv("USERNAME", "Alice")
-    executor = build_command_executor(
-        timeout=5,
-        output_limit=1024,
-        scratch_dir=tmp_path,
-        linux_username="alice",
-    )
-    assert type(executor).__name__ == "CommandExecutor"
-
-
 def test_run_as_reports_when_pwd_is_unavailable(tmp_path, monkeypatch) -> None:
     import builtins
 

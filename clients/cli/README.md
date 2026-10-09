@@ -16,7 +16,7 @@ This is the sibling of [`clients/android/`](../android/README.md). Both clients 
 
 The `ai-agent` console script still lives in the main Python package (`ai_agent.cli.app`); it dispatches here for `login`, `logout`, `server-url`, and the default chat loop.
 
-Server-side terminal commands (`ai-agent serve`, `config`, `host-setup`, `ai-agent-llm`, …) remain under `ai_agent/cli/` in the server package.
+Server-side terminal commands (`ai-agent serve`, `config`, `host-setup`, `ai-agent-llm`, …) remain under `ai_agent/cli/` in the server package. Execution targets are configured on the server (not in this chat client); see [`docs/execution-targets.md`](../../docs/execution-targets.md).
 
 ## Usage
 

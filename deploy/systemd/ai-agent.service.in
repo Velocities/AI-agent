@@ -46,8 +46,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ai-agent
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=@PROTECT_HOME@
+# No ProtectSystem, ProtectHome, or ReadWritePaths. Those remounts would hide
+# the caller's filesystem from setpriv children. This process stays User=
+# (not root) with CAP_SETUID/CAP_SETGID. Each approved session's commands and
+# file operations run as that user's UID/GID; Unix permissions are the control.
 PrivateTmp=false
 ProtectControlGroups=true
 ProtectKernelTunables=true

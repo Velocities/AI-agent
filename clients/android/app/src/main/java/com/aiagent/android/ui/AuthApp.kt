@@ -9,9 +9,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.aiagent.android.ui.chat.ChatScreen
+import com.aiagent.android.ui.monitoring.MonitoringScreen
 
 private const val ROUTE_SIGN_IN = "sign_in"
 private const val ROUTE_SIGNED_IN = "signed_in"
+private const val ROUTE_MONITORING = "monitoring"
 
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
@@ -60,7 +62,11 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
                 auth = state,
                 onSignOut = viewModel::signOut,
                 onChangeServer = viewModel::beginServerEdit,
+                onOpenMonitoring = { navController.navigate(ROUTE_MONITORING) },
             )
+        }
+        composable(ROUTE_MONITORING) {
+            MonitoringScreen(onBack = { navController.popBackStack() })
         }
     }
 }

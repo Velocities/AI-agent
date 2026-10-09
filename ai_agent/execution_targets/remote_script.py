@@ -7,6 +7,7 @@ from ai_agent.commands.ast import (
     PipeCommand,
     RedirectCommand,
     SingleCommand,
+    WriteFileCommand,
 )
 
 
@@ -38,6 +39,8 @@ def _render(expr: CommandExpr) -> str:
         return f"{_wrap_if_needed(expr.left)} && {_wrap_if_needed(expr.right)}"
     if isinstance(expr, OrCommand):
         return f"{_wrap_if_needed(expr.left)} || {_wrap_if_needed(expr.right)}"
+    if isinstance(expr, WriteFileCommand):
+        raise TypeError("write_file cannot be rendered as a remote shell script")
     if isinstance(expr, RedirectCommand):
         posix_path = expr.path.replace("\\", "/")
         parent = posix_path.rsplit("/", 1)[0] if "/" in posix_path else "."

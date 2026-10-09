@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.execution_targets.base import (
     ExecutionTarget,
@@ -19,6 +21,8 @@ from ai_agent.execution_targets.store import (
     load_targets_file,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ExecutionTargetRouter:
     """Map a configured name to an ExecutionTarget. The model only supplies names."""
@@ -32,10 +36,11 @@ class ExecutionTargetRouter:
         if not targets:
             raise TargetConfigError("At least one execution target is required")
         if default_name not in targets:
-            if RESERVED_LOCAL_NAME in targets:
-                default_name = RESERVED_LOCAL_NAME
-            else:
-                default_name = next(iter(targets))
+            allowed = ", ".join(sorted(targets))
+            raise TargetConfigError(
+                f"Default execution target {default_name!r} is not configured. "
+                f"Choose one of: {allowed}"
+            )
         self._targets = dict(targets)
         self.default_name = default_name
 
@@ -78,8 +83,21 @@ def load_router(
     *,
     default_override: str | None = None,
 ) -> ExecutionTargetRouter:
+    # Legacy: loads global execution_targets.yaml. Per-user routers will be built
+    # from SQLite + SecureKeyStore (docs/execution-targets.md); this path goes away.
     document = load_targets_file(path)
     if default_override:
+        if (
+            document.default_target_from_file
+            and document.default_target != default_override
+        ):
+            logger.warning(
+                "Ignoring default_target %r in %s. AGENT_DEFAULT_TARGET=%r wins; "
+                "remove the key from the file to silence this.",
+                document.default_target,
+                path,
+                default_override,
+            )
         document = document.model_copy(update={"default_target": default_override})
     return build_router(executor, document)
 

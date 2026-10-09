@@ -23,6 +23,8 @@ class RuntimeContext:
     confirmation_mode: str
     is_windows: bool
     is_linux: bool
+    local_command_user: str
+    local_command_home: str
 
     @property
     def platform_label(self) -> str:
@@ -32,8 +34,28 @@ class RuntimeContext:
         return " ".join(parts)
 
 
-def gather_runtime_context(settings: Settings) -> RuntimeContext:
+def resolve_local_command_identity(
+    *,
+    linux_username: str | None = None,
+) -> tuple[str, str]:
+    """User and home directory for target=local command execution."""
+    process_user = getuser()
+    process_home = str(Path.home())
+    if platform.system() != "Linux" or not linux_username:
+        return process_user, process_home
+    from ai_agent.commands.run_as import lookup_posix_account
+
+    account = lookup_posix_account(linux_username)
+    return account.name, account.home
+
+
+def gather_runtime_context(
+    settings: Settings,
+    *,
+    linux_username: str | None = None,
+) -> RuntimeContext:
     os_name = platform.system()
+    local_user, local_home = resolve_local_command_identity(linux_username=linux_username)
     return RuntimeContext(
         os_name=os_name,
         os_release=platform.release(),
@@ -46,13 +68,17 @@ def gather_runtime_context(settings: Settings) -> RuntimeContext:
         confirmation_mode=settings.agent_confirmation_mode.value,
         is_windows=os_name == "Windows",
         is_linux=os_name == "Linux",
+        local_command_user=local_user,
+        local_command_home=local_home,
     )
 
 
 def platform_guidance(context: RuntimeContext) -> str:
     if context.is_windows:
         return (
-            "- Target `local` is Windows. Do NOT assume Ubuntu, WSL, or systemd on local unless a tool verifies it.\n"
+            f"- Target `local` is Windows. Local commands run as `{context.local_command_user}` "
+            f"(profile `{context.local_command_home}`). File access follows that Windows account.\n"
+            "- Do NOT assume Ubuntu, WSL, or systemd on local unless a tool verifies it.\n"
             "- On local, Linux-only tools (systemctl, journalctl, ls, cat, df) are usually unavailable.\n"
             "- For directory listings use PowerShell (no pipes; use cmdlet flags only):\n"
             '  {"type":"single","argv":["powershell","-NoProfile","-Command","Get-ChildItem","-LiteralPath","C:\\\\path\\\\to\\\\dir","-Name"]}\n'
@@ -68,12 +94,13 @@ def platform_guidance(context: RuntimeContext) -> str:
         return (
             "- Target `local` is Linux. Standard server tools (systemctl, journalctl, docker, df, etc.) may apply.\n"
             "- Verify service/container names with tools before acting.\n"
-            f"- Local commands run as the User line above ({context.username}), "
-            f"not as the human at the chat client. Home is {context.home}.\n"
-            "- Other users' home directories are often mode 750; listing them requires kernel permission, "
-            "not just policy allow-list paths.\n"
+            f"- Local commands run as Linux user `{context.local_command_user}` "
+            f"(home `{context.local_command_home}`). "
+            "File and directory access follows that account's normal permissions.\n"
+            "- SSH and Docker targets use each target's configured remote/container user.\n"
             "- Use id, whoami, and pwd when verifying identity; they are READ_ONLY when policy allows.\n"
-            "- Report permission and policy errors honestly; do not claim commands are blocked without tool stderr."
+            "- Report permission errors from tool stderr honestly; do not claim a path is blocked by policy "
+            "when the OS denied access."
         )
     return (
         "- Adapt commands to the current operating system.\n"
@@ -115,6 +142,9 @@ def build_system_prompt(
         )
     ]
     target_block = format_target_list(target_summaries)
+    write_example = str(
+        Path(context.local_command_home) / "example.txt",
+    )
     return f"""You are a careful system administration assistant.
 
 You help inspect and administer configured machines by calling tools.
@@ -123,10 +153,10 @@ You do NOT have direct shell access. You MUST use tools to verify system state.
 ## Current runtime environment
 - Platform: {context.platform_label}
 - Hostname: {context.hostname}
-- User: {context.username}
+- Service process user: {context.username}
+- Local target commands run as: {context.local_command_user} (home {context.local_command_home})
 - Working directory: {context.cwd}
-- Home directory: {context.home}
-- Scratch directory (for redirects): {context.scratch_dir}
+- Optional scratch directory: {context.scratch_dir}
 - Confirmation mode: {context.confirmation_mode}
 
 ## Your tools
@@ -163,9 +193,28 @@ Supported chain types:
 - pipe: {{"type":"pipe","left":<expr>,"right":["binary","arg",...]}}
 - and: {{"type":"and","left":<expr>,"right":<expr>}}
 - or: {{"type":"or","left":<expr>,"right":<expr>}}
-- redirect: {{"type":"redirect","cmd":<expr>,"op":">"|">>"|"2>","path":"/allowed/path"}}
+- redirect: {{"type":"redirect","cmd":<expr>,"op":">"|">>"|"2>","path":"/path/in/user/filesystem"}} (small command output only)
+- write_file: {{"type":"write_file","path":"/path/to/file","content":"FULL FILE TEXT","append":false}}
 
 Forbidden: shell invocation, command substitution, semicolon chains, piping into sh/bash/curl/wget.
+
+## Saving files (use write_file)
+- To create or replace a source/config file, use **write_file** with the full `content` string. Do not use redirect, echo, printf chains, or heredocs.
+- The user approves a summary line (path, byte size, short preview) — you still must put the complete content in the tool JSON.
+- Example:
+  command={{"type":"write_file","path":"{write_example}","content":"# module\\n","append":false}}
+
+## Argv rules (no shell metacharacters)
+- Never put `;` in any argv string and never use `;` as its own argv element. Shell chaining is forbidden.
+- For multiple inspection steps, use **run_commands** with several separate `single` commands (one approval), or **and** / **or** CommandExpr — not semicolons.
+- Searching source trees: prefer **run_commands** with **grep -R** (READ_ONLY), not find -exec.
+  Example batch (one tool call):
+  commands=[
+    {{"type":"single","argv":["grep","-R","-l","PATTERN","--include=*.py","."]}},
+    {{"type":"single","argv":["grep","-R","-n","OTHER","--include=*.py","."]}}
+  ]
+- If you must use find -exec, every piece is its own argv string; end with `"{{}}"` then `"+"` (never `;`):
+  {{"type":"single","argv":["find",".","-name","*.py","-exec","grep","-l","PATTERN","{{}}","+"]}}
 
 ## Policy-allowed command binaries
 {commands}
@@ -179,10 +228,11 @@ Forbidden: shell invocation, command substitution, semicolon chains, piping into
 - When asked about files, directories, services, containers, or system state: use tools first.
 - Never claim you verified something unless a tool returned that data.
 - Distinguish hypotheses ("I believe...") from verified facts ("I verified via ...").
-- Use run_commands for multiple READ_ONLY inspections in one step when possible.
+- Use run_commands for multiple READ_ONLY inspections in one step when possible (repo-wide grep, several cats, etc.).
 - Use run_command for individual commands or any REVERSIBLE/DESTRUCTIVE action.
+- Do not use find for routine repo text search; use grep -R in run_commands instead.
 - curl/wget are allowed only for localhost GET/HEAD health checks. Do not use them to create files.
-- To write a small file, use type redirect (not a `>` inside argv). Path must be under the scratch directory ({context.scratch_dir}).
+- To write file contents, use **write_file** only. Redirect is for capturing small command stdout, not editing source trees.
 - Never put shell operators (`>`, `|`, `&&`) inside an argv string.
 - The command field must always be a JSON object with a "type" key, never a shell string.
 - If a tool fails, report exit status and stderr honestly. Do not fabricate output.
@@ -191,5 +241,5 @@ Forbidden: shell invocation, command substitution, semicolon chains, piping into
 target=home-server command={{"type":"single","argv":["docker","ps"]}}
 target=home-server command={{"type":"pipe","left":{{"type":"single","argv":["journalctl","-u","nginx","-n","100","--no-pager"]}},"right":["grep","-i","error"]}}
 command={{"type":"and","left":{{"type":"single","argv":["systemctl","is-active","nginx"]}},"right":{{"type":"single","argv":["systemctl","restart","nginx"]}}}}
-target=home-server command={{"type":"redirect","cmd":{{"type":"single","argv":["echo","hello from agent"]}},"op":">","path":"{context.scratch_dir}/testfile.txt"}}
+target=home-server command={{"type":"redirect","cmd":{{"type":"single","argv":["echo","hello from agent"]}},"op":">","path":"{write_example}"}}
 """

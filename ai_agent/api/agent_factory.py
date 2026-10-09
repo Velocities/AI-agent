@@ -4,10 +4,12 @@ from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.deployment.access_store import DeploymentAccessStore
+from ai_agent.execution_targets.repository import UserExecutionTargetRepository
 
 
 def build_api_agent_factory(
     access_store: DeploymentAccessStore | None,
+    target_repo: UserExecutionTargetRepository | None,
 ):
     """Agent factory for API turns: local commands run as the approved Linux user."""
 
@@ -29,6 +31,9 @@ def build_api_agent_factory(
             audit_user=audit_user,
             settings=settings,
             run_as_linux_user=linux_username,
+            user_id=audit_user,
+            target_repo=target_repo,
+            access_store=access_store,
         )
 
     return factory
