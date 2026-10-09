@@ -30,8 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aiagent.android.AiAgentApp
 import com.aiagent.android.data.AgentApi
+import com.aiagent.android.monitoring.CpuReading
 import com.aiagent.android.monitoring.GpuReading
-import com.aiagent.android.monitoring.GpuTelemetryFetcher
+import com.aiagent.android.monitoring.HostTelemetryFetcher
+import com.aiagent.android.monitoring.RamReading
 import com.aiagent.android.ui.AppIcons
 import io.github.jan.supabase.auth.auth
 import java.time.Instant
@@ -45,7 +47,7 @@ import kotlin.math.abs
 fun MonitoringScreen(onBack: () -> Unit) {
     val fetcher = remember {
         val serverUrl = AiAgentApp.instance.serverConfig.load()?.serverUrl.orEmpty()
-        GpuTelemetryFetcher(
+        HostTelemetryFetcher(
             api = AgentApi(serverUrl),
             accessToken = { AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull() },
         )
@@ -67,15 +69,15 @@ fun MonitoringScreen(onBack: () -> Unit) {
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
-                snapshot.loading && snapshot.gpus.isEmpty() -> {
+                snapshot.loading && !snapshot.hasReadings -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
                     }
                 }
-                snapshot.gpus.isEmpty() -> {
+                !snapshot.hasReadings -> {
                     Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            snapshot.error ?: "No GPUs reported by this server.",
+                            snapshot.error ?: "No telemetry reported by this server.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (snapshot.error != null) {
                                 MaterialTheme.colorScheme.error
@@ -106,10 +108,117 @@ fun MonitoringScreen(onBack: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
                     ) {
-                        items(snapshot.gpus, key = { it.index }) { gpu ->
-                            GpuCard(gpu)
+                        snapshot.cpu?.let { cpu ->
+                            item(key = "cpu") { CpuCard(cpu) }
+                        }
+                        snapshot.ram?.let { ram ->
+                            item(key = "ram") { RamCard(ram) }
+                        }
+                        if (snapshot.gpus.isEmpty()) {
+                            item(key = "no-gpus") {
+                                Text(
+                                    "No GPUs reported by this server.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp),
+                                )
+                            }
+                        } else {
+                            items(snapshot.gpus, key = { "gpu-${it.index}" }) { gpu ->
+                                GpuCard(gpu)
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CpuCard(cpu: CpuReading) {
+    val fraction = (cpu.usagePercent / 100.0).toFloat().coerceIn(0f, 1f)
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "CPU",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                formatCoreCounts(cpu.logicalCoreCount, cpu.physicalCoreCount),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                formatNumber(cpu.usagePercent, "%"),
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            if (cpu.perCoreUsagePercent.isNotEmpty()) {
+                Text(
+                    cpu.perCoreUsagePercent.joinToString("  ") { formatNumber(it, "%") },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            MetricRow("Frequency", formatFrequency(cpu.frequencyMhz))
+            MetricRow("Temperature", cpu.temperatureCelsius?.let(::formatTemperature) ?: "Unavailable")
+            MetricRow("Load", formatLoad(cpu.loadAverage1m, cpu.loadAverage5m, cpu.loadAverage15m))
+        }
+    }
+}
+
+@Composable
+private fun RamCard(ram: RamReading) {
+    val fraction = if (ram.totalBytes <= 0L) {
+        0f
+    } else {
+        (ram.usedBytes.toFloat() / ram.totalBytes.toFloat()).coerceIn(0f, 1f)
+    }
+    val swapFraction = if (ram.swapTotalBytes <= 0L) {
+        0f
+    } else {
+        (ram.swapUsedBytes.toFloat() / ram.swapTotalBytes.toFloat()).coerceIn(0f, 1f)
+    }
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Memory",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                formatNumber(ram.percentUsed, "%"),
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                MetricRow(
+                    "Used",
+                    "${formatBytes(ram.usedBytes)} / ${formatBytes(ram.totalBytes)}",
+                )
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            }
+            MetricRow("Available", formatBytes(ram.availableBytes))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                MetricRow(
+                    "Swap",
+                    if (ram.swapTotalBytes <= 0L) {
+                        "None"
+                    } else {
+                        "${formatBytes(ram.swapUsedBytes)} / ${formatBytes(ram.swapTotalBytes)}"
+                    },
+                )
+                if (ram.swapTotalBytes > 0L) {
+                    LinearProgressIndicator(progress = { swapFraction }, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -163,6 +272,28 @@ private fun MetricRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
+}
+
+private fun formatCoreCounts(logical: Int?, physical: Int?): String {
+    val logicalText = logical?.let { "$it logical" } ?: "Logical count unavailable"
+    val physicalText = physical?.let { "$it physical" } ?: "Physical count unavailable"
+    return "$logicalText · $physicalText"
+}
+
+private fun formatFrequency(mhz: Double?): String {
+    if (mhz == null) return "Unavailable"
+    return if (mhz >= 1000.0) {
+        String.format(Locale.US, "%.2f GHz", mhz / 1000.0)
+    } else {
+        String.format(Locale.US, "%.0f MHz", mhz)
+    }
+}
+
+private fun formatLoad(oneMinute: Double?, fiveMinutes: Double?, fifteenMinutes: Double?): String {
+    if (oneMinute == null || fiveMinutes == null || fifteenMinutes == null) return "Unavailable"
+    return listOf(oneMinute, fiveMinutes, fifteenMinutes).joinToString("  ") { value ->
+        String.format(Locale.US, "%.2f", value)
     }
 }
 

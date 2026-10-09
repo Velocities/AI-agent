@@ -91,6 +91,10 @@ class AgentApi(private val baseUrl: String) {
     fun gpuTelemetryJson(accessToken: String): String =
         request("GET", "/api/monitoring/gpus", accessToken)
 
+    /** CPU, RAM, and GPU from one server sample. The caller polls this on a fixed interval. */
+    fun hostTelemetryJson(accessToken: String): String =
+        request("GET", "/api/monitoring/telemetry", accessToken)
+
     fun resolveApproval(
         accessToken: String,
         conversationId: String,

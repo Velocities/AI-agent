@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from ai_agent.monitoring.gpu import publish_gpu_data
+from ai_agent.monitoring.publish_loop import run_publish_loop
 from ai_agent.mqtt.client import MqttConnection
 from ai_agent.mqtt.config import MqttSettings
 from ai_agent.mqtt.publisher import MqttPublisher
 
 
-def publish_gpu_telemetry_example() -> None:
-    """Show where a periodic metric publish would run (timer, systemd sidecar, etc.)."""
+def publish_host_telemetry_example() -> None:
+    """Publish CPU, RAM, and GPU telemetry on COLLECTION_INTERVAL_SECONDS."""
     settings = MqttSettings()
     if not settings.enabled:
         return
@@ -18,10 +18,14 @@ def publish_gpu_telemetry_example() -> None:
     connection.connect()
     try:
         publisher = MqttPublisher(connection)
-        publish_gpu_data(publisher)
+        run_publish_loop(publisher)
     finally:
         connection.disconnect()
 
 
+# Older name. The example now publishes the full set on the shared interval.
+publish_gpu_telemetry_example = publish_host_telemetry_example
+
+
 if __name__ == "__main__":
-    publish_gpu_telemetry_example()
+    publish_host_telemetry_example()

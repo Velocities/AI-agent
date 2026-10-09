@@ -11,27 +11,36 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import java.io.IOException
 
-/** Latest readings from one poll, plus whatever the previous successful poll returned. */
-data class GpuTelemetrySnapshot(
+/** Latest host sample, plus whatever the previous successful poll returned. */
+data class HostTelemetrySnapshot(
+    val cpu: CpuReading? = null,
+    val ram: RamReading? = null,
     val gpus: List<GpuReading> = emptyList(),
     val fetchedAtMillis: Long? = null,
     val loading: Boolean = true,
     val error: String? = null,
-)
+) {
+    val hasReadings: Boolean
+        get() = cpu != null || ram != null || gpus.isNotEmpty()
+}
 
 /**
- * Polls GPU telemetry on a fixed interval.
+ * Polls CPU, RAM, and GPU telemetry together on a fixed interval.
  * The monitoring page starts [run] and renders [snapshot]; this class has no UI.
+ *
+ * [POLL_INTERVAL_MILLIS] matches `COLLECTION_INTERVAL_SECONDS` in
+ * `ai_agent.monitoring.interval` (4 seconds).
  */
-class GpuTelemetryFetcher(
+class HostTelemetryFetcher(
     private val api: AgentApi,
     private val accessToken: () -> String?,
     private val intervalMillis: Long = POLL_INTERVAL_MILLIS,
 ) {
-    private val _snapshot = MutableStateFlow(GpuTelemetrySnapshot())
-    val snapshot: StateFlow<GpuTelemetrySnapshot> = _snapshot.asStateFlow()
+    private val _snapshot = MutableStateFlow(HostTelemetrySnapshot())
+    val snapshot: StateFlow<HostTelemetrySnapshot> = _snapshot.asStateFlow()
 
     suspend fun run() {
         while (currentCoroutineContext().isActive) {
@@ -49,14 +58,19 @@ class GpuTelemetryFetcher(
             return
         }
         try {
-            val body = withContext(Dispatchers.IO) { api.gpuTelemetryJson(token) }
-            _snapshot.value = GpuTelemetrySnapshot(
-                gpus = parseGpuReadings(body),
+            val body = withContext(Dispatchers.IO) { api.hostTelemetryJson(token) }
+            val reading = parseHostTelemetry(body)
+            _snapshot.value = HostTelemetrySnapshot(
+                cpu = reading.cpu,
+                ram = reading.ram,
+                gpus = reading.gpus,
                 fetchedAtMillis = System.currentTimeMillis(),
                 loading = false,
             )
         } catch (error: AgentApiException) {
             _snapshot.update { it.copy(loading = false, error = error.message) }
+        } catch (error: SerializationException) {
+            _snapshot.update { it.copy(loading = false, error = "Couldn't read telemetry from the server.") }
         } catch (error: IOException) {
             _snapshot.update {
                 it.copy(loading = false, error = error.message ?: "Can't reach the server.")
@@ -65,6 +79,6 @@ class GpuTelemetryFetcher(
     }
 
     companion object {
-        const val POLL_INTERVAL_MILLIS = 5_000L
+        const val POLL_INTERVAL_MILLIS = 4_000L
     }
 }
