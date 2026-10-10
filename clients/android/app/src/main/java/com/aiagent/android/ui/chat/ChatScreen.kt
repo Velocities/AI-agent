@@ -88,6 +88,7 @@ fun ChatScreen(
     onSignOut: () -> Unit,
     onChangeServer: () -> Unit,
     onOpenMonitoring: () -> Unit,
+    onOpenApkBuilds: () -> Unit,
     viewModel: ChatViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -133,6 +134,11 @@ fun ChatScreen(
                         onShowAuthDebug = { closeDrawerThen { showAuthDebug = true } },
                         onOpenMonitoring = if (auth.isAdmin) {
                             { closeDrawerThen(onOpenMonitoring) }
+                        } else {
+                            null
+                        },
+                        onOpenApkBuilds = if (auth.isAdmin) {
+                            { closeDrawerThen(onOpenApkBuilds) }
                         } else {
                             null
                         },

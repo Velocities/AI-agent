@@ -8,12 +8,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.aiagent.android.ui.apk.ApkBuildsScreen
 import com.aiagent.android.ui.chat.ChatScreen
 import com.aiagent.android.ui.monitoring.MonitoringScreen
 
 private const val ROUTE_SIGN_IN = "sign_in"
 private const val ROUTE_SIGNED_IN = "signed_in"
 private const val ROUTE_MONITORING = "monitoring"
+private const val ROUTE_APK_BUILDS = "apk_builds"
 
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
@@ -63,10 +65,14 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
                 onSignOut = viewModel::signOut,
                 onChangeServer = viewModel::beginServerEdit,
                 onOpenMonitoring = { navController.navigate(ROUTE_MONITORING) },
+                onOpenApkBuilds = { navController.navigate(ROUTE_APK_BUILDS) },
             )
         }
         composable(ROUTE_MONITORING) {
             MonitoringScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_APK_BUILDS) {
+            ApkBuildsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

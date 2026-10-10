@@ -63,6 +63,7 @@ fun ChatDrawerContent(
     onChangeServer: () -> Unit,
     onShowAuthDebug: () -> Unit,
     onOpenMonitoring: (() -> Unit)? = null,
+    onOpenApkBuilds: (() -> Unit)? = null,
 ) {
     var pendingDelete by remember { mutableStateOf<ConversationSummary?>(null) }
 
@@ -84,6 +85,17 @@ fun ChatDrawerContent(
                 Icon(AppIcons.Monitor, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Monitoring")
+            }
+        }
+        if (onOpenApkBuilds != null) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onOpenApkBuilds,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(48.dp),
+            ) {
+                Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("App builds")
             }
         }
         Spacer(Modifier.height(8.dp))
