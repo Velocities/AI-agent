@@ -42,6 +42,9 @@ def require_apk_admin(
 
 
 def _enabled_directory(request: Request) -> Path | None:
+    '''
+    Return the directory of APKs if downloads are enabled.
+    '''
     settings: Settings = request.app.state.settings
     raw = settings.apk_publish_dir.strip()
     if not settings.apk_downloads_enabled or not raw:
@@ -55,28 +58,35 @@ def _disabled_page() -> HTMLResponse:
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-def apk_index(
+def get_apk_listing_folder(
     request: Request,
     _user: AuthenticatedUser = Depends(require_apk_admin),
 ) -> HTMLResponse:
+    '''
+    Returns a HTMLResponse with the listing of APK files in the directory if downloads are enabled.
+    '''
     directory = _enabled_directory(request)
     if directory is None:
         return _disabled_page()
-    return HTMLResponse(render_apk_index(list_apk_files(directory)))
+    return HTMLResponse(
+        render_apk_index(
+            list_apk_files(directory)
+        )
+    )
 
 
 @router.get("/{filename}")
-def apk_file(
+def get_apk_file(
     filename: str,
     request: Request,
     _user: AuthenticatedUser = Depends(require_apk_admin),
 ) -> FileResponse:
+    '''
+    Downloads an APK file if downloads are enabled.
+    '''
     directory = _enabled_directory(request)
     if directory is None:
-        raise HTTPException(
-            status_code=404,
-            detail="APK downloads are not enabled on this deployment.",
-        )
+        return _disabled_page()
     path = resolve_published_apk(directory, filename)
     if path is None:
         raise HTTPException(status_code=404, detail="APK not found.")
