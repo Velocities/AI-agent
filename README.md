@@ -1064,7 +1064,7 @@ ai_agent/
   audit/          # Audit logging
   api/            # Public HTTP API (`ai-agent-serve`)
   conversations/  # SQLite transcript store and Alembic migrations
-  cli/            # Server terminal ops (`serve`, `config`, `host-setup`, `ai-agent-llm`)
+  cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
   agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)
   service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
@@ -1079,7 +1079,7 @@ supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
 
-CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
+CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Every `ai-agent` command: [`docs/cli-commands.md`](docs/cli-commands.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
 
 ---
 
