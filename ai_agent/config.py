@@ -211,6 +211,22 @@ class Settings(BaseSettings):
         alias="SUPABASE_JWT_SECRET",
         description="Legacy HS256 JWT secret. Current Supabase projects use signing keys and leave this empty.",
     )
+    apk_publish_dir: str = Field(
+        default="",
+        alias="APK_PUBLISH_DIR",
+        description=(
+            "Directory `ai-agent apk publish` copies debug APKs into. "
+            "The download page reads this same path."
+        ),
+    )
+    apk_downloads_enabled: bool = Field(
+        default=False,
+        alias="APK_DOWNLOADS_ENABLED",
+        description=(
+            "When true, monitoring admins can open the APK download page. "
+            "Leave false until a deployment needs it."
+        ),
+    )
 
     def policy_path(self) -> Path:
         if self.agent_policy_file:

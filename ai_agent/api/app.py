@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from ai_agent.api.apk import router as apk_router
 from ai_agent.api.approvals import ApprovalBroker
 from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH, ClientConfigBody, client_config_for
@@ -75,4 +76,5 @@ def create_app(
 
     app.include_router(conversation_router)
     app.include_router(monitoring_router)
+    app.include_router(apk_router)
     return app

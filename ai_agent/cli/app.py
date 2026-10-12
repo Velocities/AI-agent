@@ -20,6 +20,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.config_cmd import main as config_main
 
         return config_main(args[1:])
+    if args and args[0] == "apk":
+        from ai_agent.cli.apk_cmd import main as apk_main
+
+        return apk_main(args[1:])
     if args and args[0] == "host-setup":
         from ai_agent.cli.host_setup import main as host_setup_main
 
