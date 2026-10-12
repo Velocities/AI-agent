@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import get_current_user
 from ai_agent.api.monitoring import is_monitoring_admin
-from ai_agent.apk.listing import list_apk_files, render_apk_index, resolve_published_apk
+from ai_agent.apk.listing import list_apk_files, render_apk_listing_folder, resolve_published_apk
 from ai_agent.config import Settings
 
 router = APIRouter(prefix="/api/apk", tags=["apk"])
@@ -69,7 +69,7 @@ def get_apk_listing_folder(
     if directory is None:
         return _disabled_page()
     return HTMLResponse(
-        render_apk_index(
+        render_apk_listing_folder(
             list_apk_files(directory)
         )
     )

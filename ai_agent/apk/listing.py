@@ -72,7 +72,7 @@ def resolve_published_apk(directory: Path, name: str) -> Path | None:
     return path
 
 
-def render_apk_index(files: list[ApkFile]) -> str:
+def render_apk_listing_folder(files: list[ApkFile]) -> str:
     if files:
         rows = "\n".join(_row(item) for item in files)
     else:
