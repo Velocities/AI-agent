@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APK builds</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    line-height: 1.4;
+    background: #f6f7f9;
+    color: #1c1c1c;
+  }
+  main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.25rem; }
+  p { margin: 0 0 1.25rem; color: #4b5563; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { text-align: left; padding: 0.7rem 0.8rem; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  th { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; }
+  a { color: #1d4ed8; text-decoration: none; word-break: break-all; }
+  a:hover { text-decoration: underline; }
+  .modified, .size { white-space: nowrap; }
+  .size { text-align: right; }
+  th.size { text-align: right; }
+  .empty { color: #6b7280; }
+  @media (max-width: 640px) {
+    table, tbody, tr { display: block; width: 100%; }
+    thead { display: none; }
+    tr { padding: 0.75rem 0; }
+    td { display: block; width: auto; border: 0; padding: 0.15rem 0.8rem; }
+    td.modified::before { content: "Modified "; color: #6b7280; }
+    td.size { text-align: left; }
+    td.size::before { content: "Size "; color: #6b7280; }
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111315; color: #f3f4f6; }
+    p, th, .empty, td.modified::before, td.size::before { color: #9ca3af; }
+    table { background: #1b1e22; }
+    th, td { border-bottom-color: #2e3338; }
+    a { color: #93c5fd; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>Index of APK builds</h1>
+<p>Debug packages on this server. The time is when each file was last modified.</p>
+<table>
+<thead>
+<tr><th>Name</th><th>Last modified</th><th class="size">Size</th></tr>
+</thead>
+<tbody>
+{% for item in files %}
+<tr>
+  <td class="name"><a href="/api/apk/{{ item.name }}">{{ item.name }}</a></td>
+  <td class="modified">{{ item.modified | format_modified }}</td>
+  <td class="size">{{ item.size_bytes | format_size }}</td>
+</tr>
+{% else %}
+<tr><td colspan="3" class="empty">No APK files in this directory.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</main>
+</body>
+</html>
