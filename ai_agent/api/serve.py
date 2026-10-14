@@ -73,6 +73,9 @@ def main() -> int:
     else:
         console.print("[yellow]Auth: not configured[/yellow] (set SUPABASE_URL)")
     console.print(f"Conversations: {database_display_path(database_url(settings))}")
+    stt = settings.speech_stt_model.strip() or "off"
+    tts = settings.speech_piper_model.strip() or "off"
+    console.print(f"Voice: stt={stt} tts={tts} (CPU)")
     console.print(
         "[dim]Point the Cloudflare Tunnel at this address. "
         "The database file is not served. Ctrl+C to stop.[/dim]\n"

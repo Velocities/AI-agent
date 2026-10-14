@@ -8,6 +8,7 @@ from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH, ClientConfigBody, client_config_for
 from ai_agent.api.conversations import router as conversation_router
 from ai_agent.api.monitoring import router as monitoring_router
+from ai_agent.api.speech import router as speech_router
 from ai_agent.api.deps import get_current_user, require_deployment_access
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
@@ -50,6 +51,8 @@ def create_app(
     app.state.broker = broker or ApprovalBroker()
     app.state.approval_sessions = {}
     app.state.agent_factory = None
+    app.state.speech_to_text = None
+    app.state.text_to_speech = None
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -77,4 +80,5 @@ def create_app(
     app.include_router(conversation_router)
     app.include_router(monitoring_router)
     app.include_router(apk_router)
+    app.include_router(speech_router)
     return app

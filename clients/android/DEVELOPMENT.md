@@ -24,9 +24,9 @@ A shared client has no Android `Application` object to hang a process-wide singl
 
 ## Hand platform actions to screens as callbacks
 
-Dictation in `ChatScreen` starts Android's speech recognizer with `RecognizerIntent`. One mic button at that call site is acceptable.
+Voice capture lives in `MicrophoneCapture` and playback in `SpeechPlayer`. `ChatScreen` requests `RECORD_AUDIO` and calls those types. `ChatViewModel` only sees WAV bytes and `AgentApi` (`/api/speech/transcribe`, the existing turn stream, `/api/speech/synthesize`).
 
-A file picker, share sheet, camera, or notification should be a lambda the screen already understands (`onDictate`, `onPickFile`), with the `Intent` and permission code living next to `MainActivity`. Screens should keep importing Compose, not `android.content`.
+A file picker, share sheet, camera, or notification should be a lambda the screen already understands (`onMic`, `onPickFile`), with the `Intent` and permission code living next to `MainActivity`. Screens should keep importing Compose, not `android.content`.
 
 Compose UI is the part that is shared. Intents, permission dialogs, and URL-scheme handling are the shell, and they differ on iOS (speech recognition, `ASWebAuthenticationSession` instead of Custom Tabs, an `Info.plist` URL scheme). A lambda is a one-line platform split. An `android.*` import inside a composable is a screen that must be rewritten.
 

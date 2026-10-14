@@ -6,7 +6,7 @@ Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, the
 - **Replies** render the model's Markdown: headings, bold/italic, inline code, code blocks, lists, quotes, tables and links. `<think>` reasoning (Qwen3, DeepSeek-R1) is folded behind a **Show reasoning** toggle.
 - **Commands** show as cards coloured by where they run: green for this machine (`local`), violet for SSH, blue for Docker. Each card shows the exit status, duration and output.
 - **Approvals** match the CLI's `y` / `n` / `a`: **Deny**, **Approve** (red **Run anyway** for destructive commands), and **Approve, and allow … for this session** when the CLI would offer `a`.
-- **Dictation** uses the phone's own speech-to-text (the mic in the message box). No audio is recorded by this app. The mic is hidden if the phone has no speech recognizer.
+- **Voice.** The mic records a short clip and the server transcribes it (Vosk, CPU). That text is sent as a normal chat turn. When the reply finishes, the server synthesizes it with Piper (CPU) and the phone plays it. Typed messages are not spoken. Setup and testing: [docs/voice-prototype.md](../../docs/voice-prototype.md).
 
 The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. The first time you open the app it asks for that server’s URL (for example `https://agent.example.com`). The app saves it and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Change the URL from the sign-in screen or the account menu; a different URL signs you out. Do not point it at the SQLite file or at Ollama.
 

@@ -711,6 +711,10 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `CLI_OAUTH_PORT` | Loopback port for `ai-agent login` (default `53682`) |
 | `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
+| `SPEECH_STT_MODEL` | Vosk model directory for Android microphone transcription. Empty disables it. CPU only. |
+| `SPEECH_PIPER_MODEL` | Piper `.onnx` voice used to speak replies. Empty disables it. Loaded with CUDA off. |
+
+Voice setup and how to test it: [docs/voice-prototype.md](docs/voice-prototype.md).
 
 ### LLM — engine-specific options
 
@@ -1063,6 +1067,7 @@ ai_agent/
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
   api/            # Public HTTP API (`ai-agent-serve`)
+  speech/         # CPU Vosk transcription and Piper synthesis
   conversations/  # SQLite transcript store and Alembic migrations
   cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
   agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)

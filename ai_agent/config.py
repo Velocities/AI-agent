@@ -227,6 +227,22 @@ class Settings(BaseSettings):
             "Leave false until a deployment needs it."
         ),
     )
+    speech_stt_model: str = Field(
+        default="",
+        alias="SPEECH_STT_MODEL",
+        description=(
+            "Directory of an unpacked Vosk model. Empty disables speech-to-text. "
+            "Recognition runs on the CPU."
+        ),
+    )
+    speech_piper_model: str = Field(
+        default="",
+        alias="SPEECH_PIPER_MODEL",
+        description=(
+            "Path to a Piper .onnx voice. The matching .onnx.json must sit beside it. "
+            "Empty disables speech synthesis. Piper is loaded with CUDA turned off."
+        ),
+    )
 
     def policy_path(self) -> Path:
         if self.agent_policy_file:
