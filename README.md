@@ -712,8 +712,8 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
 | `SPEECH_STT_MODEL` | Vosk model directory for Android microphone transcription. Empty disables it. CPU only. |
-| `SPEECH_KOKORO_MODEL` | Kokoro-82M `kokoro-v1.0.onnx` used to speak replies. Empty disables it. CPU only. |
-| `SPEECH_KOKORO_VOICES` | `voices-v1.0.bin`. Empty looks beside `SPEECH_KOKORO_MODEL`. |
+| `SPEECH_TTS_MODEL` | Text-to-speech model path. For Kokoro-82M this is `kokoro-v1.0.onnx`. Empty disables it. CPU only. |
+| `SPEECH_KOKORO_VOICES` | `voices-v1.0.bin`. Empty looks beside `SPEECH_TTS_MODEL`. |
 | `SPEECH_KOKORO_VOICE` | Voice id (default `af_heart`). |
 
 Voice setup and how to test it: [docs/voice-prototype.md](docs/voice-prototype.md).

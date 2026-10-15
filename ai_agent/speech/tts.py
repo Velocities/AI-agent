@@ -1,7 +1,7 @@
-"""Kokoro-82M text-to-speech on the CPU.
+"""Text-to-speech converters.
 
-The ONNX session is opened with CPUExecutionProvider only, so a CUDA build of
-ONNX Runtime installed for the language model is not used for speech.
+`TextToSpeechConverter` is the swap point. The first implementation is
+Kokoro-82M, which runs on CPU. A later engine would subclass this same class.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import array
 import logging
 import sys
 import threading
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
@@ -62,7 +63,7 @@ def _load_voice(model_path: Path, voices_path: Path):
     if not model_path.is_file():
         raise SpeechNotConfigured(
             f"Kokoro-82M model not found: {model_path}. "
-            "Set SPEECH_KOKORO_MODEL to kokoro-v1.0.onnx."
+            "Set SPEECH_TTS_MODEL to kokoro-v1.0.onnx."
         )
     if not voices_path.is_file():
         raise SpeechNotConfigured(
@@ -83,8 +84,20 @@ def _load_voice(model_path: Path, voices_path: Path):
     return Kokoro.from_session(session, str(voices_path))
 
 
-class KokoroTextToSpeech:
-    """Synthesize speech with Kokoro-82M. One voice is shared across requests."""
+class TextToSpeechConverter(ABC):
+    """Turn reply text into a mono 16-bit WAV file."""
+
+    @abstractmethod
+    def synthesize(self, text: str) -> bytes:
+        """Return WAV bytes. The header carries this engine's sample rate."""
+
+
+class KokoroTTS(TextToSpeechConverter):
+    """Synthesize speech with Kokoro-82M. One voice is shared across requests.
+
+    The ONNX session is opened with CPUExecutionProvider only, so a CUDA build
+    of ONNX Runtime installed for the language model is not used for speech.
+    """
 
     def __init__(self, model_path: Path, voices_path: Path, voice: str = DEFAULT_VOICE):
         self.model_path = Path(model_path)
@@ -125,17 +138,17 @@ class KokoroTextToSpeech:
             return self._engine
 
 
-def tts_from_settings(settings) -> KokoroTextToSpeech:
-    path = settings.speech_kokoro_model.strip()
+def tts_from_settings(settings) -> TextToSpeechConverter:
+    path = settings.speech_tts_model.strip()
     if not path:
         raise SpeechNotConfigured(
             "Speech synthesis is not set up. "
-            "Set SPEECH_KOKORO_MODEL to the Kokoro-82M kokoro-v1.0.onnx file."
+            "Set SPEECH_TTS_MODEL to the Kokoro-82M kokoro-v1.0.onnx file."
         )
     model_path = Path(path)
     voices = settings.speech_kokoro_voices
     voice = settings.speech_kokoro_voice or DEFAULT_VOICE
-    return KokoroTextToSpeech(
+    return KokoroTTS(
         model_path,
         voices_path_for(model_path, voices),
         voice,

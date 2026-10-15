@@ -5,6 +5,11 @@ The agent turn itself stays on the existing conversation route.
 """
 
 from ai_agent.speech.stt import SpeechToTextProvider, VoskSpeechToText
-from ai_agent.speech.tts import KokoroTextToSpeech
+from ai_agent.speech.tts import KokoroTTS, TextToSpeechConverter
 
-__all__ = ["KokoroTextToSpeech", "SpeechToTextProvider", "VoskSpeechToText"]
+__all__ = [
+    "KokoroTTS",
+    "SpeechToTextProvider",
+    "TextToSpeechConverter",
+    "VoskSpeechToText",
+]

@@ -16,7 +16,7 @@ from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.stt import SpeechToTextProvider, stt_from_settings
-from ai_agent.speech.tts import KokoroTextToSpeech, tts_from_settings
+from ai_agent.speech.tts import TextToSpeechConverter, tts_from_settings
 from ai_agent.speech.wav import pcm_from_wav
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def _stt_configured(request: Request) -> bool:
 def _tts_configured(request: Request) -> bool:
     if getattr(request.app.state, "text_to_speech", None) is not None:
         return True
-    return bool(request.app.state.settings.speech_kokoro_model.strip())
+    return bool(request.app.state.settings.speech_tts_model.strip())
 
 
 def get_speech_to_text(request: Request) -> SpeechToTextProvider:
@@ -76,7 +76,7 @@ def get_speech_to_text(request: Request) -> SpeechToTextProvider:
     return provider
 
 
-def get_text_to_speech(request: Request) -> KokoroTextToSpeech:
+def get_text_to_speech(request: Request) -> TextToSpeechConverter:
     current = getattr(request.app.state, "text_to_speech", None)
     if current is not None:
         return current

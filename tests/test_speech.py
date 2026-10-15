@@ -15,14 +15,14 @@ import pytest
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.stt import SpeechToTextProvider, VoskSpeechToText, stt_from_settings
 from ai_agent.speech.text import text_for_speech
-from ai_agent.speech.tts import KokoroTextToSpeech, lang_for_voice, tts_from_settings
+from ai_agent.speech.tts import KokoroTTS, TextToSpeechConverter, lang_for_voice, tts_from_settings
 from ai_agent.speech.wav import pcm_from_wav, write_wav
 
 
 class _Settings:
     def __init__(self, stt: str = "", kokoro: str = "", voices: str = "", voice: str = ""):
         self.speech_stt_model = stt
-        self.speech_kokoro_model = kokoro
+        self.speech_tts_model = kokoro
         self.speech_kokoro_voices = voices
         self.speech_kokoro_voice = voice
 
@@ -31,6 +31,10 @@ def test_provider_cannot_be_constructed() -> None:
     with pytest.raises(TypeError):
         SpeechToTextProvider()  # type: ignore[abstract]
     assert SpeechToTextProvider.transcribe.__isabstractmethod__ is True
+    with pytest.raises(TypeError):
+        TextToSpeechConverter()  # type: ignore[abstract]
+    assert TextToSpeechConverter.synthesize.__isabstractmethod__ is True
+    assert issubclass(KokoroTTS, TextToSpeechConverter)
 
 
 def test_wav_round_trip_and_rejected_shapes() -> None:
@@ -145,7 +149,7 @@ def test_kokoro_loads_on_cpu_and_speaks_cleaned_text(
     onnxruntime.InferenceSession = _Session  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "kokoro_onnx", kokoro_onnx)
     monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
-    wav = KokoroTextToSpeech(model, voices, voice="bf_emma").synthesize(
+    wav = KokoroTTS(model, voices, voice="bf_emma").synthesize(
         "Hello <think>hidden</think> world"
     )
     assert seen["providers"] == ["CPUExecutionProvider"]
@@ -162,7 +166,7 @@ def test_kokoro_loads_on_cpu_and_speaks_cleaned_text(
         assert handle.getframerate() == 24000
         assert handle.getnframes() == 3
     with pytest.raises(SpeechAudioError):
-        KokoroTextToSpeech(model, voices).synthesize("<think>only a thought</think>")
+        KokoroTTS(model, voices).synthesize("<think>only a thought</think>")
 
 
 def test_kokoro_voices_default_beside_the_model(tmp_path: Path) -> None:
@@ -180,11 +184,11 @@ def test_kokoro_missing_model_or_voices(tmp_path: Path) -> None:
     voices = tmp_path / "voices-v1.0.bin"
     voices.write_bytes(b"voices")
     with pytest.raises(SpeechNotConfigured):
-        KokoroTextToSpeech(tmp_path / "missing.onnx", voices).synthesize("Hello")
+        KokoroTTS(tmp_path / "missing.onnx", voices).synthesize("Hello")
     model = tmp_path / "kokoro-v1.0.onnx"
     model.write_bytes(b"model")
     with pytest.raises(SpeechNotConfigured):
-        KokoroTextToSpeech(model, tmp_path / "missing.bin").synthesize("Hello")
+        KokoroTTS(model, tmp_path / "missing.bin").synthesize("Hello")
 
 
 def test_voice_extra_uses_kokoro_not_future_engines() -> None:
@@ -208,9 +212,9 @@ def test_vosk_live_silence() -> None:
 
 @pytest.mark.voice_live
 def test_kokoro_live_cpu_smoke() -> None:
-    model = os.environ.get("SPEECH_KOKORO_MODEL", "").strip()
+    model = os.environ.get("SPEECH_TTS_MODEL", "").strip()
     if not model:
-        pytest.skip("Set SPEECH_KOKORO_MODEL to kokoro-v1.0.onnx")
+        pytest.skip("Set SPEECH_TTS_MODEL to kokoro-v1.0.onnx")
     pytest.importorskip("kokoro_onnx")
     voices = os.environ.get("SPEECH_KOKORO_VOICES", "").strip()
     voice = os.environ.get("SPEECH_KOKORO_VOICE", "").strip() or "af_heart"

@@ -74,7 +74,7 @@ def main() -> int:
         console.print("[yellow]Auth: not configured[/yellow] (set SUPABASE_URL)")
     console.print(f"Conversations: {database_display_path(database_url(settings))}")
     stt = settings.speech_stt_model.strip() or "off"
-    model = settings.speech_kokoro_model.strip()
+    model = settings.speech_tts_model.strip()
     if model:
         voice = settings.speech_kokoro_voice.strip() or "af_heart"
         tts = f"{model} ({voice})"

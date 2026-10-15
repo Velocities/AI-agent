@@ -48,7 +48,7 @@ def _client() -> TestClient:
             supabase_anon_key="",
             supabase_jwt_secret="",
             speech_stt_model="",
-            speech_kokoro_model="",
+            speech_tts_model="",
         ),
         _Tokens(),
     )

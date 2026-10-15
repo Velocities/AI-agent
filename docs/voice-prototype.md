@@ -16,14 +16,14 @@ Typed messages are not spoken. A voice turn is spoken once, after the turn compl
 | Piece | Role |
 |---|---|
 | `ai_agent/speech/stt.py` | `SpeechToTextProvider` (`ABC`, `abstractmethod`) and the Vosk implementation |
-| `ai_agent/speech/tts.py` | `KokoroTextToSpeech`. Loads Kokoro-82M with `providers=["CPUExecutionProvider"]` so ONNX Runtime stays off the GPU |
+| `ai_agent/speech/tts.py` | `TextToSpeechConverter` (`ABC`, `abstractmethod`) and `KokoroTTS`. Kokoro-82M loads with `providers=["CPUExecutionProvider"]` so ONNX Runtime stays off the GPU |
 | `ai_agent/speech/wav.py` | WAV checks. Transcription accepts only 16 kHz mono 16-bit PCM |
 | `ai_agent/speech/text.py` | Strips `<think>` blocks and fenced code before synthesis, and caps spoken length |
 | `ai_agent/api/speech.py` | Authenticated `/api/speech/status`, `/transcribe`, and `/synthesize` |
 
-`SPEECH_STT_MODEL` is a Vosk model directory. `SPEECH_KOKORO_MODEL` is the Kokoro-82M ONNX file `kokoro-v1.0.onnx`. `SPEECH_KOKORO_VOICES` is `voices-v1.0.bin`; when it is empty the server looks for that filename beside the model. `SPEECH_KOKORO_VOICE` is a voice id (default `af_heart`). An empty model path leaves synthesis off. The routes answer `503` until the path is set and the package imports. Models load on first use and are cached on the app. GPU providers are not requested for speech. Do not set `CUDA_VISIBLE_DEVICES` here; the language model may still use the GPU in another process.
+`SPEECH_STT_MODEL` is a Vosk model directory. `SPEECH_TTS_MODEL` is the text-to-speech model path. For Kokoro-82M that file is `kokoro-v1.0.onnx`. `SPEECH_KOKORO_VOICES` is `voices-v1.0.bin`; when it is empty the server looks for that filename beside the model. `SPEECH_KOKORO_VOICE` is a voice id (default `af_heart`). An empty model path leaves synthesis off. The routes answer `503` until the path is set and the package imports. Models load on first use and are cached on the app. GPU providers are not requested for speech. Do not set `CUDA_VISIBLE_DEVICES` here; the language model may still use the GPU in another process.
 
-faster-whisper would be another `SpeechToTextProvider`. It is not a dependency. Synthesis is the one `KokoroTextToSpeech` class.
+faster-whisper would be another `SpeechToTextProvider`. Another synthesis engine would be another `TextToSpeechConverter`. Neither extra engine is a dependency. `tts_from_settings` returns the abstract type and currently constructs `KokoroTTS`.
 
 Install the app with the voice extra when you want the real engines. That also installs `python-multipart`, which the transcribe upload needs:
 
@@ -62,7 +62,7 @@ Add the paths to `.env` (absolute paths are safer for the service):
 
 ```bash
 SPEECH_STT_MODEL=/absolute/path/to/.ai-agent/voice/vosk-model-small-en-us-0.15
-SPEECH_KOKORO_MODEL=/absolute/path/to/.ai-agent/voice/kokoro-v1.0.onnx
+SPEECH_TTS_MODEL=/absolute/path/to/.ai-agent/voice/kokoro-v1.0.onnx
 SPEECH_KOKORO_VOICES=/absolute/path/to/.ai-agent/voice/voices-v1.0.bin
 SPEECH_KOKORO_VOICE=af_heart
 ```
@@ -91,7 +91,7 @@ Live engines, only when the packages and models are installed:
 
 ```bash
 SPEECH_STT_MODEL=.ai-agent/voice/vosk-model-small-en-us-0.15 \
-SPEECH_KOKORO_MODEL=.ai-agent/voice/kokoro-v1.0.onnx \
+SPEECH_TTS_MODEL=.ai-agent/voice/kokoro-v1.0.onnx \
 SPEECH_KOKORO_VOICES=.ai-agent/voice/voices-v1.0.bin \
 pytest tests/test_speech.py -m voice_live
 ```
@@ -102,5 +102,5 @@ On a phone pointed at the server:
 2. The transcript should appear as your message, then the usual reply stream.
 3. After the reply finishes, the phone should play it. The stop control during playback cuts the audio off.
 4. A typed message should not be spoken.
-5. Clear `SPEECH_KOKORO_MODEL`, restart the server, and speak again. The written reply should still show, with a notice that it was not spoken.
+5. Clear `SPEECH_TTS_MODEL`, restart the server, and speak again. The written reply should still show, with a notice that it was not spoken.
 6. Clear `SPEECH_STT_MODEL` and tap the mic. The app should report that speech-to-text is not set up, without recording.
