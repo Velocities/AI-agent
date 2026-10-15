@@ -712,7 +712,9 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
 | `SPEECH_STT_MODEL` | Vosk model directory for Android microphone transcription. Empty disables it. CPU only. |
-| `SPEECH_PIPER_MODEL` | Piper `.onnx` voice used to speak replies. Empty disables it. Loaded with CUDA off. |
+| `SPEECH_KOKORO_MODEL` | Kokoro-82M `kokoro-v1.0.onnx` used to speak replies. Empty disables it. CPU only. |
+| `SPEECH_KOKORO_VOICES` | `voices-v1.0.bin`. Empty looks beside `SPEECH_KOKORO_MODEL`. |
+| `SPEECH_KOKORO_VOICE` | Voice id (default `af_heart`). |
 
 Voice setup and how to test it: [docs/voice-prototype.md](docs/voice-prototype.md).
 
@@ -1067,7 +1069,7 @@ ai_agent/
   approval/       # Confirmation UX and session grants
   audit/          # Audit logging
   api/            # Public HTTP API (`ai-agent-serve`)
-  speech/         # CPU Vosk transcription and Piper synthesis
+  speech/         # CPU Vosk transcription and Kokoro-82M synthesis
   conversations/  # SQLite transcript store and Alembic migrations
   cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
   agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)

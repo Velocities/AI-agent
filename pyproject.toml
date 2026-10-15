@@ -35,9 +35,9 @@ dev = [
 mqtt = [
     "paho-mqtt>=2.1",
 ]
-# CPU speech only. faster-whisper and Kokoro are future swaps, not this extra.
+# CPU speech only. faster-whisper is a future speech-to-text swap, not this extra.
 voice = [
-    "piper-tts>=1.2.0,<2",
+    "kokoro-onnx>=0.6.0,<1",
     "vosk>=0.3.45",
 ]
 
@@ -65,5 +65,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "docker: live Docker daemon tests (skipped if docker is unavailable)",
-    "voice_live: transcription and synthesis against local Vosk and Piper models",
+    "voice_live: transcription and synthesis against local Vosk and Kokoro-82M models",
 ]

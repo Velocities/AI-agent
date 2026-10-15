@@ -1,7 +1,7 @@
 """WAV helpers for the 16 kHz mono clips the phone records.
 
 Transcription accepts only that format. Synthesis writes whatever sample rate
-Piper produces; the phone plays the header rather than assuming 16 kHz.
+Kokoro produces; the phone plays the header rather than assuming 16 kHz.
 """
 
 from __future__ import annotations

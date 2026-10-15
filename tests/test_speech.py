@@ -1,4 +1,4 @@
-"""Speech helpers, the Vosk provider, and CPU-only Piper loading."""
+"""Speech helpers, the Vosk provider, and CPU-only Kokoro-82M loading."""
 
 from __future__ import annotations
 
@@ -15,14 +15,16 @@ import pytest
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.stt import SpeechToTextProvider, VoskSpeechToText, stt_from_settings
 from ai_agent.speech.text import text_for_speech
-from ai_agent.speech.tts import PiperTextToSpeech, tts_from_settings
+from ai_agent.speech.tts import KokoroTextToSpeech, lang_for_voice, tts_from_settings
 from ai_agent.speech.wav import pcm_from_wav, write_wav
 
 
 class _Settings:
-    def __init__(self, stt: str = "", piper: str = ""):
+    def __init__(self, stt: str = "", kokoro: str = "", voices: str = "", voice: str = ""):
         self.speech_stt_model = stt
-        self.speech_piper_model = piper
+        self.speech_kokoro_model = kokoro
+        self.speech_kokoro_voices = voices
+        self.speech_kokoro_voice = voice
 
 
 def test_provider_cannot_be_constructed() -> None:
@@ -108,51 +110,90 @@ def test_vosk_transcribes_with_a_stand_in(tmp_path: Path, monkeypatch: pytest.Mo
     assert seen["path"] == str(model_dir)
 
 
-def test_piper_loads_on_cpu_and_speaks_cleaned_text(
+def test_kokoro_loads_on_cpu_and_speaks_cleaned_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model = tmp_path / "en.onnx"
+    model = tmp_path / "kokoro-v1.0.onnx"
+    voices = tmp_path / "voices-v1.0.bin"
     model.write_bytes(b"not-a-real-model")
+    voices.write_bytes(b"not-real-voices")
     seen: dict[str, object] = {}
 
-    class _Voice:
-        @staticmethod
-        def load(path: Path, use_cuda: bool = True):
+    class _Session:
+        def __init__(self, path: str, providers: list[str] | None = None):
             seen["path"] = path
-            seen["use_cuda"] = use_cuda
-            return _Voice()
+            seen["providers"] = providers
 
-        def synthesize_wav(self, text: str, wav_file: wave.Wave_write) -> None:
+    class _Engine:
+        @classmethod
+        def from_session(cls, session: object, voices_path: str):
+            seen["session"] = session
+            seen["voices"] = voices_path
+            seen["model_path"] = session._model_path
+            return cls()
+
+        def create(self, text: str, voice: str, speed: float, lang: str):
             seen["text"] = text
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(22050)
-            wav_file.writeframes(b"\x00\x00" * 8)
+            seen["voice"] = voice
+            seen["speed"] = speed
+            seen["lang"] = lang
+            return [0.0, 0.5, -0.5], 24000
 
-    piper = ModuleType("piper")
-    piper.PiperVoice = _Voice  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "piper", piper)
-    wav = PiperTextToSpeech(model).synthesize("Hello <think>hidden</think> world")
-    assert seen["use_cuda"] is False
-    assert seen["path"] == model
+    kokoro_onnx = ModuleType("kokoro_onnx")
+    kokoro_onnx.Kokoro = _Engine  # type: ignore[attr-defined]
+    onnxruntime = ModuleType("onnxruntime")
+    onnxruntime.InferenceSession = _Session  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "kokoro_onnx", kokoro_onnx)
+    monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
+    wav = KokoroTextToSpeech(model, voices, voice="bf_emma").synthesize(
+        "Hello <think>hidden</think> world"
+    )
+    assert seen["providers"] == ["CPUExecutionProvider"]
+    assert seen["path"] == str(model)
+    assert seen["voices"] == str(voices)
+    assert seen["model_path"] == str(model)
     assert seen["text"] == "Hello world"
+    assert seen["voice"] == "bf_emma"
+    assert seen["lang"] == "en-gb"
     assert wav[:4] == b"RIFF"
+    with wave.open(io.BytesIO(wav), "rb") as handle:
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 24000
+        assert handle.getnframes() == 3
     with pytest.raises(SpeechAudioError):
-        PiperTextToSpeech(model).synthesize("<think>only a thought</think>")
+        KokoroTextToSpeech(model, voices).synthesize("<think>only a thought</think>")
 
 
-def test_piper_missing_voice_file(tmp_path: Path) -> None:
+def test_kokoro_voices_default_beside_the_model(tmp_path: Path) -> None:
+    model = tmp_path / "kokoro-v1.0.onnx"
+    model.write_bytes(b"x")
+    speaker = tts_from_settings(_Settings(kokoro=str(model), voice="am_adam"))
+    assert speaker.model_path == model
+    assert speaker.voices_path == tmp_path / "voices-v1.0.bin"
+    assert speaker.voice == "am_adam"
+    assert lang_for_voice("af_heart") == "en-us"
+    assert lang_for_voice("bm_george") == "en-gb"
+
+
+def test_kokoro_missing_model_or_voices(tmp_path: Path) -> None:
+    voices = tmp_path / "voices-v1.0.bin"
+    voices.write_bytes(b"voices")
     with pytest.raises(SpeechNotConfigured):
-        PiperTextToSpeech(tmp_path / "missing.onnx").synthesize("Hello")
+        KokoroTextToSpeech(tmp_path / "missing.onnx", voices).synthesize("Hello")
+    model = tmp_path / "kokoro-v1.0.onnx"
+    model.write_bytes(b"model")
+    with pytest.raises(SpeechNotConfigured):
+        KokoroTextToSpeech(model, tmp_path / "missing.bin").synthesize("Hello")
 
 
-def test_voice_extra_does_not_pull_future_engines() -> None:
+def test_voice_extra_uses_kokoro_not_future_engines() -> None:
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     voice = text.split("voice = [", 1)[1].split("]", 1)[0].lower()
-    assert "piper-tts" in voice
+    assert "kokoro-onnx" in voice
     assert "vosk" in voice
+    assert "piper-tts" not in voice
     assert "faster-whisper" not in voice
-    assert "kokoro" not in voice
 
 
 @pytest.mark.voice_live
@@ -166,15 +207,18 @@ def test_vosk_live_silence() -> None:
 
 
 @pytest.mark.voice_live
-def test_piper_live_cpu_smoke() -> None:
-    model = os.environ.get("SPEECH_PIPER_MODEL", "").strip()
+def test_kokoro_live_cpu_smoke() -> None:
+    model = os.environ.get("SPEECH_KOKORO_MODEL", "").strip()
     if not model:
-        pytest.skip("Set SPEECH_PIPER_MODEL to a Piper .onnx voice")
-    pytest.importorskip("piper")
-    wav = PiperTextToSpeech(Path(model)).synthesize("Hello from the voice prototype.")
+        pytest.skip("Set SPEECH_KOKORO_MODEL to kokoro-v1.0.onnx")
+    pytest.importorskip("kokoro_onnx")
+    voices = os.environ.get("SPEECH_KOKORO_VOICES", "").strip()
+    voice = os.environ.get("SPEECH_KOKORO_VOICE", "").strip() or "af_heart"
+    speaker = tts_from_settings(_Settings(kokoro=model, voices=voices, voice=voice))
+    wav = speaker.synthesize("Hello from the voice prototype.")
     assert wav[:4] == b"RIFF"
     with wave.open(io.BytesIO(wav), "rb") as handle:
         assert handle.getnchannels() == 1
         assert handle.getsampwidth() == 2
-        assert handle.getframerate() > 0
+        assert handle.getframerate() == 24_000
         assert handle.getnframes() > 0

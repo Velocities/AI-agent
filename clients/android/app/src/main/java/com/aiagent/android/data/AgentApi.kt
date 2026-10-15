@@ -195,7 +195,7 @@ class AgentApi(private val baseUrl: String) {
         }
     }
 
-    /** Synthesize [text] with Piper and return a WAV file. */
+    /** Synthesize [text] with Kokoro-82M and return a WAV file. */
     fun synthesize(accessToken: String, text: String): ByteArray {
         val connection = open("POST", "/api/speech/synthesize", accessToken).apply {
             doOutput = true

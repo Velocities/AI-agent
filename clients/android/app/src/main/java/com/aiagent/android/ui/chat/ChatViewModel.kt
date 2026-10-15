@@ -405,7 +405,7 @@ class ChatViewModel : ViewModel() {
         val epoch = speechEpoch
         if (!ttsConfigured) {
             _state.update {
-                it.copy(notice = "This server has no Piper voice configured, so the reply was not spoken.")
+                it.copy(notice = "This server has no Kokoro voice configured, so the reply was not spoken.")
             }
             return
         }

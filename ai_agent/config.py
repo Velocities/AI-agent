@@ -235,13 +235,25 @@ class Settings(BaseSettings):
             "Recognition runs on the CPU."
         ),
     )
-    speech_piper_model: str = Field(
+    speech_kokoro_model: str = Field(
         default="",
-        alias="SPEECH_PIPER_MODEL",
+        alias="SPEECH_KOKORO_MODEL",
         description=(
-            "Path to a Piper .onnx voice. The matching .onnx.json must sit beside it. "
-            "Empty disables speech synthesis. Piper is loaded with CUDA turned off."
+            "Path to the Kokoro-82M ONNX file (kokoro-v1.0.onnx). "
+            "Empty disables speech synthesis. The session uses CPUExecutionProvider only."
         ),
+    )
+    speech_kokoro_voices: str = Field(
+        default="",
+        alias="SPEECH_KOKORO_VOICES",
+        description=(
+            "Path to voices-v1.0.bin. Empty looks for that file beside SPEECH_KOKORO_MODEL."
+        ),
+    )
+    speech_kokoro_voice: str = Field(
+        default="af_heart",
+        alias="SPEECH_KOKORO_VOICE",
+        description="Kokoro-82M voice id. The American English default is af_heart.",
     )
 
     def policy_path(self) -> Path:

@@ -48,7 +48,7 @@ def _client() -> TestClient:
             supabase_anon_key="",
             supabase_jwt_secret="",
             speech_stt_model="",
-            speech_piper_model="",
+            speech_kokoro_model="",
         ),
         _Tokens(),
     )
@@ -77,7 +77,7 @@ def test_speech_requires_a_token_and_models() -> None:
     assert status.json()["tts_configured"] is False
     assert status.json()["device"] == "cpu"
     assert status.json()["stt_engine"] == "vosk"
-    assert status.json()["tts_engine"] == "piper"
+    assert status.json()["tts_engine"] == "kokoro"
     assert rejected.status_code == 503
     assert silent.status_code == 503
 

@@ -1,4 +1,4 @@
-"""Turn a model reply into a short string Piper can read."""
+"""Turn a model reply into a short string Kokoro can read."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ _THINK = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
 _FENCE = re.compile(r"```.*?```", re.DOTALL)
 _MARKDOWN = re.compile(r"[#*_`>\[\]]+")
 
-# A medium Piper voice on CPU is much slower than the chat stream.
+# Kokoro-82M on CPU is much slower than the chat stream.
 MAX_SPOKEN_CHARS = 1500
 
 
