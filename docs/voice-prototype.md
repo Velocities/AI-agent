@@ -25,13 +25,13 @@ Typed messages are not spoken. A voice turn is spoken once, after the turn compl
 
 faster-whisper would be another `SpeechToTextProvider`. Another synthesis engine would be another `TextToSpeechConverter`. Neither extra engine is a dependency. `tts_from_settings` returns the abstract type and currently constructs `KokoroTTS`.
 
-Install the app with the voice extra when you want the real engines. That also installs `python-multipart`, which the transcribe upload needs:
+Install the voice extra when you want the real engines. `python-multipart` is already a core dependency. The extra itself is `kokoro-onnx` and `vosk` only:
 
 ```bash
 pip install -e '.[voice]'
 ```
 
-The extra itself is `kokoro-onnx` and `vosk` only.
+That install does not download model weights, and the API does not download them on startup.
 
 ## Android
 
@@ -43,19 +43,21 @@ Recording stops at 60 seconds. Shorter than half a second is rejected on the pho
 
 ## Setup
 
-Download a small English Vosk model and the Kokoro-82M ONNX weights. Paths can be anywhere the server process can read. `kokoro-v1.0.onnx` is the f32 Kokoro-82M v1.0 graph (about 310 MB). `voices-v1.0.bin` holds the voice styles, including `af_heart`.
+Install the packages first (`pip install -e '.[voice]'`). Then download Kokoro-82M. `kokoro-v1.0.onnx` is the f32 Kokoro-82M v1.0 graph (about 310 MB). `voices-v1.0.bin` holds the voice styles, including `af_heart`. The command skips a file that is already the same size as the release:
+
+```bash
+ai-agent config speech setup
+```
+
+That writes `.ai-agent/voice/kokoro-v1.0.onnx` and `.ai-agent/voice/voices-v1.0.bin`, and prints the `SPEECH_TTS_MODEL` line to add. Pass `--dest` to put the files somewhere else.
+
+Speech-to-text is still a separate download. Unpack a small English Vosk model where the server can read it:
 
 ```bash
 mkdir -p .ai-agent/voice && cd .ai-agent/voice
-
 curl -L -o vosk-model-small-en-us-0.15.zip \
   https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
 unzip vosk-model-small-en-us-0.15.zip
-
-curl -L -o kokoro-v1.0.onnx \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
-curl -L -o voices-v1.0.bin \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
 
 Add the paths to `.env` (absolute paths are safer for the service):
@@ -69,7 +71,7 @@ SPEECH_KOKORO_VOICE=af_heart
 
 `SPEECH_KOKORO_VOICES` can be omitted when `voices-v1.0.bin` sits next to the model. British voices (`bf_*`, `bm_*`) are phonemized as `en-gb`. Other ids use `en-us`.
 
-Restart `ai-agent-serve` or `ai-agent serve`. The log line `Voice:` shows whether each path is set. Both engines still run on the CPU when the language model is on the GPU.
+Restart `ai-agent-serve` or `ai-agent serve`. The log line `Voice:` shows whether each path is set. A path that is set but missing is logged as an error, and that side of speech stays off. The conversation API still starts. Both engines still run on the CPU when the language model is on the GPU.
 
 Rebuild and install the Android app (`./gradlew :app:assembleDebug` from `clients/android`). Grant the microphone permission when asked.
 
@@ -78,7 +80,7 @@ Rebuild and install the Android app (`./gradlew :app:assembleDebug` from `client
 Unit tests do not download models. They cover the WAV contract, the abstract provider, Vosk and Kokoro call shape (Kokoro must be loaded with `CPUExecutionProvider`), text cleanup, and the HTTP routes with stand-in engines.
 
 ```bash
-pytest tests/test_speech.py tests/test_speech_api.py
+pytest tests/test_speech.py tests/test_speech_api.py tests/test_speech_setup.py
 ```
 
 From `clients/android`, the WAV header test:

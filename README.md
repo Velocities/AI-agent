@@ -58,7 +58,8 @@ If you have never run this project, use this table once. You can ignore the othe
 | Requirement | Notes |
 |-------------|--------|
 | Python 3.11+ | Project runtime |
-| `pip install -e ".[dev]"` | Installs **ai-agent only** — not Ollama or vLLM |
+| `pip install -e ".[dev]"` | Installs **ai-agent only** — not Ollama, vLLM, or speech engines |
+| `pip install -e '.[voice]'` | Optional. Vosk and Kokoro-82M Python packages. Weights are a separate step |
 | `.env` file | Start from `.env.example` |
 
 **Engine installs are separate:**
@@ -716,7 +717,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `SPEECH_KOKORO_VOICES` | `voices-v1.0.bin`. Empty looks beside `SPEECH_TTS_MODEL`. |
 | `SPEECH_KOKORO_VOICE` | Voice id (default `af_heart`). |
 
-Voice setup and how to test it: [docs/voice-prototype.md](docs/voice-prototype.md).
+Speech packages and weights are optional and separate from server startup. Install the packages with `pip install -e '.[voice]'`, then download Kokoro-82M with `ai-agent config speech setup`. A missing or wrong `SPEECH_STT_MODEL` / `SPEECH_TTS_MODEL` is logged and left off; the rest of the API still starts. Details: [docs/voice-prototype.md](docs/voice-prototype.md).
 
 ### LLM — engine-specific options
 

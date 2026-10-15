@@ -14,6 +14,7 @@ from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
+from ai_agent.speech.check import note_speech_configuration
 
 __all__ = ["create_app", "get_current_user"]
 
@@ -53,6 +54,7 @@ def create_app(
     app.state.agent_factory = None
     app.state.speech_to_text = None
     app.state.text_to_speech = None
+    note_speech_configuration(settings)
 
     @app.get("/health")
     def health() -> dict[str, str]:
