@@ -22,6 +22,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10",
     "pyyaml>=6.0",
     "rich>=13.7",
+    "python-multipart>=0.0.9",
     "sqlalchemy>=2.0",
     "uvicorn>=0.32",
 ]
@@ -33,6 +34,11 @@ dev = [
 ]
 mqtt = [
     "paho-mqtt>=2.1",
+]
+# CPU speech only. faster-whisper is a future speech-to-text swap, not this extra.
+voice = [
+    "kokoro-onnx>=0.6.0,<1",
+    "vosk>=0.3.45",
 ]
 
 [project.scripts]
@@ -59,4 +65,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "docker: live Docker daemon tests (skipped if docker is unavailable)",
+    "voice_live: transcription and synthesis against local Vosk and Kokoro-82M models",
 ]

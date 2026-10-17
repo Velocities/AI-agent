@@ -1,5 +1,6 @@
 package com.aiagent.android.data
 
+import java.util.Base64
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -16,9 +17,20 @@ sealed interface TurnEvent {
     data class ApprovalRequired(val request: ApprovalRequest) : TurnEvent
     data class Done(val message: String, val error: String?) : TurnEvent
     data class Failed(val message: String) : TurnEvent
+    data class Audio(val wav: ByteArray) : TurnEvent
+    data class AudioFailed(val message: String) : TurnEvent
     data object Unknown : TurnEvent
 
     companion object {
+        private fun parseAudio(obj: JsonObject): TurnEvent {
+            val error = obj.string("error")
+            if (!error.isNullOrBlank()) return AudioFailed(error)
+            val encoded = obj.string("wav_base64").orEmpty()
+            val wav = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
+            if (wav == null || wav.isEmpty()) return Unknown
+            return Audio(wav)
+        }
+
         fun parse(line: String): TurnEvent {
             val obj = AgentApi.json.parseToJsonElement(line).jsonObject
             return when (obj.string("type")) {
@@ -31,6 +43,7 @@ sealed interface TurnEvent {
                 "approval_required" -> ApprovalRequired(ApprovalRequest.from(obj))
                 "done" -> Done(obj.string("message").orEmpty(), obj.string("error"))
                 "error" -> Failed(obj.string("message") ?: "The turn failed.")
+                "audio" -> parseAudio(obj)
                 else -> Unknown
             }
         }

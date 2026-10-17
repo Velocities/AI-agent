@@ -227,6 +227,34 @@ class Settings(BaseSettings):
             "Leave false until a deployment needs it."
         ),
     )
+    speech_stt_model: str = Field(
+        default="",
+        alias="SPEECH_STT_MODEL",
+        description=(
+            "Directory of an unpacked Vosk model. Empty disables speech-to-text. "
+            "Recognition runs on the CPU."
+        ),
+    )
+    speech_tts_model: str = Field(
+        default="",
+        alias="SPEECH_TTS_MODEL",
+        description=(
+            "Path to the text-to-speech model. For Kokoro-82M this is kokoro-v1.0.onnx. "
+            "Empty disables speech synthesis. Kokoro uses CPUExecutionProvider only."
+        ),
+    )
+    speech_kokoro_voices: str = Field(
+        default="",
+        alias="SPEECH_KOKORO_VOICES",
+        description=(
+            "Path to voices-v1.0.bin. Empty looks for that file beside SPEECH_TTS_MODEL."
+        ),
+    )
+    speech_kokoro_voice: str = Field(
+        default="af_heart",
+        alias="SPEECH_KOKORO_VOICE",
+        description="Kokoro-82M voice id. The American English default is af_heart.",
+    )
 
     def policy_path(self) -> Path:
         if self.agent_policy_file:

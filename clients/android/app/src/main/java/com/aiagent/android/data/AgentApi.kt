@@ -42,6 +42,12 @@ private data class MessageListResponse(
     val messages: List<ChatMessage> = emptyList(),
 )
 
+@Serializable
+data class SpeechStatus(
+    @SerialName("stt_configured") val sttConfigured: Boolean = false,
+    @SerialName("tts_configured") val ttsConfigured: Boolean = false,
+)
+
 /** An HTTP error from ai-agent-serve. [code] is set for whitelist refusals (see ACCESS_* codes). */
 class AgentApiException(
     val status: Int,
@@ -62,38 +68,38 @@ class AgentApiException(
 class AgentApi(private val baseUrl: String) {
 
     fun listConversations(accessToken: String): List<ConversationSummary> {
-        val body = request("GET", "/api/conversations", accessToken)
+        val body = request("GET", ApiEndpoints.CONVERSATIONS, accessToken)
         return json.decodeFromString<ConversationListResponse>(body).conversations
     }
 
     fun listMessages(accessToken: String, conversationId: String): List<ChatMessage> {
-        val body = request("GET", "/api/conversations/$conversationId/messages", accessToken)
+        val body = request("GET", ApiEndpoints.conversationMessages(conversationId), accessToken)
         return json.decodeFromString<MessageListResponse>(body).messages
     }
 
     fun createConversation(accessToken: String): ConversationSummary {
-        val body = request("POST", "/api/conversations", accessToken, "{}")
+        val body = request("POST", ApiEndpoints.CONVERSATIONS, accessToken, "{}")
         return json.decodeFromString(body)
     }
 
     fun deleteConversation(accessToken: String, conversationId: String) {
-        request("DELETE", "/api/conversations/$conversationId", accessToken)
+        request("DELETE", ApiEndpoints.conversation(conversationId), accessToken)
     }
 
     /** True when this account is on the server's monitoring admin list. */
     fun isMonitoringAdmin(accessToken: String): Boolean {
-        val body = request("GET", "/api/monitoring/access", accessToken)
+        val body = request("GET", ApiEndpoints.MONITORING_ACCESS, accessToken)
         val flag = json.parseToJsonElement(body).jsonObject["is_admin"]
         return flag is JsonPrimitive && flag.booleanOrNull == true
     }
 
     /** Latest GPU readings. The caller polls this; the page does not. */
     fun gpuTelemetryJson(accessToken: String): String =
-        request("GET", "/api/monitoring/gpus", accessToken)
+        request("GET", ApiEndpoints.MONITORING_GPUS, accessToken)
 
     /** CPU, RAM, and GPU from one server sample. The caller polls this on a fixed interval. */
     fun hostTelemetryJson(accessToken: String): String =
-        request("GET", "/api/monitoring/telemetry", accessToken)
+        request("GET", ApiEndpoints.MONITORING_TELEMETRY, accessToken)
 
     fun resolveApproval(
         accessToken: String,
@@ -108,7 +114,7 @@ class AgentApi(private val baseUrl: String) {
         }
         request(
             "POST",
-            "/api/conversations/$conversationId/approvals/$approvalId",
+            ApiEndpoints.conversationApprovals(conversationId, approvalId),
             accessToken,
             body.toString(),
         )
@@ -123,10 +129,11 @@ class AgentApi(private val baseUrl: String) {
         accessToken: String,
         conversationId: String,
         content: String,
+        speak: Boolean = false,
         onConnection: (HttpURLConnection) -> Unit,
         onEvent: (TurnEvent) -> Unit,
     ) {
-        val connection = open("POST", "/api/conversations/$conversationId/turns", accessToken).apply {
+        val connection = open("POST", ApiEndpoints.conversationTurns(conversationId), accessToken).apply {
             readTimeout = 0
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
@@ -134,7 +141,10 @@ class AgentApi(private val baseUrl: String) {
         }
         onConnection(connection)
         try {
-            val payload = buildJsonObject { put("content", JsonPrimitive(content)) }
+            val payload = buildJsonObject {
+                put("content", JsonPrimitive(content))
+                if (speak) put("speak", JsonPrimitive(true))
+            }
             connection.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = connection.responseCode
             if (code !in 200..299) {
@@ -146,6 +156,66 @@ class AgentApi(private val baseUrl: String) {
                     onEvent(TurnEvent.parse(line))
                 }
             }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Whether this server has CPU speech models configured. Does not load them. */
+    fun speechStatus(accessToken: String): SpeechStatus {
+        val body = request("GET", ApiEndpoints.SPEECH_STATUS, accessToken)
+        return json.decodeFromString(body)
+    }
+
+    /** Upload a 16 kHz mono WAV clip and return the transcript (possibly empty). */
+    fun transcribe(accessToken: String, wav: ByteArray): String {
+        val boundary = "aiagent${wav.size}x${wav.contentHashCode().toUInt().toString(16)}"
+        val preamble = (
+            "--$boundary\r\n" +
+                "Content-Disposition: form-data; name=\"audio\"; filename=\"prompt.wav\"\r\n" +
+                "Content-Type: audio/wav\r\n\r\n"
+            ).toByteArray()
+        val ending = "\r\n--$boundary--\r\n".toByteArray()
+        val connection = open("POST", ApiEndpoints.SPEECH_TRANSCRIBE, accessToken).apply {
+            doOutput = true
+            readTimeout = 180_000
+            setFixedLengthStreamingMode(preamble.size + wav.size + ending.size)
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        }
+        try {
+            connection.outputStream.use { out ->
+                out.write(preamble)
+                out.write(wav)
+                out.write(ending)
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw errorFrom(code, text)
+            val field = json.parseToJsonElement(text).jsonObject["text"]
+            return (field as? JsonPrimitive)?.contentOrNull.orEmpty()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Synthesize [text] with Kokoro-82M and return a WAV file. */
+    fun synthesize(accessToken: String, text: String): ByteArray {
+        val connection = open("POST", ApiEndpoints.SPEECH_SYNTHESIZE, accessToken).apply {
+            doOutput = true
+            readTimeout = 180_000
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "audio/wav")
+        }
+        try {
+            val payload = buildJsonObject { put("text", JsonPrimitive(text)) }
+            connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val err = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                throw errorFrom(code, err)
+            }
+            return connection.inputStream.use { it.readBytes() }
         } finally {
             connection.disconnect()
         }
