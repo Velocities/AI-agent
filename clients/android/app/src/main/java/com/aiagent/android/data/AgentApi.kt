@@ -68,38 +68,38 @@ class AgentApiException(
 class AgentApi(private val baseUrl: String) {
 
     fun listConversations(accessToken: String): List<ConversationSummary> {
-        val body = request("GET", "/api/conversations", accessToken)
+        val body = request("GET", ApiEndpoints.CONVERSATIONS, accessToken)
         return json.decodeFromString<ConversationListResponse>(body).conversations
     }
 
     fun listMessages(accessToken: String, conversationId: String): List<ChatMessage> {
-        val body = request("GET", "/api/conversations/$conversationId/messages", accessToken)
+        val body = request("GET", ApiEndpoints.conversationMessages(conversationId), accessToken)
         return json.decodeFromString<MessageListResponse>(body).messages
     }
 
     fun createConversation(accessToken: String): ConversationSummary {
-        val body = request("POST", "/api/conversations", accessToken, "{}")
+        val body = request("POST", ApiEndpoints.CONVERSATIONS, accessToken, "{}")
         return json.decodeFromString(body)
     }
 
     fun deleteConversation(accessToken: String, conversationId: String) {
-        request("DELETE", "/api/conversations/$conversationId", accessToken)
+        request("DELETE", ApiEndpoints.conversation(conversationId), accessToken)
     }
 
     /** True when this account is on the server's monitoring admin list. */
     fun isMonitoringAdmin(accessToken: String): Boolean {
-        val body = request("GET", "/api/monitoring/access", accessToken)
+        val body = request("GET", ApiEndpoints.MONITORING_ACCESS, accessToken)
         val flag = json.parseToJsonElement(body).jsonObject["is_admin"]
         return flag is JsonPrimitive && flag.booleanOrNull == true
     }
 
     /** Latest GPU readings. The caller polls this; the page does not. */
     fun gpuTelemetryJson(accessToken: String): String =
-        request("GET", "/api/monitoring/gpus", accessToken)
+        request("GET", ApiEndpoints.MONITORING_GPUS, accessToken)
 
     /** CPU, RAM, and GPU from one server sample. The caller polls this on a fixed interval. */
     fun hostTelemetryJson(accessToken: String): String =
-        request("GET", "/api/monitoring/telemetry", accessToken)
+        request("GET", ApiEndpoints.MONITORING_TELEMETRY, accessToken)
 
     fun resolveApproval(
         accessToken: String,
@@ -114,7 +114,7 @@ class AgentApi(private val baseUrl: String) {
         }
         request(
             "POST",
-            "/api/conversations/$conversationId/approvals/$approvalId",
+            ApiEndpoints.conversationApprovals(conversationId, approvalId),
             accessToken,
             body.toString(),
         )
@@ -133,7 +133,7 @@ class AgentApi(private val baseUrl: String) {
         onConnection: (HttpURLConnection) -> Unit,
         onEvent: (TurnEvent) -> Unit,
     ) {
-        val connection = open("POST", "/api/conversations/$conversationId/turns", accessToken).apply {
+        val connection = open("POST", ApiEndpoints.conversationTurns(conversationId), accessToken).apply {
             readTimeout = 0
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
@@ -163,7 +163,7 @@ class AgentApi(private val baseUrl: String) {
 
     /** Whether this server has CPU speech models configured. Does not load them. */
     fun speechStatus(accessToken: String): SpeechStatus {
-        val body = request("GET", "/api/speech/status", accessToken)
+        val body = request("GET", ApiEndpoints.SPEECH_STATUS, accessToken)
         return json.decodeFromString(body)
     }
 
@@ -176,7 +176,7 @@ class AgentApi(private val baseUrl: String) {
                 "Content-Type: audio/wav\r\n\r\n"
             ).toByteArray()
         val ending = "\r\n--$boundary--\r\n".toByteArray()
-        val connection = open("POST", "/api/speech/transcribe", accessToken).apply {
+        val connection = open("POST", ApiEndpoints.SPEECH_TRANSCRIBE, accessToken).apply {
             doOutput = true
             readTimeout = 180_000
             setFixedLengthStreamingMode(preamble.size + wav.size + ending.size)
@@ -201,7 +201,7 @@ class AgentApi(private val baseUrl: String) {
 
     /** Synthesize [text] with Kokoro-82M and return a WAV file. */
     fun synthesize(accessToken: String, text: String): ByteArray {
-        val connection = open("POST", "/api/speech/synthesize", accessToken).apply {
+        val connection = open("POST", ApiEndpoints.SPEECH_SYNTHESIZE, accessToken).apply {
             doOutput = true
             readTimeout = 180_000
             setRequestProperty("Content-Type", "application/json")
