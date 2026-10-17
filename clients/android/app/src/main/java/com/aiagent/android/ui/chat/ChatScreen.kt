@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,20 +72,21 @@ import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aiagent.android.BuildConfig
-import com.aiagent.android.audio.MicrophoneCapture
 import com.aiagent.android.audio.RECORD_AUDIO_PERMISSION
 import com.aiagent.android.audio.SpeechPlayer
 import com.aiagent.android.audio.hasMicrophonePermission
+import com.aiagent.android.speech.SpeechHandled
+import com.aiagent.android.speech.SpeechProviderStore
+import com.aiagent.android.speech.SttProvider
+import com.aiagent.android.speech.speechToTextConverter
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.CommandOutcome
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
 import com.aiagent.android.ui.markdown.MarkdownText
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,39 +125,89 @@ fun ChatScreen(
         }
     }
     val context = LocalContext.current
-    val capture = remember { MicrophoneCapture() }
     val player = remember { SpeechPlayer(context.cacheDir) }
+    val providerStore = remember { SpeechProviderStore(context) }
+    var providerId by rememberSaveable { mutableStateOf(providerStore.load().id) }
+    val provider = SttProvider.fromId(providerId)
+    var showSttInfo by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
+    var heard by remember { mutableStateOf("") }
+    var listenSession by remember { mutableIntStateOf(0) }
+    val converter = remember(provider) {
+        speechToTextConverter(provider, context) { wav -> viewModel.transcribeRecording(wav) }
+    }
+    DisposableEffect(converter) {
+        onDispose { converter.release() }
+    }
     DisposableEffect(Unit) {
-        onDispose {
-            val cap = capture
-            Thread({ cap.release() }, "voice-release").apply { isDaemon = true }.start()
-            player.stop()
-        }
+        onDispose { player.stop() }
+    }
+    fun finishListening(result: Result<String>, originId: String?) {
+        listening = false
+        heard = ""
+        result.fold(
+            onSuccess = { text -> viewModel.submitTranscript(text, originId) },
+            onFailure = { error ->
+                viewModel.setVoiceStatus(null)
+                if (error !is SpeechHandled) {
+                    viewModel.reportError(error.message ?: "Couldn't transcribe that.")
+                }
+            },
+        )
     }
     fun beginListening() {
+        val originId = viewModel.state.value.currentId
+        val session = ++listenSession
+        var settled = false
+        heard = ""
+        listening = true
+        viewModel.setVoiceStatus("Listening…")
         try {
-            capture.start()
-            listening = true
-            viewModel.setVoiceStatus("Listening…")
+            converter.start(
+                onPartial = { partial ->
+                    if (session == listenSession && partial.isNotBlank()) heard = partial
+                },
+                onFinished = { result ->
+                    if (session == listenSession) {
+                        settled = true
+                        finishListening(result, originId)
+                    }
+                },
+            )
         } catch (error: Exception) {
+            listenSession++
             listening = false
-            capture.release()
+            heard = ""
+            converter.cancel()
             viewModel.setVoiceStatus(null)
-            viewModel.reportError(error.message ?: "Couldn't use the microphone.")
+            if (!settled) viewModel.reportError(error.message ?: "Couldn't use the microphone.")
         }
     }
     fun endListening() {
         if (!listening) return
+        val session = listenSession
         listening = false
+        heard = ""
+        viewModel.setVoiceStatus("Transcribing…")
+        converter.stop()
+        // Vosk can spend a while loading its model. Google should answer quickly after stop.
+        if (provider == SttProvider.VOSK) return
         scope.launch {
-            val recorded = withContext(Dispatchers.IO) { runCatching { capture.stop() } }
-            recorded.onSuccess { wav -> viewModel.submitRecording(wav) }
-            recorded.onFailure { error ->
-                viewModel.setVoiceStatus(null)
-                viewModel.reportError(error.message ?: "Couldn't read the recording.")
-            }
+            delay(8_000)
+            if (session != listenSession || viewModel.state.value.voiceStatus != "Transcribing…") return@launch
+            listenSession++
+            converter.cancel()
+            viewModel.setVoiceStatus(null)
+            viewModel.reportError("Transcription didn't finish. Try again.")
         }
+    }
+    fun cancelListening() {
+        if (!listening) return
+        listenSession++
+        listening = false
+        heard = ""
+        converter.cancel()
+        viewModel.setVoiceStatus(null)
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) beginListening() else viewModel.reportError("Allow microphone access to speak to the agent.")
@@ -167,9 +219,7 @@ fun ChatScreen(
     }
     LaunchedEffect(state.currentId) {
         if (!listening) return@LaunchedEffect
-        listening = false
-        withContext(Dispatchers.IO) { capture.release() }
-        viewModel.setVoiceStatus(null)
+        cancelListening()
     }
     LaunchedEffect(state.speechGeneration) {
         player.stop()
@@ -270,18 +320,22 @@ fun ChatScreen(
                 },
                 bottomBar = {
                     val voiceBusy = state.voiceStatus == "Checking voice…" || state.voiceStatus == "Transcribing…"
+                    val composerEnabled = state.apiConfigured && state.accessMessage == null
                     Composer(
-                        enabled = state.apiConfigured && state.accessMessage == null,
+                        enabled = composerEnabled,
                         running = state.running,
                         listening = listening,
+                        heard = heard,
                         speaking = state.speaking,
                         voiceBusy = voiceBusy,
+                        provider = provider,
+                        onProvider = { chosen ->
+                            providerId = chosen.id
+                            providerStore.save(chosen)
+                        },
+                        onProviderInfo = { showSttInfo = true },
                         onSend = { text ->
-                            if (listening) {
-                                listening = false
-                                capture.release()
-                                viewModel.setVoiceStatus(null)
-                            }
+                            cancelListening()
                             viewModel.send(text)
                         },
                         onStop = { if (state.running) viewModel.stopTurn() else viewModel.stopSpeech() },
@@ -290,7 +344,7 @@ fun ChatScreen(
                                 endListening()
                             } else {
                                 viewModel.stopSpeech()
-                                viewModel.prepareToListen {
+                                viewModel.prepareToListen(requiresServerStt = provider == SttProvider.VOSK) {
                                     if (context.hasMicrophonePermission()) {
                                         beginListening()
                                     } else {
@@ -329,6 +383,10 @@ fun ChatScreen(
             },
             dismissButton = { TextButton(onClick = { confirmDeleteCurrent = false }) { Text("Cancel") } },
         )
+    }
+
+    if (showSttInfo) {
+        SttPrivacyDialog(onDismiss = { showSttInfo = false })
     }
 
     if (BuildConfig.AUTH_DEBUG && showAuthDebug) {
@@ -454,8 +512,12 @@ private fun Composer(
     enabled: Boolean,
     running: Boolean,
     listening: Boolean,
+    heard: String,
     speaking: Boolean,
     voiceBusy: Boolean,
+    provider: SttProvider,
+    onProvider: (SttProvider) -> Unit,
+    onProviderInfo: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onMic: () -> Unit,
@@ -464,18 +526,28 @@ private fun Composer(
     val canType = enabled && !listening && !voiceBusy
 
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.Bottom,
+        Column(
             modifier = Modifier
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
+                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
         ) {
+        Row(verticalAlignment = Alignment.Bottom) {
             TextField(
                 value = draft,
                 onValueChange = { draft = it },
                 enabled = canType,
-                placeholder = { Text(if (listening) "Listening…" else "Message") },
+                placeholder = {
+                    Text(
+                        when {
+                            listening && heard.isNotBlank() -> heard
+                            listening -> "Listening…"
+                            else -> "Message"
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 shape = RoundedCornerShape(24.dp),
@@ -518,6 +590,13 @@ private fun Composer(
                     modifier = Modifier.size(56.dp),
                 ) { Icon(AppIcons.Send, contentDescription = "Send") }
             }
+        }
+            SttProviderPicker(
+                selected = provider,
+                enabled = enabled && !running && !listening && !voiceBusy,
+                onSelect = onProvider,
+                onInfo = onProviderInfo,
+            )
         }
     }
 }

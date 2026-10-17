@@ -11,6 +11,8 @@ import com.aiagent.android.data.ChatMessage
 import com.aiagent.android.data.ConversationSummary
 import com.aiagent.android.data.Transcript
 import com.aiagent.android.data.TurnEvent
+import com.aiagent.android.speech.SpeechFailed
+import com.aiagent.android.speech.SpeechHandled
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -218,8 +220,11 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    /** Check that the server can transcribe, then start the microphone on [onReady]. */
-    fun prepareToListen(onReady: () -> Unit) {
+    /**
+     * Check speech status, then start the microphone on [onReady].
+     * [requiresServerStt] is set for Vosk, which still transcribes on the server.
+     */
+    fun prepareToListen(requiresServerStt: Boolean, onReady: () -> Unit) {
         if (_state.value.running || listenJob?.isActive == true) return
         listenJob = viewModelScope.launch {
             _state.update { it.copy(voiceStatus = "Checking voice…", error = null) }
@@ -228,11 +233,11 @@ class ChatViewModel : ViewModel() {
                 _state.update { it.copy(voiceStatus = null) }
                 return@launch
             }
-            if (!status.sttConfigured) {
+            if (requiresServerStt && !status.sttConfigured) {
                 _state.update {
                     it.copy(
                         voiceStatus = null,
-                        error = "This server has no speech-to-text model. Set SPEECH_STT_MODEL to a Vosk model directory.",
+                        error = "This server has no Vosk model. Set SPEECH_STT_MODEL to a Vosk model directory, or pick another transcription option.",
                     )
                 }
                 return@launch
@@ -242,33 +247,29 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    /** Transcribe a WAV clip, send it as a turn, and speak the reply when the turn finishes. */
-    fun submitRecording(wav: ByteArray) {
-        if (_state.value.running) return
-        val originId = _state.value.currentId
+    /** Upload a WAV clip to the server's Vosk engine. Failures are already shown when this throws [SpeechHandled]. */
+    suspend fun transcribeRecording(wav: ByteArray): String {
         if (wav.size < 44 + 16_000) {
-            _state.update { it.copy(voiceStatus = null, error = "Recording was too short. Try again.") }
+            throw SpeechFailed("Recording was too short. Try again.")
+        }
+        _state.update { it.copy(voiceStatus = "Transcribing…", error = null) }
+        return call { token -> api().transcribe(token, wav) } ?: throw SpeechHandled()
+    }
+
+    /** Send a finished transcript as a spoken turn. [originId] is the chat that was open when listening started. */
+    fun submitTranscript(text: String, originId: String?) {
+        if (_state.value.running) return
+        if (_state.value.currentId != originId) {
+            _state.update {
+                it.copy(voiceStatus = null, error = "That recording was discarded because the chat changed.")
+            }
             return
         }
-        viewModelScope.launch {
-            _state.update { it.copy(voiceStatus = "Transcribing…", error = null) }
-            val text = call { token -> api().transcribe(token, wav) }
-            if (text == null) {
-                _state.update { it.copy(voiceStatus = null) }
-                return@launch
-            }
-            if (_state.value.currentId != originId) {
-                _state.update {
-                    it.copy(voiceStatus = null, error = "That recording was discarded because the chat changed.")
-                }
-                return@launch
-            }
-            if (text.isBlank()) {
-                _state.update { it.copy(voiceStatus = null, error = "Didn't catch that. Try again.") }
-                return@launch
-            }
-            send(text, speakReply = true)
+        if (text.isBlank()) {
+            _state.update { it.copy(voiceStatus = null, error = "Didn't catch that. Try again.") }
+            return
         }
+        send(text, speakReply = true)
     }
 
     fun setVoiceStatus(text: String?) {

@@ -4,8 +4,8 @@ Speak a prompt from the Android app, run the existing agent turn, and play the r
 
 ## Flow
 
-1. The phone records mono 16-bit PCM at 16 kHz and wraps it in a WAV header (`MicrophoneCapture`, `WavPcm`).
-2. `POST /api/speech/transcribe` sends that WAV. `VoskSpeechToText` implements `SpeechToTextConverter` and returns text.
+1. The phone transcribes with the option selected under the message box. Vosk still records mono 16-bit PCM at 16 kHz (`MicrophoneCapture`, `WavPcm`). Google Remote and Google Local use the phone's speech recognizer and do not upload audio.
+2. For Vosk, `POST /api/speech/transcribe` sends that WAV. `VoskSpeechToText` implements the server `SpeechToTextConverter` and returns text. The Android types (`GoogleRemoteSTT`, `GoogleLocalSTT`, `VoskServerSTT`) implement the client `SpeechToTextConverter`.
 3. The app sends that text through the existing `POST /api/conversations/{id}/turns` stream.
 4. When the turn finishes, `POST /api/speech/synthesize` runs Kokoro-82M and the phone plays the WAV (`SpeechPlayer`).
 
@@ -35,11 +35,19 @@ That install does not download model weights, and the API does not download them
 
 ## Android
 
-The mic no longer uses `RecognizerIntent`. `ChatScreen` asks for `RECORD_AUDIO` and starts capture. `ChatViewModel` calls `AgentApi` for status, transcription, the turn, and synthesis. `android.media` stays in `SpeechPlayer`.
+The message box has a transcription picker. Each option is a `SpeechToTextConverter` in `com.aiagent.android.speech`:
 
-States shown in the transcript: Checking voice, Listening, Transcribing, the existing turn status, Speaking. Failures use the existing snackbar. A missing Kokoro voice still delivers the written reply and explains that it was not spoken.
+| Option | Class | Where audio goes |
+|---|---|---|
+| Google Transcription (Remote) | `GoogleRemoteSTT` | The phone's default recognizer, which may send audio off the device (usually to Google). It does not fall back to on-device recognition. |
+| Google Transcription (Local) | `GoogleLocalSTT` | Android's on-device recognizer (`createOnDeviceSpeechRecognizer`). Audio stays on the phone. Needs Android 12 and a downloaded language pack. If that recognizer is missing, listening fails. |
+| Vosk Transcription (Server) | `VoskServerSTT` | A WAV clip uploaded to `POST /api/speech/transcribe`. Vosk on the server transcribes it. |
 
-Recording stops at 60 seconds. Shorter than half a second is rejected on the phone. The server refuses uploads over 4 MB.
+The choice is saved on the phone. The info button next to the picker explains the difference. `ChatScreen` still asks for `RECORD_AUDIO` the first time. Spoken replies are unchanged: Kokoro on the server, `SpeechPlayer` on the phone. Typed messages are not spoken.
+
+States shown in the transcript: Checking voice, Listening, Transcribing, the existing turn status, Speaking. While Google is listening, the latest guess shows in the message box. Failures use the existing snackbar. A missing Kokoro voice still delivers the written reply and explains that it was not spoken.
+
+Listening stops at 60 seconds, or when the user taps stop. Vosk still rejects clips shorter than half a second on the phone. The server refuses uploads over 4 MB. Google Remote and Google Local do not upload audio to the AI server.
 
 ## Setup
 

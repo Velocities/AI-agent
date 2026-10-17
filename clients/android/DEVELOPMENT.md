@@ -24,7 +24,7 @@ A shared client has no Android `Application` object to hang a process-wide singl
 
 ## Hand platform actions to screens as callbacks
 
-Voice capture lives in `MicrophoneCapture` and playback in `SpeechPlayer`. `ChatScreen` requests `RECORD_AUDIO` and calls those types. `ChatViewModel` only sees WAV bytes and `AgentApi` (`/api/speech/transcribe`, the existing turn stream, `/api/speech/synthesize`).
+Voice capture for Vosk lives in `MicrophoneCapture`. Google transcription uses `SpeechRecognizer` inside `GoogleRemoteSTT` and `GoogleLocalSTT`. Playback stays in `SpeechPlayer`. `ChatScreen` requests `RECORD_AUDIO` and talks to those types through `SpeechToTextConverter`. `ChatViewModel` sees the finished transcript, and WAV bytes only for the Vosk upload (`/api/speech/transcribe`, the turn stream, `/api/speech/synthesize`).
 
 A file picker, share sheet, camera, or notification should be a lambda the screen already understands (`onMic`, `onPickFile`), with the `Intent` and permission code living next to `MainActivity`. Screens should keep importing Compose, not `android.content`.
 
