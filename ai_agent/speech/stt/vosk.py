@@ -1,32 +1,17 @@
-"""Speech-to-text providers.
-
-`SpeechToTextConverter` is the swap point. The first implementation is Vosk,
-which runs on CPU. A later `faster-whisper` provider would subclass this
-same class; it is not a dependency of this prototype.
-"""
-
 from __future__ import annotations
 
 import json
 import logging
 import threading
-from abc import ABC, abstractmethod
 from pathlib import Path
 
+from ai_agent.speech.abstract import SpeechToTextConverter
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.wav import PCM_SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
 
 _CHUNK_BYTES = 8000
-
-
-class SpeechToTextConverter(ABC):
-    """Transcribe 16-bit little-endian mono PCM into text."""
-
-    @abstractmethod
-    def transcribe(self, pcm: bytes, *, sample_rate: int) -> str:
-        """Return the recognized text, or an empty string when nothing was said."""
 
 
 class VoskSpeechToText(SpeechToTextConverter):
@@ -83,12 +68,3 @@ class VoskSpeechToText(SpeechToTextConverter):
             logger.info("Loading Vosk model from %s", self.model_path)
             self._model = vosk.Model(str(self.model_path))
             return self._model
-
-
-def stt_from_settings(settings) -> SpeechToTextConverter:
-    path = settings.speech_stt_model.strip()
-    if not path:
-        raise SpeechNotConfigured(
-            "Speech-to-text is not set up. Set SPEECH_STT_MODEL to a Vosk model directory."
-        )
-    return VoskSpeechToText(Path(path))

@@ -10,25 +10,14 @@ import array
 import logging
 import sys
 import threading
-from abc import ABC, abstractmethod
 from pathlib import Path
 
+from ai_agent.speech.abstract import DEFAULT_VOICE, TextToSpeechConverter
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.text import text_for_speech
 from ai_agent.speech.wav import write_wav
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_VOICE = "af_heart"
-VOICES_FILENAME = "voices-v1.0.bin"
-
-
-def voices_path_for(model_path: Path, voices: str = "") -> Path:
-    """Use an explicit voices file, or the one that sits beside the model."""
-    chosen = voices.strip()
-    if chosen:
-        return Path(chosen)
-    return Path(model_path).parent / VOICES_FILENAME
 
 
 def lang_for_voice(voice: str) -> str:
@@ -36,7 +25,6 @@ def lang_for_voice(voice: str) -> str:
     if voice.startswith(("bf_", "bm_")):
         return "en-gb"
     return "en-us"
-
 
 def _pcm16_le(samples) -> bytes:
     """Pack float samples in [-1, 1] as little-endian 16-bit PCM."""
@@ -83,15 +71,6 @@ def _load_voice(model_path: Path, voices_path: Path):
     session._model_path = str(model_path)
     return Kokoro.from_session(session, str(voices_path))
 
-
-class TextToSpeechConverter(ABC):
-    """Turn reply text into a mono 16-bit WAV file."""
-
-    @abstractmethod
-    def synthesize(self, text: str) -> bytes:
-        """Return WAV bytes. The header carries this engine's sample rate."""
-
-
 class KokoroTTS(TextToSpeechConverter):
     """Synthesize speech with Kokoro-82M. One voice is shared across requests.
 
@@ -136,20 +115,3 @@ class KokoroTTS(TextToSpeechConverter):
             if self._engine is None:
                 self._engine = _load_voice(self.model_path, self.voices_path)
             return self._engine
-
-
-def tts_from_settings(settings) -> TextToSpeechConverter:
-    path = settings.speech_tts_model.strip()
-    if not path:
-        raise SpeechNotConfigured(
-            "Speech synthesis is not set up. "
-            "Set SPEECH_TTS_MODEL to the Kokoro-82M kokoro-v1.0.onnx file."
-        )
-    model_path = Path(path)
-    voices = settings.speech_kokoro_voices
-    voice = settings.speech_kokoro_voice or DEFAULT_VOICE
-    return KokoroTTS(
-        model_path,
-        voices_path_for(model_path, voices),
-        voice,
-    )
