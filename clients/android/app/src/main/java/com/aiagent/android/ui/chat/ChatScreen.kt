@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,6 +97,13 @@ fun ChatScreen(
     viewModel: ChatViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val view = LocalView.current
+    DisposableEffect(state.running, state.speaking) {
+        // Keeps the screen on only while this window is visible. Leaving the app
+        // or turning the screen off does not stop audio that is already playing.
+        view.keepScreenOn = state.running || state.speaking
+        onDispose { view.keepScreenOn = false }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -171,11 +179,9 @@ fun ChatScreen(
             if (chunk.generation != viewModel.state.value.speechGeneration) return@collect
             player.enqueue(
                 chunk.wav,
-                onIdle = { viewModel.onSpeechIdle() },
-                onError = { message ->
-                    viewModel.reportError(message)
-                    viewModel.onSpeechIdle()
-                },
+                chunk.generation,
+                onClipFinished = { generation -> viewModel.onClipFinished(generation) },
+                onError = { message -> viewModel.reportError(message) },
             )
         }
     }
@@ -268,7 +274,7 @@ fun ChatScreen(
                         enabled = state.apiConfigured && state.accessMessage == null,
                         running = state.running,
                         listening = listening,
-                        speaking = state.voiceStatus == "Speaking…",
+                        speaking = state.speaking,
                         voiceBusy = voiceBusy,
                         onSend = { text ->
                             if (listening) {
