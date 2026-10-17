@@ -13,7 +13,7 @@ from types import ModuleType
 import pytest
 
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
-from ai_agent.speech.stt import SpeechToTextProvider, VoskSpeechToText, stt_from_settings
+from ai_agent.speech.stt import SpeechToTextConverter, VoskSpeechToText, stt_from_settings
 from ai_agent.speech.text import text_for_speech
 from ai_agent.speech.tts import KokoroTTS, TextToSpeechConverter, lang_for_voice, tts_from_settings
 from ai_agent.speech.wav import pcm_from_wav, write_wav
@@ -29,8 +29,8 @@ class _Settings:
 
 def test_provider_cannot_be_constructed() -> None:
     with pytest.raises(TypeError):
-        SpeechToTextProvider()  # type: ignore[abstract]
-    assert SpeechToTextProvider.transcribe.__isabstractmethod__ is True
+        SpeechToTextConverter()  # type: ignore[abstract]
+    assert SpeechToTextConverter.transcribe.__isabstractmethod__ is True
     with pytest.raises(TypeError):
         TextToSpeechConverter()  # type: ignore[abstract]
     assert TextToSpeechConverter.synthesize.__isabstractmethod__ is True

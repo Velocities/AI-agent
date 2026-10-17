@@ -14,7 +14,7 @@ from ai_agent.api.serve import main
 from ai_agent.api.speech import _MAX_AUDIO_BYTES
 from ai_agent.config import Settings
 from ai_agent.conversations.db import open_store_at
-from ai_agent.speech.stt import SpeechToTextProvider
+from ai_agent.speech.stt import SpeechToTextConverter
 from ai_agent.speech.wav import write_wav
 
 _USER = "11111111-1111-4111-8111-111111111111"
@@ -27,7 +27,7 @@ class _Tokens:
         return AuthenticatedUser(user_id=_USER)
 
 
-class _FakeStt(SpeechToTextProvider):
+class _FakeStt(SpeechToTextConverter):
     def __init__(self) -> None:
         self.sample_rate = 0
         self.pcm = b""

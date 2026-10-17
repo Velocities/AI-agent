@@ -1,6 +1,6 @@
 """Speech-to-text providers.
 
-`SpeechToTextProvider` is the swap point. The first implementation is Vosk,
+`SpeechToTextConverter` is the swap point. The first implementation is Vosk,
 which runs on CPU. A later `faster-whisper` provider would subclass this
 same class; it is not a dependency of this prototype.
 """
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _CHUNK_BYTES = 8000
 
 
-class SpeechToTextProvider(ABC):
+class SpeechToTextConverter(ABC):
     """Transcribe 16-bit little-endian mono PCM into text."""
 
     @abstractmethod
@@ -29,7 +29,7 @@ class SpeechToTextProvider(ABC):
         """Return the recognized text, or an empty string when nothing was said."""
 
 
-class VoskSpeechToText(SpeechToTextProvider):
+class VoskSpeechToText(SpeechToTextConverter):
     """Vosk recognizer. The model is a directory from a Vosk model zip."""
 
     def __init__(self, model_path: Path):
@@ -85,7 +85,7 @@ class VoskSpeechToText(SpeechToTextProvider):
             return self._model
 
 
-def stt_from_settings(settings) -> SpeechToTextProvider:
+def stt_from_settings(settings) -> SpeechToTextConverter:
     path = settings.speech_stt_model.strip()
     if not path:
         raise SpeechNotConfigured(
