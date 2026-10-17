@@ -79,6 +79,21 @@ def test_sentence_buffer_speaks_finished_sentences_and_skips_hidden_text() -> No
     assert pieces == ["Yes. The lights are already off."]
 
 
+def test_sentence_buffer_speaks_the_rest_of_a_long_reply() -> None:
+    sentence = "Clemson eventually became a leader in desegregation efforts. "
+    text = sentence * 40
+    buffer = SpokenSentenceBuffer()
+    parts = buffer.push(text)
+    parts.extend(buffer.finish())
+    assert " ".join(parts).count("became a leader") == 40
+    head = "word " * 70 + "pushed for change, and Clemson eventually became a leader. "
+    long = SpokenSentenceBuffer()
+    pieces = long.push(head)
+    pieces.extend(long.finish())
+    assert pieces[0].rstrip().endswith("change,")
+    assert "became a leader" in " ".join(pieces)
+
+
 def test_sentence_buffer_flushes_a_short_reply_and_stops_at_the_cap() -> None:
     buffer = SpokenSentenceBuffer()
     assert buffer.push("Hello") == []

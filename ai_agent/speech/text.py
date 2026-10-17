@@ -11,11 +11,12 @@ _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
 _FENCE_MARK = "```"
 
-# Kokoro-82M on CPU is much slower than the chat stream.
+# One-shot synthesis keeps a prefix. A live reply is spoken in full.
 MAX_SPOKEN_CHARS = 1500
 # A tiny sentence joins the next one so "Yes." is not its own clip.
 _MIN_SENTENCE_CHARS = 12
-# A run with no punctuation is still handed to the engine before it gets huge.
+# Kokoro rejects a batch past about 510 phonemes. A longer sentence is split
+# at a clause break so the cut is not a random word like "a".
 _MAX_SENTENCE_CHARS = 400
 _ABBREVIATIONS = frozenset(
     {
@@ -62,9 +63,12 @@ class SpokenSentenceBuffer:
     Sentence ends are `.`, `?`, `!`, and newlines. Commas stay inside the
     sentence. Abbreviations and decimals are not splits. Short sentences join
     the next one. `<think>` blocks and fenced code are left unspoken.
+
+    There is no length cap unless one is passed. A live reply is spoken
+    through to the end.
     """
 
-    def __init__(self, limit: int = MAX_SPOKEN_CHARS) -> None:
+    def __init__(self, limit: int | None = None) -> None:
         self._limit = limit
         self._spoken = 0
         self._held = ""
@@ -74,7 +78,7 @@ class SpokenSentenceBuffer:
 
     def push(self, text: str) -> list[str]:
         """Append tokens and return sentences that are ready to speak."""
-        if not text or self._spoken >= self._limit:
+        if not text or self._capped():
             return []
         self._carry += text
         self._pull_raw(final=False)
@@ -82,7 +86,7 @@ class SpokenSentenceBuffer:
 
     def finish(self) -> list[str]:
         """Speak whatever visible text is still waiting."""
-        if self._spoken >= self._limit and not self._held:
+        if self._capped() and not self._held:
             self._carry = ""
             self._pending = ""
             return []
@@ -146,20 +150,23 @@ class SpokenSentenceBuffer:
         ready: list[str] = []
         for piece in pieces:
             ready.extend(self._accept(piece))
-            if self._spoken >= self._limit:
+            if self._capped():
                 self._pending = ""
                 self._carry = ""
                 break
         return ready
 
+    def _capped(self) -> bool:
+        return self._limit is not None and self._spoken >= self._limit
+
     def _accept(self, raw: str) -> list[str]:
-        if self._spoken >= self._limit:
+        if self._capped():
             return []
         cleaned = clean_spoken(raw)
         if not cleaned:
             return []
-        room = self._limit - self._spoken
-        if len(cleaned) > room:
+        room = None if self._limit is None else self._limit - self._spoken
+        if room is not None and len(cleaned) > room:
             clipped = cleaned[:room]
             space = clipped.rfind(" ")
             if space > 0:
@@ -168,7 +175,7 @@ class SpokenSentenceBuffer:
             if not cleaned:
                 self._spoken = self._limit
                 return []
-            self._spoken = self._limit
+            self._spoken = self._limit if self._limit is not None else self._spoken
             if self._held:
                 cleaned = f"{self._held} {cleaned}".strip()
                 self._held = ""
@@ -177,7 +184,7 @@ class SpokenSentenceBuffer:
         if self._held:
             cleaned = f"{self._held} {cleaned}".strip()
             self._held = ""
-        if len(cleaned) < _MIN_SENTENCE_CHARS and self._spoken < self._limit:
+        if len(cleaned) < _MIN_SENTENCE_CHARS and not self._capped():
             self._held = cleaned
             return []
         return [cleaned]
@@ -196,8 +203,7 @@ def _split_ready(visible: str, *, final: bool) -> tuple[list[str], str]:
             index = start
             continue
         if not final and index - start >= _MAX_SENTENCE_CHARS:
-            space = visible.rfind(" ", start, start + _MAX_SENTENCE_CHARS)
-            split = space if space > start else start + _MAX_SENTENCE_CHARS
+            split = start + _clause_split(visible[start : start + _MAX_SENTENCE_CHARS])
             pieces.append(visible[start:split])
             start = split
             while start < len(visible) and visible[start] == " ":
@@ -209,6 +215,18 @@ def _split_ready(visible: str, *, final: bool) -> tuple[list[str], str]:
         pieces.append(visible[start:])
         start = len(visible)
     return pieces, visible[start:]
+
+
+def _clause_split(window: str) -> int:
+    """Break a too-long sentence at a clause mark, otherwise at a word."""
+    for mark in (",", ";", ":"):
+        pos = window.rfind(mark)
+        if pos > len(window) // 3:
+            return pos + 1
+    space = window.rfind(" ")
+    if space > 0:
+        return space
+    return len(window)
 
 
 def _is_boundary(text: str, start: int, index: int, *, final: bool) -> bool:

@@ -14,12 +14,12 @@ import com.aiagent.android.data.TurnEvent
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,8 +65,8 @@ class ChatViewModel : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState(apiConfigured = serverUrl().isNotBlank()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
-    private val _speechAudio = MutableSharedFlow<SpeechChunk>(extraBufferCapacity = 32)
-    val speechAudio: SharedFlow<SpeechChunk> = _speechAudio.asSharedFlow()
+    private val speechAudioChannel = Channel<SpeechChunk>(Channel.UNLIMITED)
+    val speechAudio: Flow<SpeechChunk> = speechAudioChannel.receiveAsFlow()
 
     private var turnJob: Job? = null
     private var listenJob: Job? = null
@@ -358,7 +358,7 @@ class ChatViewModel : ViewModel() {
     private fun onTurnEvent(conversationId: String, event: TurnEvent) {
         if (event is TurnEvent.Audio && speakArmed && !stopRequested) {
             speechPlaying = true
-            _speechAudio.tryEmit(SpeechChunk(speechGeneration, event.wav))
+            speechAudioChannel.trySend(SpeechChunk(speechGeneration, event.wav))
         }
         _state.update { state ->
             if (state.currentId != conversationId) return@update state

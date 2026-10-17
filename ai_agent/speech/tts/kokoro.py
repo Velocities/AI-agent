@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ai_agent.speech.abstract import TextToSpeechConverter
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
-from ai_agent.speech.text import text_for_speech
+from ai_agent.speech.text import clean_spoken, text_for_speech
 from ai_agent.speech.tts.kokoro_assets import KOKORO_MODEL_NAME, KOKORO_VOICES_NAME
 from ai_agent.speech.wav import write_wav
 
@@ -130,7 +130,9 @@ class KokoroTTS(TextToSpeechConverter):
         return write_wav(_pcm16_le(samples), sample_rate=int(sample_rate))
 
     def synthesize_stream(self, text: str) -> Iterator[bytes]:
-        spoken = text_for_speech(text)
+        # The one-shot path keeps a short prefix. Streaming speaks the sentence
+        # it was given, including the rest of a long reply.
+        spoken = clean_spoken(text)
         if not spoken:
             raise SpeechAudioError("Nothing to speak.")
         engine = self._load()
