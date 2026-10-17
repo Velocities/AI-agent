@@ -7,7 +7,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ai_agent.speech.kokoro_assets import KokoroDownloadError, install_kokoro_assets
+from ai_agent.speech.tts.kokoro_assets import KokoroDownloadError, install_kokoro_assets
 
 DEFAULT_DEST = Path(".ai-agent") / "voice"
 

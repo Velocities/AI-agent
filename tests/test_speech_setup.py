@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ai_agent.cli.config_cmd import main as config_main
-from ai_agent.speech.kokoro_assets import (
+from ai_agent.speech.tts.kokoro_assets import (
     KokoroAsset,
     KokoroDownloadError,
     install_kokoro_assets,

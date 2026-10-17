@@ -12,12 +12,23 @@ import sys
 import threading
 from pathlib import Path
 
-from ai_agent.speech.abstract import DEFAULT_VOICE, TextToSpeechConverter
+from ai_agent.speech.abstract import TextToSpeechConverter
 from ai_agent.speech.errors import SpeechAudioError, SpeechNotConfigured
 from ai_agent.speech.text import text_for_speech
+from ai_agent.speech.tts.kokoro_assets import KOKORO_MODEL_NAME, KOKORO_VOICES_NAME
 from ai_agent.speech.wav import write_wav
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_VOICE = "af_heart"
+
+
+def voices_path_for(model_path: Path, voices: str = "") -> Path:
+    """Use an explicit voices file, or the one that sits beside the model."""
+    chosen = voices.strip()
+    if chosen:
+        return Path(chosen)
+    return Path(model_path).parent / KOKORO_VOICES_NAME
 
 
 def lang_for_voice(voice: str) -> str:
@@ -25,6 +36,7 @@ def lang_for_voice(voice: str) -> str:
     if voice.startswith(("bf_", "bm_")):
         return "en-gb"
     return "en-us"
+
 
 def _pcm16_le(samples) -> bytes:
     """Pack float samples in [-1, 1] as little-endian 16-bit PCM."""
@@ -51,12 +63,12 @@ def _load_voice(model_path: Path, voices_path: Path):
     if not model_path.is_file():
         raise SpeechNotConfigured(
             f"Kokoro-82M model not found: {model_path}. "
-            "Set SPEECH_TTS_MODEL to kokoro-v1.0.onnx."
+            f"Set SPEECH_TTS_MODEL to {KOKORO_MODEL_NAME}."
         )
     if not voices_path.is_file():
         raise SpeechNotConfigured(
             f"Kokoro voices not found: {voices_path}. "
-            "Set SPEECH_KOKORO_VOICES to voices-v1.0.bin."
+            f"Set SPEECH_KOKORO_VOICES to {KOKORO_VOICES_NAME}."
         )
     try:
         import onnxruntime as ort

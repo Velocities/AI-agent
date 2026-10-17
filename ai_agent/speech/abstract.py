@@ -15,10 +15,6 @@ from pathlib import Path
 
 from ai_agent.speech.errors import SpeechNotConfigured
 
-DEFAULT_VOICE = "af_heart"
-VOICES_FILENAME = "voices-v1.0.bin"
-
-
 
 # Front-facing interface for speech-to-text conversion
 class SpeechToTextConverter(ABC):
@@ -40,14 +36,6 @@ def stt_from_settings(settings) -> SpeechToTextConverter:
     return VoskSpeechToText(Path(path))
 
 
-def voices_path_for(model_path: Path, voices: str = "") -> Path:
-    """Use an explicit voices file, or the one that sits beside the model."""
-    chosen = voices.strip()
-    if chosen:
-        return Path(chosen)
-    return Path(model_path).parent / VOICES_FILENAME
-
-
 # Front-facing interface for text-to-speech conversion
 class TextToSpeechConverter(ABC):
     """Turn reply text into a mono 16-bit WAV file."""
@@ -58,7 +46,7 @@ class TextToSpeechConverter(ABC):
 
 
 def tts_from_settings(settings) -> TextToSpeechConverter:
-    from ai_agent.speech.tts.kokoro import KokoroTTS
+    from ai_agent.speech.tts.kokoro import DEFAULT_VOICE, KokoroTTS, voices_path_for
 
     path = settings.speech_tts_model.strip()
     if not path:
