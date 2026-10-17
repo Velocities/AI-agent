@@ -11,6 +11,7 @@ Kokoro-82M, which runs on CPU. A later engine would subclass this same class.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from pathlib import Path
 
 from ai_agent.speech.errors import SpeechNotConfigured
@@ -38,11 +39,20 @@ def stt_from_settings(settings) -> SpeechToTextConverter:
 
 # Front-facing interface for text-to-speech conversion
 class TextToSpeechConverter(ABC):
-    """Turn reply text into a mono 16-bit WAV file."""
+    """Turn reply text into mono 16-bit WAV audio.
+
+    `synthesize` returns one clip. `synthesize_stream` yields clips as the
+    engine produces them. The default stream is that one clip, so an engine
+    that cannot start early still satisfies the interface.
+    """
 
     @abstractmethod
     def synthesize(self, text: str) -> bytes:
         """Return WAV bytes. The header carries this engine's sample rate."""
+
+    def synthesize_stream(self, text: str) -> Iterator[bytes]:
+        """Yield WAV clips. Each clip can be played on its own."""
+        yield self.synthesize(text)
 
 
 def tts_from_settings(settings) -> TextToSpeechConverter:

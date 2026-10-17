@@ -1,7 +1,7 @@
-"""HTTP endpoints for transcription and synthesis.
+"""HTTP endpoints for transcription and one-shot synthesis.
 
-These routes do not run the agent. The client posts a transcript to the
-existing turn stream, then posts the finished reply here to be spoken.
+These routes do not run the agent. A voice turn speaks on the turn stream
+itself. This synthesize route remains for a single finished string.
 """
 
 from __future__ import annotations
@@ -76,15 +76,31 @@ def get_speech_to_text(request: Request) -> SpeechToTextConverter:
     return provider
 
 
-def get_text_to_speech(request: Request) -> TextToSpeechConverter:
+def load_text_to_speech(request: Request) -> TextToSpeechConverter | None:
+    """Return the process-wide converter, loading it on first use.
+
+    None means synthesis is not configured. A converter that was injected
+    for tests is kept as-is.
+    """
     current = getattr(request.app.state, "text_to_speech", None)
     if current is not None:
         return current
     try:
         speaker = tts_from_settings(request.app.state.settings)
-    except SpeechNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except SpeechNotConfigured:
+        return None
     request.app.state.text_to_speech = speaker
+    return speaker
+
+
+def get_text_to_speech(request: Request) -> TextToSpeechConverter:
+    speaker = load_text_to_speech(request)
+    if speaker is None:
+        try:
+            tts_from_settings(request.app.state.settings)
+        except SpeechNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise HTTPException(status_code=503, detail="Speech synthesis is not set up.")
     return speaker
 
 

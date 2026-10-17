@@ -1,3 +1,4 @@
+import base64
 import json
 import stat
 import threading
@@ -138,6 +139,64 @@ def test_turn_persists_the_transcript(tmp_path) -> None:
     assert [row["id"] for row in streamed] == [message.id for message in messages]
     assert streamed[0]["role"] == "user"
     assert streamed[1]["position"] == 1
+
+
+def test_spoken_turn_feeds_the_loaded_converter(tmp_path) -> None:
+    class _Speaker:
+        def __init__(self) -> None:
+            self.sentences: list[str] = []
+
+        def synthesize_stream(self, text: str):
+            self.sentences.append(text)
+            yield b"RIFF" + text.encode()
+
+    client, _store = _client(tmp_path)
+    speaker = _Speaker()
+    headers = {"Authorization": "Bearer alice"}
+    with client:
+        client.app.state.text_to_speech = speaker
+        created = client.post("/api/conversations", json={}, headers=headers)
+        conversation_id = created.json()["id"]
+        response = client.post(
+            f"/api/conversations/{conversation_id}/turns",
+            json={"content": "hello", "speak": True},
+            headers=headers,
+        )
+        silent = client.post(
+            f"/api/conversations/{conversation_id}/turns",
+            json={"content": "again"},
+            headers=headers,
+        )
+    events = [json.loads(line) for line in response.text.splitlines() if line]
+    types = [event["type"] for event in events]
+    assert types.index("audio") < types.index("done")
+    audio = next(event for event in events if event["type"] == "audio")
+    assert base64.b64decode(audio["wav_base64"]).endswith(b"Hello")
+    assert speaker.sentences == ["Hello"]
+    silent_types = [json.loads(line)["type"] for line in silent.text.splitlines() if line]
+    assert "audio" not in silent_types
+
+
+def test_spoken_turn_reports_a_missing_voice(tmp_path) -> None:
+    client, _store = _client(tmp_path)
+    headers = {"Authorization": "Bearer alice"}
+    with client:
+        # A developer .env may point at a real model. This case is the unset one.
+        client.app.state.settings = client.app.state.settings.model_copy(
+            update={"speech_tts_model": "", "speech_kokoro_voices": ""}
+        )
+        client.app.state.text_to_speech = None
+        created = client.post("/api/conversations", json={}, headers=headers)
+        conversation_id = created.json()["id"]
+        response = client.post(
+            f"/api/conversations/{conversation_id}/turns",
+            json={"content": "hello", "speak": True},
+            headers=headers,
+        )
+    events = [json.loads(line) for line in response.text.splitlines() if line]
+    audio = next(event for event in events if event["type"] == "audio")
+    assert "not be spoken" in audio["error"]
+    assert events[-1]["type"] == "done"
 
 
 def test_delete_conversation_removes_it_for_the_owner_only(tmp_path) -> None:

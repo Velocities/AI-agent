@@ -163,20 +163,21 @@ fun ChatScreen(
         withContext(Dispatchers.IO) { capture.release() }
         viewModel.setVoiceStatus(null)
     }
-    LaunchedEffect(state.speechClip?.id) {
-        val clip = state.speechClip
-        if (clip == null) {
-            player.stop()
-            return@LaunchedEffect
+    LaunchedEffect(state.speechGeneration) {
+        player.stop()
+    }
+    LaunchedEffect(Unit) {
+        viewModel.speechAudio.collect { chunk ->
+            if (chunk.generation != viewModel.state.value.speechGeneration) return@collect
+            player.enqueue(
+                chunk.wav,
+                onIdle = { viewModel.onSpeechIdle() },
+                onError = { message ->
+                    viewModel.reportError(message)
+                    viewModel.onSpeechIdle()
+                },
+            )
         }
-        player.play(
-            clip.wav,
-            onDone = { viewModel.onSpeechFinished(clip.id) },
-            onError = { message ->
-                viewModel.reportError(message)
-                viewModel.onSpeechFinished(clip.id)
-            },
-        )
     }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 

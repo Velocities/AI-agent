@@ -129,6 +129,7 @@ class AgentApi(private val baseUrl: String) {
         accessToken: String,
         conversationId: String,
         content: String,
+        speak: Boolean = false,
         onConnection: (HttpURLConnection) -> Unit,
         onEvent: (TurnEvent) -> Unit,
     ) {
@@ -140,7 +141,10 @@ class AgentApi(private val baseUrl: String) {
         }
         onConnection(connection)
         try {
-            val payload = buildJsonObject { put("content", JsonPrimitive(content)) }
+            val payload = buildJsonObject {
+                put("content", JsonPrimitive(content))
+                if (speak) put("speak", JsonPrimitive(true))
+            }
             connection.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = connection.responseCode
             if (code !in 200..299) {

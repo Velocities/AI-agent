@@ -12,6 +12,7 @@ from ai_agent.api.transcript import message_from_record, message_metadata, messa
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore
+from ai_agent.speech.live import SPEECH_NOT_CONFIGURED, ReplySpeaker
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ def iter_turn_events(
     conversation_id: str,
     content: str,
     agent_factory=None,
+    speak: bool = False,
+    speaker=None,
 ) -> Iterator[str]:
     """Run one agent turn and yield NDJSON events.
 
@@ -61,6 +64,8 @@ def iter_turn_events(
                 emit=emit,
                 cancel=cancel,
                 agent_factory=agent_factory,
+                speak=speak,
+                speaker=speaker,
             )
         except AgentCancelled:
             emit({"type": "done", "message": "", "error": "cancelled"})
@@ -100,6 +105,8 @@ def _run_turn(
     emit,
     cancel: threading.Event,
     agent_factory,
+    speak: bool = False,
+    speaker=None,
 ) -> None:
     session = sessions.setdefault(user_id, ApprovalSession())
     prompter = RemoteApprovalPrompter(
@@ -129,6 +136,8 @@ def _run_turn(
             content=content,
             emit=emit,
             cancel=cancel,
+            speak=speak,
+            speaker=speaker,
         )
     finally:
         llm = getattr(agent, "llm", None)
@@ -146,7 +155,16 @@ def _drive_agent(
     content: str,
     emit,
     cancel: threading.Event,
+    speak: bool = False,
+    speaker=None,
 ) -> None:
+    reply_speaker = None
+    if speak:
+        if speaker is None:
+            emit({"type": "audio", "error": SPEECH_NOT_CONFIGURED})
+        else:
+            reply_speaker = ReplySpeaker(speaker, emit, cancel)
+
     def on_message(message) -> None:
         record = store.append_message(
             user_id,
@@ -164,8 +182,11 @@ def _drive_agent(
         agent.messages.append(message_from_record(record))
 
     def on_token(text: str) -> None:
-        if text:
-            emit({"type": "token", "text": text})
+        if not text:
+            return
+        emit({"type": "token", "text": text})
+        if reply_speaker is not None:
+            reply_speaker.push(text)
 
     def on_notice(text: str) -> None:
         emit({"type": "notice", "text": text})
@@ -174,12 +195,16 @@ def _drive_agent(
         if iteration > 1:
             emit({"type": "status", "text": f"Working (step {iteration})"})
 
-    result = agent.run(
-        content,
-        stream_callback=on_token,
-        notice_callback=on_notice,
-        iteration_callback=on_iteration,
-    )
+    try:
+        result = agent.run(
+            content,
+            stream_callback=on_token,
+            notice_callback=on_notice,
+            iteration_callback=on_iteration,
+        )
+    finally:
+        if reply_speaker is not None:
+            reply_speaker.finish()
     emit(
         {
             "type": "done",

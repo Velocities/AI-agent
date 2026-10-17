@@ -7,9 +7,11 @@ Kokoro-82M, which runs on CPU. A later engine would subclass this same class.
 from __future__ import annotations
 
 import array
+import asyncio
 import logging
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 from ai_agent.speech.abstract import TextToSpeechConverter
@@ -58,6 +60,16 @@ def _pcm16_le(samples) -> bytes:
     return pcm.tobytes()
 
 
+def _raise_kokoro_value(exc: ValueError, voice: str, voices_path: Path) -> None:
+    message = str(exc)
+    if "not found" in message.lower():
+        raise SpeechNotConfigured(
+            f"Kokoro voice {voice!r} is not in {voices_path}. "
+            "Set SPEECH_KOKORO_VOICE to a voice id from that file."
+        ) from exc
+    raise SpeechAudioError(message) from exc
+
+
 def _load_voice(model_path: Path, voices_path: Path):
     """Open Kokoro-82M on CPU only."""
     if not model_path.is_file():
@@ -82,6 +94,7 @@ def _load_voice(model_path: Path, voices_path: Path):
     # from_session reads this path when it checks that the weights exist.
     session._model_path = str(model_path)
     return Kokoro.from_session(session, str(voices_path))
+
 
 class KokoroTTS(TextToSpeechConverter):
     """Synthesize speech with Kokoro-82M. One voice is shared across requests.
@@ -111,16 +124,59 @@ class KokoroTTS(TextToSpeechConverter):
                     lang=lang_for_voice(self.voice),
                 )
         except ValueError as exc:
-            message = str(exc)
-            if "not found" in message.lower():
-                raise SpeechNotConfigured(
-                    f"Kokoro voice {self.voice!r} is not in {self.voices_path}. "
-                    "Set SPEECH_KOKORO_VOICE to a voice id from that file."
-                ) from exc
-            raise SpeechAudioError(message) from exc
+            _raise_kokoro_value(exc, self.voice, self.voices_path)
         if sample_rate <= 0 or len(samples) == 0:
             raise SpeechAudioError("Kokoro returned empty audio.")
         return write_wav(_pcm16_le(samples), sample_rate=int(sample_rate))
+
+    def synthesize_stream(self, text: str) -> Iterator[bytes]:
+        spoken = text_for_speech(text)
+        if not spoken:
+            raise SpeechAudioError("Nothing to speak.")
+        engine = self._load()
+        self._lock.acquire()
+        try:
+            yielded = False
+            try:
+                for samples, sample_rate in self._batches(engine, spoken):
+                    if sample_rate <= 0 or len(samples) == 0:
+                        continue
+                    yielded = True
+                    yield write_wav(_pcm16_le(samples), sample_rate=int(sample_rate))
+            except ValueError as exc:
+                _raise_kokoro_value(exc, self.voice, self.voices_path)
+            if not yielded:
+                raise SpeechAudioError("Kokoro returned empty audio.")
+        finally:
+            self._lock.release()
+
+    def _batches(self, engine, spoken: str):
+        """Yield (samples, sample_rate) using the library's own chunking."""
+        create_stream = getattr(engine, "create_stream", None)
+        if create_stream is None:
+            yield engine.create(
+                spoken,
+                voice=self.voice,
+                speed=1.0,
+                lang=lang_for_voice(self.voice),
+            )
+            return
+        agen = create_stream(
+            spoken,
+            voice=self.voice,
+            speed=1.0,
+            lang=lang_for_voice(self.voice),
+        )
+        loop = asyncio.new_event_loop()
+        try:
+            while True:
+                try:
+                    yield loop.run_until_complete(agen.__anext__())
+                except StopAsyncIteration:
+                    break
+        finally:
+            loop.run_until_complete(agen.aclose())
+            loop.close()
 
     def _load(self):
         with self._lock:

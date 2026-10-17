@@ -14,8 +14,11 @@ import com.aiagent.android.data.TurnEvent
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,8 +26,8 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.HttpURLConnection
 
-/** One synthesized reply. [id] changes even when a later clip has the same bytes. */
-class SpeechClip(val id: Long, val wav: ByteArray)
+/** One WAV clip from the turn stream. [generation] drops clips from a stopped reply. */
+class SpeechChunk(val generation: Int, val wav: ByteArray)
 
 data class ChatUiState(
     val apiConfigured: Boolean = false,
@@ -47,7 +50,8 @@ data class ChatUiState(
     val notice: String? = null,
     /** Listening, transcribing, or speaking. Null while a normal turn status is showing. */
     val voiceStatus: String? = null,
-    val speechClip: SpeechClip? = null,
+    /** Bumped when playback should stop. Clips from an older generation are ignored. */
+    val speechGeneration: Int = 0,
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
@@ -61,14 +65,16 @@ class ChatViewModel : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState(apiConfigured = serverUrl().isNotBlank()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
+    private val _speechAudio = MutableSharedFlow<SpeechChunk>(extraBufferCapacity = 32)
+    val speechAudio: SharedFlow<SpeechChunk> = _speechAudio.asSharedFlow()
 
     private var turnJob: Job? = null
     private var listenJob: Job? = null
     @Volatile private var turnConnection: HttpURLConnection? = null
     @Volatile private var stopRequested = false
     @Volatile private var speakArmed = false
-    @Volatile private var speakThisReply: String? = null
-    @Volatile private var speechEpoch = 0
+    @Volatile private var speechGeneration = 0
+    @Volatile private var speechPlaying = false
     private var ttsConfigured = false
 
     init {
@@ -143,8 +149,8 @@ class ChatViewModel : ViewModel() {
         if (content.isEmpty() || _state.value.running) return
         stopSpeech()
         stopRequested = false
-        speakArmed = speakReply
-        speakThisReply = null
+        val speak = speakReply && ttsConfigured
+        speakArmed = speak
         turnJob = viewModelScope.launch {
             try {
                 _state.update {
@@ -170,19 +176,28 @@ class ChatViewModel : ViewModel() {
                         token,
                         conversationId,
                         content,
+                        speak = speak,
                         onConnection = { turnConnection = it },
                         onEvent = { event -> onTurnEvent(conversationId, event) },
                     )
                 }
                 turnConnection = null
-                val reply = speakThisReply
                 _state.update {
                     it.copy(running = false, statusText = null, pendingApproval = null, resolvingApproval = false)
                 }
                 reloadMessages(conversationId)
                 refreshConversations()
-                if (speakReply && !stopRequested && !reply.isNullOrBlank() && _state.value.error == null) {
-                    speak(reply)
+                if (speak && !speechPlaying && !stopRequested) {
+                    _state.update { state ->
+                        if (state.voiceStatus == "Speaking…") state.copy(voiceStatus = null) else state
+                    }
+                }
+                if (speakReply && !speak && !stopRequested && _state.value.error == null) {
+                    _state.update {
+                        it.copy(
+                            notice = "This server has no Kokoro voice configured, so the reply was not spoken.",
+                        )
+                    }
                 }
             } finally {
                 speakArmed = false
@@ -252,19 +267,21 @@ class ChatViewModel : ViewModel() {
     }
 
     fun stopSpeech() {
-        speechEpoch++
+        speechGeneration++
+        speechPlaying = false
         _state.update { state ->
             state.copy(
-                speechClip = null,
+                speechGeneration = speechGeneration,
                 voiceStatus = if (state.voiceStatus == "Speaking…") null else state.voiceStatus,
             )
         }
     }
 
-    fun onSpeechFinished(id: Long) {
+    fun onSpeechIdle() {
+        speechPlaying = false
         _state.update { state ->
-            if (state.speechClip?.id != id) state
-            else state.copy(speechClip = null, voiceStatus = null)
+            if (state.running || state.voiceStatus != "Speaking…") state
+            else state.copy(voiceStatus = null)
         }
     }
 
@@ -272,7 +289,8 @@ class ChatViewModel : ViewModel() {
     fun stopTurn() {
         val id = _state.value.currentId
         val wasRunning = _state.value.running
-        speechEpoch++
+        speechGeneration++
+        speechPlaying = false
         stopRequested = true
         turnConnection?.disconnect()
         turnConnection = null
@@ -283,7 +301,7 @@ class ChatViewModel : ViewModel() {
                 running = false,
                 statusText = null,
                 pendingApproval = null,
-                speechClip = null,
+                speechGeneration = speechGeneration,
                 voiceStatus = null,
             )
         }
@@ -338,6 +356,10 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun onTurnEvent(conversationId: String, event: TurnEvent) {
+        if (event is TurnEvent.Audio && speakArmed && !stopRequested) {
+            speechPlaying = true
+            _speechAudio.tryEmit(SpeechChunk(speechGeneration, event.wav))
+        }
         _state.update { state ->
             if (state.currentId != conversationId) return@update state
             when (event) {
@@ -353,12 +375,12 @@ class ChatViewModel : ViewModel() {
                     )
                 }
                 is TurnEvent.ApprovalRequired -> state.copy(pendingApproval = event.request)
-                is TurnEvent.Done -> {
-                    if (speakArmed) speakThisReply = event.message
-                    state.copy(
-                        error = event.error?.takeUnless { it in QUIET_DONE_ERRORS }?.let(::describeTurnError),
-                    )
-                }
+                is TurnEvent.Done -> state.copy(
+                    error = event.error?.takeUnless { it in QUIET_DONE_ERRORS }?.let(::describeTurnError),
+                )
+                is TurnEvent.Audio ->
+                    if (speakArmed && !stopRequested) state.copy(voiceStatus = "Speaking…") else state
+                is TurnEvent.AudioFailed -> state.copy(notice = event.message)
                 is TurnEvent.Failed -> state.copy(error = event.message)
                 is TurnEvent.Notice, TurnEvent.Unknown -> state
             }
@@ -399,27 +421,6 @@ class ChatViewModel : ViewModel() {
 
         /** Cancellation is user-initiated and max_iterations already arrives as the reply text. */
         val QUIET_DONE_ERRORS = setOf("cancelled", "max_iterations")
-    }
-
-    private suspend fun speak(reply: String) {
-        val epoch = speechEpoch
-        if (!ttsConfigured) {
-            _state.update {
-                it.copy(notice = "This server has no Kokoro voice configured, so the reply was not spoken.")
-            }
-            return
-        }
-        _state.update { it.copy(voiceStatus = "Speaking…") }
-        val wav = call { token -> api().synthesize(token, reply) }
-        if (wav == null) {
-            _state.update { it.copy(voiceStatus = null) }
-            return
-        }
-        val id = System.nanoTime()
-        _state.update { state ->
-            if (epoch != speechEpoch) state.copy(voiceStatus = null, speechClip = null)
-            else state.copy(speechClip = SpeechClip(id, wav), voiceStatus = "Speaking…")
-        }
     }
 
     private fun describeTurnError(error: String): String = when (error) {

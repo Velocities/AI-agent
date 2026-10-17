@@ -4,38 +4,67 @@ import android.media.MediaPlayer
 import java.io.File
 import java.io.IOException
 
-/** Plays a synthesized WAV reply. Capture and transcription live elsewhere. */
+/** Plays synthesized WAV clips in order. Capture and transcription live elsewhere. */
 class SpeechPlayer(private val cacheDir: File) {
+    private val pending = ArrayDeque<ByteArray>()
     private var player: MediaPlayer? = null
     private var file: File? = null
     private var generation = 0
+    private var sequence = 0
+    private var onIdle: (() -> Unit)? = null
+    private var onError: ((String) -> Unit)? = null
 
-    fun play(wav: ByteArray, onDone: () -> Unit, onError: (String) -> Unit) {
-        stop()
-        if (wav.size < 44 || wav[0] != 'R'.code.toByte()) {
-            onError("The server sent audio that isn't a WAV file.")
-            return
-        }
+    /** Play [wav] after any clips already queued. */
+    fun enqueue(wav: ByteArray, onIdle: () -> Unit, onError: (String) -> Unit) {
+        this.onIdle = onIdle
+        this.onError = onError
+        pending.addLast(wav)
+        if (player == null) playNext()
+    }
+
+    fun stop() {
+        generation += 1
+        pending.clear()
+        releaseCurrent()
+    }
+
+    private fun playNext() {
         val token = generation
-        val target = File(cacheDir, "speech-reply-$token.wav")
+        while (token == generation) {
+            val wav = pending.removeFirstOrNull()
+            if (wav == null) {
+                onIdle?.invoke()
+                return
+            }
+            if (start(wav, token)) return
+        }
+    }
+
+    private fun start(wav: ByteArray, token: Int): Boolean {
+        if (wav.size < 44 || wav[0] != 'R'.code.toByte()) {
+            onError?.invoke("The server sent audio that isn't a WAV file.")
+            return false
+        }
+        val target = File(cacheDir, "speech-reply-$token-${sequence++}.wav")
         try {
             target.writeBytes(wav)
         } catch (error: IOException) {
-            onError(error.message ?: "Couldn't store the spoken reply.")
-            return
+            onError?.invoke(error.message ?: "Couldn't store the spoken reply.")
+            return false
         }
         val media = MediaPlayer()
         player = media
         file = target
         media.setOnCompletionListener {
             if (token != generation) return@setOnCompletionListener
-            finish(media, target)
-            onDone()
+            releaseCurrent()
+            playNext()
         }
         media.setOnErrorListener { _, _, _ ->
             if (token != generation) return@setOnErrorListener true
-            finish(media, target)
-            onError("Couldn't play the spoken reply.")
+            releaseCurrent()
+            onError?.invoke("Couldn't play the spoken reply.")
+            playNext()
             true
         }
         try {
@@ -43,13 +72,14 @@ class SpeechPlayer(private val cacheDir: File) {
             media.prepare()
             media.start()
         } catch (error: Exception) {
-            finish(media, target)
-            onError(error.message ?: "Couldn't play the spoken reply.")
+            releaseCurrent()
+            onError?.invoke(error.message ?: "Couldn't play the spoken reply.")
+            return false
         }
+        return true
     }
 
-    fun stop() {
-        generation += 1
+    private fun releaseCurrent() {
         val media = player
         val target = file
         player = null
@@ -64,15 +94,5 @@ class SpeechPlayer(private val cacheDir: File) {
             media.release()
         }
         target?.delete()
-    }
-
-    private fun finish(media: MediaPlayer, target: File) {
-        if (player === media) player = null
-        if (file == target) file = null
-        try {
-            media.release()
-        } catch (_: RuntimeException) {
-        }
-        target.delete()
     }
 }
