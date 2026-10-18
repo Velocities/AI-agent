@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -45,7 +47,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
@@ -61,12 +62,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -507,6 +514,82 @@ private fun CenteredNote(text: String, emphasised: Boolean = false) {
     }
 }
 
+private const val MessageMaxLines = 6
+
+@Composable
+private fun MessageField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    trailingIcon: @Composable () -> Unit,
+) {
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
+    val textMeasurer = rememberTextMeasurer()
+    val interactionSource = remember { MutableInteractionSource() }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        textStyle = textStyle,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        minLines = 1,
+        maxLines = MessageMaxLines,
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        interactionSource = interactionSource,
+        modifier = modifier,
+        decorationBox = { innerTextField ->
+            TextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = {
+                    BoxWithConstraints {
+                        val width = constraints.maxWidth
+                        val overflows = value.isNotEmpty() &&
+                            width > 0 &&
+                            width != Constraints.Infinity &&
+                            textMeasurer.measure(
+                                text = value,
+                                style = textStyle,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
+                                maxLines = MessageMaxLines,
+                                constraints = Constraints(maxWidth = width),
+                            ).hasVisualOverflow
+                        Box {
+                            // The field keeps the full string, so sending is unchanged. Once it
+                            // no longer fits, hide that scrolling text and draw an ellipsis instead.
+                            Box(Modifier.alpha(if (overflows) 0f else 1f)) { innerTextField() }
+                            if (overflows) {
+                                Text(
+                                    text = value,
+                                    modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
+                                    style = textStyle,
+                                    maxLines = MessageMaxLines,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                },
+                enabled = enabled,
+                singleLine = false,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interactionSource,
+                placeholder = { Text(placeholder) },
+                trailingIcon = trailingIcon,
+                shape = RoundedCornerShape(24.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                ),
+            )
+        },
+    )
+}
+
 @Composable
 private fun Composer(
     enabled: Boolean,
@@ -524,6 +607,9 @@ private fun Composer(
 ) {
     var draft by rememberSaveable { mutableStateOf("") }
     val canType = enabled && !listening && !voiceBusy
+    // Partials belong in the field value. A placeholder stays one line tall and ellipsizes,
+    // so spoken text never grew the way typed text does.
+    val shown = if (listening) heard else draft
 
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -533,29 +619,12 @@ private fun Composer(
                 .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
         ) {
         Row(verticalAlignment = Alignment.Bottom) {
-            TextField(
-                value = draft,
+            MessageField(
+                value = shown,
                 onValueChange = { draft = it },
                 enabled = canType,
-                placeholder = {
-                    Text(
-                        when {
-                            listening && heard.isNotBlank() -> heard
-                            listening -> "Listening…"
-                            else -> "Message"
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                maxLines = 6,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                shape = RoundedCornerShape(24.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
+                placeholder = if (listening) "Listening…" else "Message",
+                modifier = Modifier.weight(1f),
                 trailingIcon = {
                     IconButton(enabled = enabled && !running && !voiceBusy, onClick = onMic) {
                         if (voiceBusy) {
@@ -568,7 +637,6 @@ private fun Composer(
                         }
                     }
                 },
-                modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
             if (running || speaking) {
