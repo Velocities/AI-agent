@@ -1,13 +1,10 @@
 package com.aiagent.android.ui.chat
 
-import android.app.Activity
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -49,13 +47,14 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,22 +62,37 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aiagent.android.BuildConfig
+import com.aiagent.android.audio.RECORD_AUDIO_PERMISSION
+import com.aiagent.android.audio.SpeechPlayer
+import com.aiagent.android.audio.hasMicrophonePermission
+import com.aiagent.android.speech.SpeechHandled
+import com.aiagent.android.speech.SpeechProviderStore
+import com.aiagent.android.speech.SttProvider
+import com.aiagent.android.speech.speechToTextConverter
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.CommandOutcome
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
 import com.aiagent.android.ui.markdown.MarkdownText
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,6 +106,13 @@ fun ChatScreen(
     viewModel: ChatViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val view = LocalView.current
+    DisposableEffect(state.running, state.speaking) {
+        // Keeps the screen on only while this window is visible. Leaving the app
+        // or turning the screen off does not stop audio that is already playing.
+        view.keepScreenOn = state.running || state.speaking
+        onDispose { view.keepScreenOn = false }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -108,6 +129,117 @@ fun ChatScreen(
         state.notice?.let {
             snackbar.showSnackbar(it)
             viewModel.clearNotice()
+        }
+    }
+    val context = LocalContext.current
+    val player = remember { SpeechPlayer(context.cacheDir) }
+    val providerStore = remember { SpeechProviderStore(context) }
+    var providerId by rememberSaveable { mutableStateOf(providerStore.load().id) }
+    val provider = SttProvider.fromId(providerId)
+    var showSttInfo by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(false) }
+    var heard by remember { mutableStateOf("") }
+    var listenSession by remember { mutableIntStateOf(0) }
+    val converter = remember(provider) {
+        speechToTextConverter(provider, context) { wav -> viewModel.transcribeRecording(wav) }
+    }
+    DisposableEffect(converter) {
+        onDispose { converter.release() }
+    }
+    DisposableEffect(Unit) {
+        onDispose { player.stop() }
+    }
+    fun finishListening(result: Result<String>, originId: String?) {
+        listening = false
+        heard = ""
+        result.fold(
+            onSuccess = { text -> viewModel.submitTranscript(text, originId) },
+            onFailure = { error ->
+                viewModel.setVoiceStatus(null)
+                if (error !is SpeechHandled) {
+                    viewModel.reportError(error.message ?: "Couldn't transcribe that.")
+                }
+            },
+        )
+    }
+    fun beginListening() {
+        val originId = viewModel.state.value.currentId
+        val session = ++listenSession
+        var settled = false
+        heard = ""
+        listening = true
+        viewModel.setVoiceStatus("Listening…")
+        try {
+            converter.start(
+                onPartial = { partial ->
+                    if (session == listenSession && partial.isNotBlank()) heard = partial
+                },
+                onFinished = { result ->
+                    if (session == listenSession) {
+                        settled = true
+                        finishListening(result, originId)
+                    }
+                },
+            )
+        } catch (error: Exception) {
+            listenSession++
+            listening = false
+            heard = ""
+            converter.cancel()
+            viewModel.setVoiceStatus(null)
+            if (!settled) viewModel.reportError(error.message ?: "Couldn't use the microphone.")
+        }
+    }
+    fun endListening() {
+        if (!listening) return
+        val session = listenSession
+        listening = false
+        heard = ""
+        viewModel.setVoiceStatus("Transcribing…")
+        converter.stop()
+        // Vosk can spend a while loading its model. Google should answer quickly after stop.
+        if (provider == SttProvider.VOSK) return
+        scope.launch {
+            delay(8_000)
+            if (session != listenSession || viewModel.state.value.voiceStatus != "Transcribing…") return@launch
+            listenSession++
+            converter.cancel()
+            viewModel.setVoiceStatus(null)
+            viewModel.reportError("Transcription didn't finish. Try again.")
+        }
+    }
+    fun cancelListening() {
+        if (!listening) return
+        listenSession++
+        listening = false
+        heard = ""
+        converter.cancel()
+        viewModel.setVoiceStatus(null)
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginListening() else viewModel.reportError("Allow microphone access to speak to the agent.")
+    }
+    LaunchedEffect(listening) {
+        if (!listening) return@LaunchedEffect
+        delay(60_000)
+        endListening()
+    }
+    LaunchedEffect(state.currentId) {
+        if (!listening) return@LaunchedEffect
+        cancelListening()
+    }
+    LaunchedEffect(state.speechGeneration) {
+        player.stop()
+    }
+    LaunchedEffect(Unit) {
+        viewModel.speechAudio.collect { chunk ->
+            if (chunk.generation != viewModel.state.value.speechGeneration) return@collect
+            player.enqueue(
+                chunk.wav,
+                chunk.generation,
+                onClipFinished = { generation -> viewModel.onClipFinished(generation) },
+                onError = { message -> viewModel.reportError(message) },
+            )
         }
     }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
@@ -194,11 +326,41 @@ fun ChatScreen(
                     )
                 },
                 bottomBar = {
+                    val voiceBusy = state.voiceStatus == "Checking voice…" || state.voiceStatus == "Transcribing…"
+                    val composerEnabled = state.apiConfigured && state.accessMessage == null
                     Composer(
-                        enabled = state.apiConfigured && state.accessMessage == null,
+                        enabled = composerEnabled,
                         running = state.running,
-                        onSend = viewModel::send,
-                        onStop = viewModel::stopTurn,
+                        listening = listening,
+                        heard = heard,
+                        speaking = state.speaking,
+                        voiceBusy = voiceBusy,
+                        provider = provider,
+                        onProvider = { chosen ->
+                            providerId = chosen.id
+                            providerStore.save(chosen)
+                        },
+                        onProviderInfo = { showSttInfo = true },
+                        onSend = { text ->
+                            cancelListening()
+                            viewModel.send(text)
+                        },
+                        onStop = { if (state.running) viewModel.stopTurn() else viewModel.stopSpeech() },
+                        onMic = {
+                            if (listening) {
+                                endListening()
+                            } else {
+                                viewModel.stopSpeech()
+                                viewModel.prepareToListen(requiresServerStt = provider == SttProvider.VOSK) {
+                                    if (context.hasMicrophonePermission()) {
+                                        beginListening()
+                                    } else {
+                                        viewModel.setVoiceStatus(null)
+                                        micPermission.launch(RECORD_AUDIO_PERMISSION)
+                                    }
+                                }
+                            }
+                        },
                     )
                 },
             ) { padding ->
@@ -230,6 +392,10 @@ fun ChatScreen(
         )
     }
 
+    if (showSttInfo) {
+        SttPrivacyDialog(onDismiss = { showSttInfo = false })
+    }
+
     if (BuildConfig.AUTH_DEBUG && showAuthDebug) {
         AlertDialog(
             onDismissRequest = { showAuthDebug = false },
@@ -252,6 +418,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
         state.streamingText.isNotEmpty(),
         state.running && state.streamingText.isEmpty(),
         approval != null,
+        state.voiceStatus != null && !state.running,
     ).count { it }
 
     LaunchedEffect(items.size, tailCount, state.streamingText.length / 200) {
@@ -259,7 +426,14 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
         if (last >= 0) listState.animateScrollToItem(last)
     }
 
-    if (items.isEmpty() && state.pendingUserText == null && state.streamingText.isEmpty() && !state.running && !state.loadingMessages) {
+    if (
+        items.isEmpty() &&
+        state.pendingUserText == null &&
+        state.streamingText.isEmpty() &&
+        !state.running &&
+        !state.loadingMessages &&
+        state.voiceStatus == null
+    ) {
         CenteredNote("How can I help?", emphasised = true)
         return
     }
@@ -284,6 +458,9 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
             item(key = "streaming") { AssistantReply(state.streamingText) }
         } else if (state.running) {
             item(key = "status") { StatusRow(state.statusText ?: "Thinking…") }
+        }
+        if (state.voiceStatus != null && !state.running) {
+            item(key = "voice-status") { StatusRow(state.voiceStatus) }
         }
         if (approval != null) {
             item(key = "approval-${approval.approvalId}") {
@@ -337,67 +514,132 @@ private fun CenteredNote(text: String, emphasised: Boolean = false) {
     }
 }
 
-@Composable
-private fun Composer(
-    enabled: Boolean,
-    running: Boolean,
-    onSend: (String) -> Unit,
-    onStop: () -> Unit,
-) {
-    var draft by rememberSaveable { mutableStateOf("") }
-    val context = LocalContext.current
-    val speechIntent = remember {
-        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your message")
-    }
-    val canDictate = remember { speechIntent.resolveActivity(context.packageManager) != null }
-    val dictation = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!spoken.isNullOrBlank()) draft = if (draft.isBlank()) spoken else "${draft.trimEnd()} $spoken"
-    }
+private const val MessageMaxLines = 6
 
-    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            modifier = Modifier
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
-        ) {
-            TextField(
-                value = draft,
-                onValueChange = { draft = it },
+@Composable
+private fun MessageField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    trailingIcon: @Composable () -> Unit,
+) {
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
+    val textMeasurer = rememberTextMeasurer()
+    val interactionSource = remember { MutableInteractionSource() }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        textStyle = textStyle,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        minLines = 1,
+        maxLines = MessageMaxLines,
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        interactionSource = interactionSource,
+        modifier = modifier,
+        decorationBox = { innerTextField ->
+            TextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = {
+                    BoxWithConstraints {
+                        val width = constraints.maxWidth
+                        val overflows = value.isNotEmpty() &&
+                            width > 0 &&
+                            width != Constraints.Infinity &&
+                            textMeasurer.measure(
+                                text = value,
+                                style = textStyle,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
+                                maxLines = MessageMaxLines,
+                                constraints = Constraints(maxWidth = width),
+                            ).hasVisualOverflow
+                        Box {
+                            // The field keeps the full string, so sending is unchanged. Once it
+                            // no longer fits, hide that scrolling text and draw an ellipsis instead.
+                            Box(Modifier.alpha(if (overflows) 0f else 1f)) { innerTextField() }
+                            if (overflows) {
+                                Text(
+                                    text = value,
+                                    modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
+                                    style = textStyle,
+                                    maxLines = MessageMaxLines,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                },
                 enabled = enabled,
-                placeholder = { Text("Message") },
-                maxLines = 6,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                singleLine = false,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interactionSource,
+                placeholder = { Text(placeholder) },
+                trailingIcon = trailingIcon,
                 shape = RoundedCornerShape(24.dp),
                 colors = TextFieldDefaults.colors(
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent,
                     disabledIndicatorColor = Color.Transparent,
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
                 ),
-                trailingIcon = if (canDictate) {
-                    {
-                        IconButton(
-                            enabled = enabled,
-                            onClick = {
-                                try {
-                                    dictation.launch(speechIntent)
-                                } catch (_: ActivityNotFoundException) {
-                                }
-                            },
-                        ) { Icon(AppIcons.Mic, contentDescription = "Dictate") }
-                    }
-                } else {
-                    null
-                },
+            )
+        },
+    )
+}
+
+@Composable
+private fun Composer(
+    enabled: Boolean,
+    running: Boolean,
+    listening: Boolean,
+    heard: String,
+    speaking: Boolean,
+    voiceBusy: Boolean,
+    provider: SttProvider,
+    onProvider: (SttProvider) -> Unit,
+    onProviderInfo: () -> Unit,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+    onMic: () -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf("") }
+    val canType = enabled && !listening && !voiceBusy
+    // Partials belong in the field value. A placeholder stays one line tall and ellipsizes,
+    // so spoken text never grew the way typed text does.
+    val shown = if (listening) heard else draft
+
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
+        ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            MessageField(
+                value = shown,
+                onValueChange = { draft = it },
+                enabled = canType,
+                placeholder = if (listening) "Listening…" else "Message",
                 modifier = Modifier.weight(1f),
+                trailingIcon = {
+                    IconButton(enabled = enabled && !running && !voiceBusy, onClick = onMic) {
+                        if (voiceBusy) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                        } else {
+                            Icon(
+                                if (listening) AppIcons.Stop else AppIcons.Mic,
+                                contentDescription = if (listening) "Stop listening" else "Speak",
+                            )
+                        }
+                    }
+                },
             )
             Spacer(Modifier.width(8.dp))
-            if (running) {
+            if (running || speaking) {
                 FilledIconButton(
                     onClick = onStop,
                     colors = IconButtonDefaults.filledIconButtonColors(
@@ -405,17 +647,24 @@ private fun Composer(
                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
                     ),
                     modifier = Modifier.size(56.dp),
-                ) { Icon(AppIcons.Stop, contentDescription = "Stop") }
+                ) { Icon(AppIcons.Stop, contentDescription = if (speaking) "Stop speaking" else "Stop") }
             } else {
                 FilledIconButton(
                     onClick = {
                         onSend(draft)
                         draft = ""
                     },
-                    enabled = enabled && draft.isNotBlank(),
+                    enabled = canType && draft.isNotBlank(),
                     modifier = Modifier.size(56.dp),
                 ) { Icon(AppIcons.Send, contentDescription = "Send") }
             }
+        }
+            SttProviderPicker(
+                selected = provider,
+                enabled = enabled && !running && !listening && !voiceBusy,
+                onSelect = onProvider,
+                onInfo = onProviderInfo,
+            )
         }
     }
 }

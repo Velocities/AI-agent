@@ -142,6 +142,12 @@ class TranscriptTest {
         ) as TurnEvent.Message
         assertEquals(2, message.message.position)
         assertEquals(TurnEvent.Done("", "cancelled"), TurnEvent.parse("""{"type":"done","message":"","error":"cancelled"}"""))
+        val audio = TurnEvent.parse(
+            """{"type":"audio","wav_base64":"UklGRg=="}""",
+        ) as TurnEvent.Audio
+        assertEquals(4, audio.wav.size)
+        val failed = TurnEvent.parse("""{"type":"audio","error":"no voice"}""") as TurnEvent.AudioFailed
+        assertEquals("no voice", failed.message)
     }
 
     @Test

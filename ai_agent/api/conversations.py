@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
+from ai_agent.api.speech import load_text_to_speech
 from ai_agent.api.turns import AGENT_FACTORY_MISSING_MESSAGE, iter_turn_events
 from ai_agent.conversations.store import (
     Conversation,
@@ -29,6 +30,7 @@ class TurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     content: str = Field(min_length=1)
+    speak: bool = False
 
     @field_validator("content")
     @classmethod
@@ -162,6 +164,7 @@ def start_turn(
             status_code=409,
             detail="A turn is already running for this conversation.",
         )
+    speaker = load_text_to_speech(request) if body.speak else None
     generator = iter_turn_events(
         settings=request.app.state.settings,
         store=store,
@@ -171,6 +174,8 @@ def start_turn(
         conversation_id=conversation_id,
         content=body.content,
         agent_factory=request.app.state.agent_factory,
+        speak=body.speak,
+        speaker=speaker,
     )
     return StreamingResponse(
         generator,
