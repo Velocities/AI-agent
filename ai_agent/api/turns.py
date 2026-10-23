@@ -12,6 +12,7 @@ from ai_agent.api.transcript import message_from_record, message_metadata, messa
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore
+from ai_agent.llm.client.types import ImageInput
 from ai_agent.speech.live import SPEECH_NOT_CONFIGURED, ReplySpeaker
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ def iter_turn_events(
     agent_factory=None,
     speak: bool = False,
     speaker=None,
+    images: list[ImageInput] | None = None,
 ) -> Iterator[str]:
     """Run one agent turn and yield NDJSON events.
 
@@ -66,6 +68,7 @@ def iter_turn_events(
                 agent_factory=agent_factory,
                 speak=speak,
                 speaker=speaker,
+                images=images,
             )
         except AgentCancelled:
             emit({"type": "done", "message": "", "error": "cancelled"})
@@ -107,6 +110,7 @@ def _run_turn(
     agent_factory,
     speak: bool = False,
     speaker=None,
+    images: list[ImageInput] | None = None,
 ) -> None:
     session = sessions.setdefault(user_id, ApprovalSession())
     prompter = RemoteApprovalPrompter(
@@ -138,6 +142,7 @@ def _run_turn(
             cancel=cancel,
             speak=speak,
             speaker=speaker,
+            images=images,
         )
     finally:
         llm = getattr(agent, "llm", None)
@@ -157,6 +162,7 @@ def _drive_agent(
     cancel: threading.Event,
     speak: bool = False,
     speaker=None,
+    images: list[ImageInput] | None = None,
 ) -> None:
     reply_speaker = None
     if speak:
@@ -201,6 +207,7 @@ def _drive_agent(
             stream_callback=on_token,
             notice_callback=on_notice,
             iteration_callback=on_iteration,
+            images=images,
         )
     finally:
         if reply_speaker is not None:

@@ -15,6 +15,18 @@ class ToolCall:
     arguments: dict
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    """One image attached to a chat message.
+
+    Providers translate this into their own request format. `data` is the
+    raw file bytes and `media_type` is an IANA type such as ``image/png``.
+    """
+
+    data: bytes
+    media_type: str
+
+
 @dataclass
 class LLMMessage:
     role: str
@@ -22,6 +34,7 @@ class LLMMessage:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
+    images: list[ImageInput] = field(default_factory=list)
 
 
 @dataclass

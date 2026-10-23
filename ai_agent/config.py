@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ai_agent.images import DEFAULT_IMAGE_MAX_BYTES
+
 
 class ConfirmationMode(str, Enum):
     PARANOID = "paranoid"
@@ -149,6 +151,12 @@ class Settings(BaseSettings):
         alias="AGENT_CONFIRMATION_MODE",
     )
     agent_output_limit: int = Field(default=32768, alias="AGENT_OUTPUT_LIMIT")
+    image_max_bytes: int = Field(
+        default=DEFAULT_IMAGE_MAX_BYTES,
+        alias="IMAGE_MAX_BYTES",
+        ge=1,
+        description="Maximum size in bytes for one image attached to a chat message.",
+    )
     agent_audit_log: str | None = Field(default=None, alias="AGENT_AUDIT_LOG")
     agent_policy_file: str | None = Field(default=None, alias="AGENT_POLICY_FILE")
     agent_scratch_dir: Path = Field(

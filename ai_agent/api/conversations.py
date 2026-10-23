@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
@@ -16,6 +18,8 @@ from ai_agent.conversations.store import (
     ConversationStore,
     Message,
 )
+from ai_agent.images import ImageRejected, validate_image_bytes
+from ai_agent.llm.client.types import ImageInput
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -145,13 +149,20 @@ def list_messages(
 
 
 @router.post("/{conversation_id}/turns")
-def start_turn(
+async def start_turn(
     conversation_id: str,
-    body: TurnRequest,
     request: Request,
     user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> StreamingResponse:
+    """Start a turn from JSON or from a multipart upload.
+
+    JSON is ``{"content": "...", "speak": false}``. Multipart uses a
+    ``content`` field and zero or more ``images`` files. Image bytes are
+    validated here and passed to the agent as ``ImageInput``. They are not
+    written into the stored transcript.
+    """
+    content, images, speak = await _read_turn_input(request)
     if store.get_conversation(user.user_id, conversation_id) is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
     # Checked before claiming the broker so a refused turn leaves the
@@ -164,7 +175,7 @@ def start_turn(
             status_code=409,
             detail="A turn is already running for this conversation.",
         )
-    speaker = load_text_to_speech(request) if body.speak else None
+    speaker = load_text_to_speech(request) if speak else None
     generator = iter_turn_events(
         settings=request.app.state.settings,
         store=store,
@@ -172,10 +183,11 @@ def start_turn(
         sessions=request.app.state.approval_sessions,
         user_id=user.user_id,
         conversation_id=conversation_id,
-        content=body.content,
+        content=content,
         agent_factory=request.app.state.agent_factory,
-        speak=body.speak,
+        speak=speak,
         speaker=speaker,
+        images=images,
     )
     return StreamingResponse(
         generator,
@@ -202,6 +214,62 @@ def resolve_approval(
     if not found:
         raise HTTPException(status_code=404, detail="Approval not found.")
     return {"ok": True}
+
+
+async def _read_turn_input(request: Request) -> tuple[str, list[ImageInput], bool]:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        return await _read_multipart_turn(request)
+    return await _read_json_turn(request)
+
+
+async def _read_json_turn(request: Request) -> tuple[str, list[ImageInput], bool]:
+    raw = await request.body()
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Request body must be JSON.") from None
+    try:
+        body = TurnRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from None
+    return body.content, [], body.speak
+
+
+async def _read_multipart_turn(request: Request) -> tuple[str, list[ImageInput], bool]:
+    form = await request.form()
+    try:
+        raw_content = form.get("content")
+        content = raw_content if isinstance(raw_content, str) else ""
+        speak = _form_flag(form.get("speak"))
+        max_bytes = request.app.state.settings.image_max_bytes
+        images: list[ImageInput] = []
+        for item in form.getlist("images"):
+            if not hasattr(item, "read"):
+                raise HTTPException(status_code=400, detail="Invalid image upload.")
+            data = await item.read(max_bytes + 1)
+            declared = getattr(item, "content_type", None)
+            try:
+                images.append(
+                    validate_image_bytes(
+                        data,
+                        declared_type=declared if isinstance(declared, str) else None,
+                        max_bytes=max_bytes,
+                    )
+                )
+            except ImageRejected as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+        if not content.strip() and not images:
+            raise HTTPException(status_code=400, detail="content is required")
+        return content, images, speak
+    finally:
+        await form.close()
+
+
+def _form_flag(value: object) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _conversation_response(conversation: Conversation) -> ConversationResponse:

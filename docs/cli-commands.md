@@ -32,6 +32,7 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 | Input | What it does |
 |-------|----------------|
 | any other text | Sends that message as a turn. |
+| `@file.png` in the text | Attaches that PNG, JPEG, or WebP. Example: `@screenshot.png What's wrong with this UI?` |
 | `/new` | Starts a new conversation. |
 | `/list` | Lists conversations on the server. |
 | `/server` | Prints the saved server URL. |

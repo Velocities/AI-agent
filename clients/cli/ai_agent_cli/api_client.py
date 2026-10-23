@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import httpx
+
+from ai_agent.llm.client.types import ImageInput
+
+_IMAGE_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+}
 
 
 class AgentApiError(RuntimeError):
@@ -36,12 +44,32 @@ class AgentApiClient:
         rows = payload.get("messages", [])
         return rows if isinstance(rows, list) else []
 
-    def stream_turn(self, conversation_id: str, content: str) -> Iterator[dict]:
+    def stream_turn(
+        self,
+        conversation_id: str,
+        content: str,
+        images: Sequence[ImageInput] | None = None,
+    ) -> Iterator[dict]:
+        request: dict = {"headers": self._headers()}
+        if images:
+            request["data"] = {"content": content}
+            request["files"] = [
+                (
+                    "images",
+                    (
+                        f"image-{index}.{_IMAGE_EXTENSIONS.get(image.media_type, 'img')}",
+                        image.data,
+                        image.media_type,
+                    ),
+                )
+                for index, image in enumerate(images)
+            ]
+        else:
+            request["json"] = {"content": content}
         with self._http.stream(
             "POST",
             f"{self.base_url}/api/conversations/{conversation_id}/turns",
-            headers=self._headers(),
-            json={"content": content},
+            **request,
         ) as response:
             if response.status_code >= 400:
                 body = response.read().decode("utf-8", errors="replace")
