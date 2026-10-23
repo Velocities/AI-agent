@@ -10,6 +10,11 @@ import androidx.compose.ui.unit.dp
 object AppIcons {
     val Menu = icon("menu", "M3,18h18v-2H3v2zM3,13h18v-2H3v2zM3,6v2h18V6H3z")
     val Add = icon("add", "M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")
+    val Image = icon(
+        "image",
+        "M21,19V5c0,-1.1 -0.9,-2 -2,-2H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2z" +
+            "M8.5,13.5l2.5,3.01L14.5,12l4.5,6H5l3.5,-4.5z",
+    )
     val Send = icon("send", "M2.01,21L23,12 2.01,3 2,10l15,2 -15,2z")
     val Stop = icon("stop", "M6,6h12v12H6z")
     val Delete = icon(

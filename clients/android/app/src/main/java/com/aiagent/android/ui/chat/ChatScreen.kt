@@ -2,7 +2,9 @@ package com.aiagent.android.ui.chat
 
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -13,16 +15,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -65,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -88,6 +96,9 @@ import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.speech.speechToTextConverter
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.CommandOutcome
+import com.aiagent.android.data.ImageRejected
+import com.aiagent.android.data.ImageTypes
+import com.aiagent.android.data.ImageUpload
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
@@ -329,6 +340,7 @@ fun ChatScreen(
                     val voiceBusy = state.voiceStatus == "Checking voice…" || state.voiceStatus == "Transcribing…"
                     val composerEnabled = state.apiConfigured && state.accessMessage == null
                     Composer(
+                        chatId = state.currentId,
                         enabled = composerEnabled,
                         running = state.running,
                         listening = listening,
@@ -341,10 +353,11 @@ fun ChatScreen(
                             providerStore.save(chosen)
                         },
                         onProviderInfo = { showSttInfo = true },
-                        onSend = { text ->
+                        onSend = { text, images ->
                             cancelListening()
-                            viewModel.send(text)
+                            viewModel.send(text, images)
                         },
+                        onError = viewModel::reportError,
                         onStop = { if (state.running) viewModel.stopTurn() else viewModel.stopSpeech() },
                         onMic = {
                             if (listening) {
@@ -414,7 +427,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
         it is ChatItem.Command && it.outcome == CommandOutcome.RUNNING && it.command in awaiting
     }
     val tailCount = listOf(
-        state.pendingUserText != null,
+        state.pendingUserText != null || state.pendingUserImages.isNotEmpty(),
         state.streamingText.isNotEmpty(),
         state.running && state.streamingText.isEmpty(),
         approval != null,
@@ -429,6 +442,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
     if (
         items.isEmpty() &&
         state.pendingUserText == null &&
+        state.pendingUserImages.isEmpty() &&
         state.streamingText.isEmpty() &&
         !state.running &&
         !state.loadingMessages &&
@@ -446,13 +460,15 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
     ) {
         items(items, key = { it.key }) { item ->
             when (item) {
-                is ChatItem.User -> UserBubble(item.text)
+                is ChatItem.User -> UserBubble(item.text, item.images)
                 is ChatItem.Assistant -> AssistantReply(item.markdown)
                 is ChatItem.Command -> CommandCard(item)
             }
         }
-        state.pendingUserText?.let { text ->
-            item(key = "pending-user") { UserBubble(text) }
+        if (state.pendingUserText != null || state.pendingUserImages.isNotEmpty()) {
+            item(key = "pending-user") {
+                UserBubble(state.pendingUserText.orEmpty(), state.pendingUserImages)
+            }
         }
         if (state.streamingText.isNotEmpty()) {
             item(key = "streaming") { AssistantReply(state.streamingText) }
@@ -471,7 +487,7 @@ private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> U
 }
 
 @Composable
-private fun UserBubble(text: String) {
+private fun UserBubble(text: String, images: List<ChatItem.UserImage> = emptyList()) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Surface(
             shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
@@ -479,8 +495,71 @@ private fun UserBubble(text: String) {
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             modifier = Modifier.widthIn(max = maxWidth * 0.85f),
         ) {
-            SelectionContainer {
-                Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                if (images.isNotEmpty()) {
+                    ImageStrip(images)
+                    if (text.isNotBlank()) Spacer(Modifier.height(8.dp))
+                }
+                if (text.isNotBlank()) {
+                    SelectionContainer {
+                        Text(text, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageStrip(images: List<ChatItem.UserImage>, onRemove: ((Int) -> Unit)? = null) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(top = 8.dp, end = 8.dp),
+    ) {
+        itemsIndexed(images, key = { index, image -> "$index-${image.byteSize}-${image.mediaType}" }) { index, image ->
+            Box {
+                val preview = remember(image.preview) { image.preview?.let { ImageAttachments.thumbnail(it) } }
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.35f),
+                    modifier = Modifier.size(72.dp),
+                ) {
+                    if (preview != null) {
+                        Image(
+                            bitmap = preview,
+                            contentDescription = "Attached image",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(8.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(AppIcons.Image, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                image.mediaType.removePrefix("image/").uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+                if (onRemove != null) {
+                    IconButton(
+                        onClick = { onRemove(index) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 6.dp, y = (-6).dp)
+                            .size(22.dp),
+                    ) {
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(22.dp)) {
+                            Icon(AppIcons.Close, contentDescription = "Remove image", modifier = Modifier.padding(3.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -592,6 +671,7 @@ private fun MessageField(
 
 @Composable
 private fun Composer(
+    chatId: String?,
     enabled: Boolean,
     running: Boolean,
     listening: Boolean,
@@ -601,15 +681,35 @@ private fun Composer(
     provider: SttProvider,
     onProvider: (SttProvider) -> Unit,
     onProviderInfo: () -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String, List<ImageUpload>) -> Unit,
+    onError: (String) -> Unit,
     onStop: () -> Unit,
     onMic: () -> Unit,
 ) {
-    var draft by rememberSaveable { mutableStateOf("") }
+    var draft by rememberSaveable(chatId) { mutableStateOf("") }
+    var attachments by remember(chatId) { mutableStateOf(listOf<ImageUpload>()) }
+    val context = LocalContext.current
+    val remaining = ImageTypes.MAX_COUNT - attachments.size
+    val pickImages = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(ImageTypes.MAX_COUNT),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val loaded = mutableListOf<ImageUpload>()
+        for (uri in uris) {
+            if (attachments.size + loaded.size >= ImageTypes.MAX_COUNT) break
+            try {
+                loaded += ImageAttachments.fromUri(context.contentResolver, uri)
+            } catch (error: ImageRejected) {
+                onError(error.message ?: "Could not attach that image.")
+            }
+        }
+        if (loaded.isNotEmpty()) attachments = attachments + loaded
+    }
     val canType = enabled && !listening && !voiceBusy
     // Partials belong in the field value. A placeholder stays one line tall and ellipsizes,
     // so spoken text never grew the way typed text does.
     val shown = if (listening) heard else draft
+    val canSend = canType && (draft.isNotBlank() || attachments.isNotEmpty())
 
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -618,7 +718,26 @@ private fun Composer(
                 .imePadding()
                 .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
         ) {
+        if (attachments.isNotEmpty()) {
+            ImageStrip(
+                images = attachments.map {
+                    ChatItem.UserImage(mediaType = it.mediaType, byteSize = it.data.size, preview = it.data)
+                },
+                onRemove = { index -> attachments = attachments.filterIndexed { i, _ -> i != index } },
+            )
+            Spacer(Modifier.height(6.dp))
+        }
         Row(verticalAlignment = Alignment.Bottom) {
+            IconButton(
+                enabled = canType && remaining > 0,
+                onClick = {
+                    pickImages.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+            ) {
+                Icon(AppIcons.Image, contentDescription = "Attach image")
+            }
             MessageField(
                 value = shown,
                 onValueChange = { draft = it },
@@ -651,10 +770,11 @@ private fun Composer(
             } else {
                 FilledIconButton(
                     onClick = {
-                        onSend(draft)
+                        onSend(draft, attachments)
                         draft = ""
+                        attachments = emptyList()
                     },
-                    enabled = canType && draft.isNotBlank(),
+                    enabled = canSend,
                     modifier = Modifier.size(56.dp),
                 ) { Icon(AppIcons.Send, contentDescription = "Send") }
             }

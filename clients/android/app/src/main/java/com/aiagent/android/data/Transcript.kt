@@ -12,7 +12,32 @@ import kotlinx.serialization.json.longOrNull
 sealed interface ChatItem {
     val key: String
 
-    data class User(override val key: String, val text: String) : ChatItem
+    data class UserImage(
+        val mediaType: String,
+        val byteSize: Int,
+        val preview: ByteArray? = null,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is UserImage) return false
+            return mediaType == other.mediaType &&
+                byteSize == other.byteSize &&
+                preview.contentEquals(other.preview)
+        }
+
+        override fun hashCode(): Int {
+            var result = mediaType.hashCode()
+            result = 31 * result + byteSize
+            result = 31 * result + (preview?.contentHashCode() ?: 0)
+            return result
+        }
+    }
+
+    data class User(
+        override val key: String,
+        val text: String,
+        val images: List<UserImage> = emptyList(),
+    ) : ChatItem
     data class Assistant(override val key: String, val markdown: String) : ChatItem
     data class Command(
         override val key: String,
@@ -45,7 +70,10 @@ object Transcript {
             when (message.role) {
                 "user" -> {
                     if (message.metadata.flag("internal")) continue
-                    if (message.content.isNotBlank()) items += ChatItem.User(message.id, message.content)
+                    val images = message.metadata.attachments()
+                    if (message.content.isNotBlank() || images.isNotEmpty()) {
+                        items += ChatItem.User(message.id, message.content, images)
+                    }
                 }
                 "assistant" -> {
                     if (message.content.isNotBlank()) {
@@ -132,6 +160,15 @@ object Transcript {
 
     private fun JsonObject.array(key: String): List<JsonElement> =
         (this[key] as? JsonArray)?.toList().orEmpty()
+
+    private fun JsonObject.attachments(): List<ChatItem.UserImage> =
+        array("attachments").mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            if (obj.str("kind") != "image") return@mapNotNull null
+            val mediaType = obj.str("media_type") ?: return@mapNotNull null
+            val byteSize = (obj["byte_size"] as? JsonPrimitive)?.intOrNull ?: 0
+            ChatItem.UserImage(mediaType = mediaType, byteSize = byteSize)
+        }
 }
 
 /** Mirrors ai_agent.commands.render so a command reads the same before its result arrives. */
