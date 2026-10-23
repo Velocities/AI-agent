@@ -1,5 +1,6 @@
 from ai_agent.llm.client import (
     FacadeLlmClient,
+    ImageInput,
     LLMHealthcheck,
     LLMMessage,
     LLMProvider,
@@ -16,6 +17,7 @@ from ai_agent.llm.http.errors import LLMErrorKind
 from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 
 __all__ = [
+    "ImageInput",
     "LLMErrorKind",
     "LLMHealthcheck",
     "LLMMessage",

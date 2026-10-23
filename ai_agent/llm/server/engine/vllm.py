@@ -9,6 +9,7 @@ from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 from ai_agent.llm.server.engine.base import EngineHealth, LlmEngine
 from ai_agent.llm.server.errors import EngineModelMissingError
 from ai_agent.llm.server.protocol import chat_chunk_line, tags_payload
+from ai_agent.llm.vision import openai_content
 
 
 class VLLMEngine(LlmEngine):
@@ -108,7 +109,7 @@ class VLLMEngine(LlmEngine):
     def _to_openai_message(message: dict[str, Any]) -> dict[str, Any]:
         openai_message: dict[str, Any] = {
             "role": message.get("role", "user"),
-            "content": message.get("content", ""),
+            "content": openai_content(message),
         }
         if message.get("tool_calls"):
             openai_message["tool_calls"] = [

@@ -7,6 +7,7 @@ from ai_agent.llm.http.errors import LLMErrorKind
 from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 from ai_agent.llm.server.engine.base import EngineHealth, LlmEngine
 from ai_agent.llm.server.errors import EngineModelMissingError
+from ai_agent.llm.vision import ollama_messages
 
 
 class OllamaEngine(LlmEngine):
@@ -54,6 +55,9 @@ class OllamaEngine(LlmEngine):
     def chat_lines(self, payload: dict[str, Any]) -> Iterator[str]:
         upstream_payload = dict(payload)
         upstream_payload.setdefault("model", self._model)
+        messages = upstream_payload.get("messages")
+        if isinstance(messages, list):
+            upstream_payload["messages"] = ollama_messages(messages)
         options = self._options()
         if options:
             merged = dict(upstream_payload.get("options") or {})

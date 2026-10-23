@@ -24,7 +24,14 @@ from ai_agent.commands.render import render_command
 from ai_agent.config import Settings
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
-from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMProvider, LLMResponse, ToolCall
+from ai_agent.llm.base import (
+    ImageInput,
+    LLMErrorKind,
+    LLMMessage,
+    LLMProvider,
+    LLMResponse,
+    ToolCall,
+)
 from ai_agent.llm.streaming import (
     RespondMessageStreamer,
     ResumeOverlapTrimmer,
@@ -117,8 +124,15 @@ class AgentLoop:
         stream_callback: Callable[[str], None] | None = None,
         iteration_callback: Callable[[int], None] | None = None,
         notice_callback: Callable[[str], None] | None = None,
+        images: list[ImageInput] | None = None,
     ) -> AgentRunResult:
-        self._append(LLMMessage(role="user", content=user_input))
+        self._append(
+            LLMMessage(
+                role="user",
+                content=user_input,
+                images=list(images or []),
+            )
+        )
 
         for iteration in range(1, self.settings.agent_max_iterations + 1):
             self._raise_if_stopped()

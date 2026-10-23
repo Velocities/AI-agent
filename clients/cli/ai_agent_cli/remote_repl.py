@@ -4,6 +4,8 @@ import httpx
 from rich.console import Console
 
 from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
+from ai_agent.images import ImageRejected, parse_image_prompt
+from ai_agent.llm.client.types import ImageInput
 from ai_agent_cli.api_client import AgentApiClient, AgentApiError
 from ai_agent_cli.api_url import public_api_base_url_hint
 from ai_agent_cli.credentials import (
@@ -81,7 +83,12 @@ def run_remote_repl() -> int:
                 save_conversation_id(conversation_id)
                 console.print("[dim]Started a new chat.[/dim]")
                 continue
-            if not _play_turn(client, console, conversation_id, user_input):
+            try:
+                content, images = parse_image_prompt(user_input)
+            except ImageRejected as exc:
+                console.print(f"[red]{exc}[/red]")
+                continue
+            if not _play_turn(client, console, conversation_id, content, images):
                 return 1
             console.print()
     finally:
@@ -214,10 +221,11 @@ def _play_turn(
     console: Console,
     conversation_id: str,
     content: str,
+    images: list[ImageInput] | None = None,
 ) -> bool:
     started = False
     try:
-        for event in client.stream_turn(conversation_id, content):
+        for event in client.stream_turn(conversation_id, content, images):
             kind = event.get("type")
             if kind == "token":
                 text = event.get("text") or ""

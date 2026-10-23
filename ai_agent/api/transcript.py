@@ -32,6 +32,17 @@ def message_metadata(message: LLMMessage) -> dict:
         metadata["tool_call_id"] = message.tool_call_id
     if message.name:
         metadata["name"] = message.name
+    if message.images:
+        # Bytes stay on the in-memory turn. History keeps a reference only,
+        # so a later client can attach stored files without a new message shape.
+        metadata["attachments"] = [
+            {
+                "kind": "image",
+                "media_type": image.media_type,
+                "byte_size": len(image.data),
+            }
+            for image in message.images
+        ]
     return metadata
 
 
@@ -52,6 +63,7 @@ def message_from_record(record: Message) -> LLMMessage:
             tool_calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
     tool_call_id = record.metadata.get("tool_call_id")
     name = record.metadata.get("name")
+    # Attachment metadata is a reference only. Raw image bytes are not replayed.
     return LLMMessage(
         role=record.role,
         content=record.content,

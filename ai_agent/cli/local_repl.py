@@ -16,6 +16,7 @@ from ai_agent.agent.factory import (
     warmup_agent,
 )
 from ai_agent.config import Settings
+from ai_agent.images import ImageRejected, parse_image_prompt
 from ai_agent.llm.streaming import sanitize_terminal_text
 
 
@@ -58,6 +59,14 @@ def run_repl() -> int:
             if user_input.lower() in {"exit", "quit"}:
                 console.print("Goodbye.")
                 return 0
+            try:
+                content, images = parse_image_prompt(
+                    user_input,
+                    max_bytes=settings.image_max_bytes,
+                )
+            except ImageRejected as exc:
+                console.print(f"[red]{exc}[/red]")
+                continue
 
             console.print()
             streamed = False
@@ -89,10 +98,11 @@ def run_repl() -> int:
 
             try:
                 result = agent.run(
-                    user_input,
+                    content,
                     stream_callback=on_stream_chunk,
                     iteration_callback=on_iteration,
                     notice_callback=on_notice,
+                    images=images,
                 )
             finally:
                 status.stop()

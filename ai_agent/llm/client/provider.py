@@ -16,6 +16,7 @@ from ai_agent.llm.client.types import (
 )
 from ai_agent.llm.http.errors import LLMErrorKind
 from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
+from ai_agent.llm.vision import canonical_image_fields
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +300,8 @@ class FacadeLlmClient(LLMProvider):
             payload["tool_call_id"] = message.tool_call_id
         if message.name:
             payload["name"] = message.name
+        if message.images:
+            payload.update(canonical_image_fields(message.images))
         return payload
 
 
