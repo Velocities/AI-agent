@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -11,7 +12,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
 from ai_agent.api.speech import load_text_to_speech
-from ai_agent.api.turns import AGENT_FACTORY_MISSING_MESSAGE, iter_turn_events
+from ai_agent.api.turns import (
+    AGENT_FACTORY_MISSING_MESSAGE,
+    attachment_from_image,
+    iter_turn_events,
+    persist_user_turn,
+)
+from ai_agent.attachments import select_handler
+from ai_agent.attachments.image import ImageHandler
+from ai_agent.attachments.store import AttachmentNotFound, AttachmentQuotaExceeded
+from ai_agent.attachments.types import ValidatedUpload
 from ai_agent.conversations.store import (
     Conversation,
     ConversationNotFound,
@@ -19,7 +29,9 @@ from ai_agent.conversations.store import (
     Message,
 )
 from ai_agent.images import ImageRejected, validate_image_bytes
-from ai_agent.llm.client.types import ImageInput
+from ai_agent.llm.client.types import ImageInput, LLMMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -129,7 +141,25 @@ def delete_conversation(
             detail="A turn is running in this conversation. Stop it before deleting.",
         )
     try:
-        store.delete_conversation(user.user_id, conversation_id)
+        removed = store.delete_conversation(
+            user.user_id,
+            conversation_id,
+            catalog=getattr(request.app.state, "attachment_catalog", None),
+        )
+        if not removed:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        blobs = getattr(request.app.state, "attachment_store", None)
+        if blobs is not None:
+            try:
+                blobs.delete_conversation(user.user_id, conversation_id)
+            except Exception:
+                logger.exception(
+                    "Could not delete attachment files for conversation %s",
+                    conversation_id,
+                )
+        cache = getattr(request.app.state, "attachment_cache", None)
+        if cache is not None:
+            cache.invalidate_conversation(user.user_id, conversation_id)
     finally:
         broker.finish(conversation_id)
     return Response(status_code=204)
@@ -159,22 +189,45 @@ async def start_turn(
 
     JSON is ``{"content": "...", "speak": false}``. Multipart uses a
     ``content`` field and zero or more ``images`` files. Image bytes are
-    validated here and passed to the agent as ``ImageInput``. They are not
-    written into the stored transcript.
+    validated, optionally stripped, and stored before the agent runs.
     """
     content, images, speak = await _read_turn_input(request)
     if store.get_conversation(user.user_id, conversation_id) is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
+    if images:
+        images = _prepare_images(request, user.user_id, images)
     # Checked before claiming the broker so a refused turn leaves the
     # conversation free rather than permanently busy.
     if request.app.state.agent_factory is None:
         raise HTTPException(status_code=503, detail=AGENT_FACTORY_MISSING_MESSAGE)
+    if images and getattr(request.app.state, "attachment_store", None) is None:
+        raise HTTPException(status_code=503, detail="Attachment storage is not configured.")
     broker = request.app.state.broker
     if not broker.try_begin(conversation_id):
         raise HTTPException(
             status_code=409,
             detail="A turn is already running for this conversation.",
         )
+    prior_history = None
+    stored_user = None
+    try:
+        if images:
+            prior_history = store.list_messages(user.user_id, conversation_id)
+            images, stored_user = _commit_images(
+                request,
+                store,
+                user_id=user.user_id,
+                conversation_id=conversation_id,
+                content=content,
+                images=images,
+            )
+    except HTTPException:
+        broker.finish(conversation_id)
+        raise
+    except Exception:
+        logger.exception("Could not store images for conversation %s", conversation_id)
+        broker.finish(conversation_id)
+        raise HTTPException(status_code=500, detail="The turn failed.") from None
     speaker = load_text_to_speech(request) if speak else None
     generator = iter_turn_events(
         settings=request.app.state.settings,
@@ -188,6 +241,10 @@ async def start_turn(
         speak=speak,
         speaker=speaker,
         images=images,
+        prior_history=prior_history,
+        stored_user=stored_user,
+        attachment_catalog=getattr(request.app.state, "attachment_catalog", None),
+        attachment_cache=getattr(request.app.state, "attachment_cache", None),
     )
     return StreamingResponse(
         generator,
@@ -242,28 +299,156 @@ async def _read_multipart_turn(request: Request) -> tuple[str, list[ImageInput],
         raw_content = form.get("content")
         content = raw_content if isinstance(raw_content, str) else ""
         speak = _form_flag(form.get("speak"))
-        max_bytes = request.app.state.settings.image_max_bytes
+        settings = request.app.state.settings
+        uploads = form.getlist("images")
+        if uploads and not _vision_enabled(request):
+            raise HTTPException(status_code=400, detail="This model does not accept images.")
+        if len(uploads) > settings.image_max_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many images (max {settings.image_max_count}).",
+            )
         images: list[ImageInput] = []
-        for item in form.getlist("images"):
+        for item in uploads:
             if not hasattr(item, "read"):
                 raise HTTPException(status_code=400, detail="Invalid image upload.")
-            data = await item.read(max_bytes + 1)
+            data = await item.read(settings.image_max_bytes + 1)
             declared = getattr(item, "content_type", None)
+            declared_type = declared if isinstance(declared, str) else None
             try:
-                images.append(
+                selected = select_handler(data, declared_type)
+                if selected is None:
                     validate_image_bytes(
                         data,
-                        declared_type=declared if isinstance(declared, str) else None,
-                        max_bytes=max_bytes,
+                        declared_type=declared_type,
+                        max_bytes=settings.image_max_bytes,
+                        max_pixels=settings.image_max_pixels,
+                        max_dimension=settings.image_max_dimension,
                     )
+                    raise HTTPException(status_code=400, detail="Invalid image data.")
+                upload = selected.validate(
+                    data,
+                    settings=settings,
+                    declared_type=declared_type,
                 )
             except ImageRejected as exc:
                 raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+            images.append(ImageInput(data=upload.data, media_type=upload.media_type))
+        if len(images) > settings.attachment_replay_max_images:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many images (max {settings.attachment_replay_max_images}).",
+            )
+        if sum(len(image.data) for image in images) > settings.attachment_replay_max_bytes:
+            raise HTTPException(status_code=413, detail="Images exceed the per-turn size limit.")
         if not content.strip() and not images:
             raise HTTPException(status_code=400, detail="content is required")
         return content, images, speak
     finally:
         await form.close()
+
+
+def _vision_enabled(request: Request) -> bool:
+    info = getattr(request.app.state, "model_info", None)
+    return bool(info is not None and info.vision)
+
+
+def _prepare_images(request: Request, user_id: str, images: list[ImageInput]) -> list[ImageInput]:
+    settings = request.app.state.settings
+    handler = ImageHandler()
+    user_settings = getattr(request.app.state, "user_settings", None)
+    prepared: list[ImageInput] = []
+    for image in images:
+        try:
+            ready = handler.prepare(
+                ValidatedUpload(data=image.data, media_type=image.media_type, kind=handler.kind),
+                user_settings=user_settings,
+                user_id=user_id,
+            )
+        except ImageRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+        prepared.append(ImageInput(data=ready.data, media_type=ready.media_type))
+    if len(prepared) > settings.attachment_replay_max_images:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many images (max {settings.attachment_replay_max_images}).",
+        )
+    if sum(len(image.data) for image in prepared) > settings.attachment_replay_max_bytes:
+        raise HTTPException(status_code=413, detail="Images exceed the per-turn size limit.")
+    return prepared
+
+
+def _commit_images(
+    request: Request,
+    store: ConversationStore,
+    *,
+    user_id: str,
+    conversation_id: str,
+    content: str,
+    images: list[ImageInput],
+) -> tuple[list[ImageInput], Message]:
+    blobs = request.app.state.attachment_store
+    catalog = request.app.state.attachment_catalog
+    cache = getattr(request.app.state, "attachment_cache", None)
+    stored_ids: list[str] = []
+    try:
+        stamped: list[ImageInput] = []
+        for image in images:
+            attachment_id = blobs.put(
+                user_id,
+                conversation_id,
+                media_type=image.media_type,
+                data=image.data,
+            )
+            stored_ids.append(attachment_id)
+            stamped.append(
+                ImageInput(
+                    data=image.data,
+                    media_type=image.media_type,
+                    attachment_id=attachment_id,
+                )
+            )
+        message = LLMMessage(role="user", content=content, images=stamped)
+        refs = [
+            attachment_from_image(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                image=image,
+            )
+            for image in stamped
+        ]
+        record = persist_user_turn(
+            store=store,
+            catalog=catalog,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            refs=refs,
+            message=message,
+        )
+        return stamped, record
+    except AttachmentQuotaExceeded as exc:
+        _compensate(blobs, cache, user_id, stored_ids)
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except (AttachmentNotFound, OSError, ImageRejected) as exc:
+        _compensate(blobs, cache, user_id, stored_ids)
+        logger.exception("Attachment write failed")
+        status = getattr(exc, "status_code", 500)
+        raise HTTPException(status_code=status, detail="The turn failed.") from None
+    except Exception:
+        _compensate(blobs, cache, user_id, stored_ids)
+        raise
+
+
+def _compensate(blobs, cache, user_id: str, attachment_ids: list[str]) -> None:
+    for attachment_id in attachment_ids:
+        try:
+            blobs.delete(user_id, attachment_id)
+        except AttachmentNotFound:
+            continue
+        except Exception:
+            logger.exception("Could not compensate attachment %s", attachment_id)
+        if cache is not None:
+            cache.invalidate(user_id, attachment_id)
 
 
 def _form_flag(value: object) -> bool:

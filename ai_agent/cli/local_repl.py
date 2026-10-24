@@ -15,8 +15,9 @@ from ai_agent.agent.factory import (
     present_turn_result,
     warmup_agent,
 )
+from ai_agent.cli.image_stage import ImageStage, StageCommand
 from ai_agent.config import Settings
-from ai_agent.images import ImageRejected, parse_image_prompt
+from ai_agent.images import ImageRejected, strip_image_metadata
 from ai_agent.llm.streaming import sanitize_terminal_text
 
 
@@ -42,6 +43,18 @@ def run_repl() -> int:
         f"(default: {agent.router.default_name})"
     )
     console.print("Type 'exit' or 'quit' to leave.\n")
+    # The in-process REPL has no /api/model document. Attach stays available
+    # after byte validation; the server strip still runs when this process
+    # stores images. See docs/vision-and-attachments.md section 2.
+    stage = ImageStage(
+        vision=None,
+        max_bytes=settings.image_max_bytes,
+        max_count=settings.image_max_count,
+        max_pixels=settings.image_max_pixels,
+        max_dimension=settings.image_max_dimension,
+        replay_max_bytes=settings.attachment_replay_max_bytes,
+        replay_max_images=settings.attachment_replay_max_images,
+    )
 
     try:
         if not warmup_agent(agent, console):
@@ -57,16 +70,28 @@ def run_repl() -> int:
             if not user_input:
                 continue
             if user_input.lower() in {"exit", "quit"}:
+                stage.clear()
                 console.print("Goodbye.")
                 return 0
+            if user_input == "/new":
+                stage.clear()
+                console.print("[dim]Staged images cleared.[/dim]")
+                continue
             try:
-                content, images = parse_image_prompt(
-                    user_input,
-                    max_bytes=settings.image_max_bytes,
-                )
+                command = stage.handle(user_input)
             except ImageRejected as exc:
                 console.print(f"[red]{exc}[/red]")
                 continue
+            if command.handled:
+                _print_stage(console, command)
+                continue
+            try:
+                # No user-settings row in this process; strip stays on.
+                images = [strip_image_metadata(image) for image in stage.images]
+            except ImageRejected as exc:
+                console.print(f"[red]{exc}[/red]")
+                continue
+            stage.take()
 
             console.print()
             streamed = False
@@ -98,7 +123,7 @@ def run_repl() -> int:
 
             try:
                 result = agent.run(
-                    content,
+                    user_input,
                     stream_callback=on_stream_chunk,
                     iteration_callback=on_iteration,
                     notice_callback=on_notice,
@@ -112,3 +137,14 @@ def run_repl() -> int:
             console.print()
     finally:
         agent.llm.close()
+
+
+def _print_stage(console: Console, command: StageCommand) -> None:
+    if not command.message:
+        return
+    if command.error:
+        console.print(f"[red]{command.message}[/red]")
+    elif command.dim:
+        console.print(f"[dim]{command.message}[/dim]")
+    else:
+        console.print(command.message)

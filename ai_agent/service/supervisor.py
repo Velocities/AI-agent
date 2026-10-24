@@ -11,6 +11,7 @@ from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
 from ai_agent.api.serve import PublicBindError, assert_loopback_bind
 from ai_agent.agent.factory import configure_logging, configure_stdio_encoding
+from ai_agent.attachments.runtime import open_attachment_services
 from ai_agent.cli.errors import startup_should_exit
 from ai_agent.cli.llm_serve import prepare_upstream
 from ai_agent.config import LlmTransport, Settings
@@ -104,15 +105,25 @@ def _run_api(
     target_repo,
     monitoring_admins,
     console: Console,
+    model_info=None,
 ) -> int:
     host = settings.api_bind_host.strip()
     port = settings.api_bind_port
     display = "127.0.0.1" if host.lower() == "localhost" else host
+    user_settings, catalog, attachment_store, attachment_cache = open_attachment_services(
+        settings,
+        store.engine,
+    )
     app = create_app(
         settings,
         store=store,
         access_store=access_store,
         monitoring_admin_store=monitoring_admins,
+        model_info=model_info,
+        user_settings=user_settings,
+        attachment_store=attachment_store,
+        attachment_catalog=catalog,
+        attachment_cache=attachment_cache,
     )
     app.state.agent_factory = build_api_agent_factory(access_store, target_repo)
     listening = f"http://{display}:{port}"
@@ -150,13 +161,14 @@ def _serve_with_engine(
     process,
 ) -> int:
     sd_notify(f"Warming {settings.llm_model}")
-    engine = prepare_upstream(
+    prepared = prepare_upstream(
         settings,
         console,
         upstream_url=process.upstream_url,
     )
-    if engine is None:
+    if prepared is None:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
+    engine = prepared.engine
 
     try:
         httpd = bind_llm_server(
@@ -195,7 +207,13 @@ def _serve_with_engine(
     api_settings = settings_for_api(settings, endpoint)
     try:
         return _run_api(
-            api_settings, store, access_store, target_repo, monitoring_admins, console
+            api_settings,
+            store,
+            access_store,
+            target_repo,
+            monitoring_admins,
+            console,
+            model_info=prepared.model_info,
         )
     finally:
         sd_notify("Stopping", stopping=True)

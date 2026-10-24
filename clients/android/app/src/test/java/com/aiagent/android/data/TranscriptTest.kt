@@ -157,4 +157,38 @@ class TranscriptTest {
         assertEquals(true, error.isAccessGate)
         assertEquals("Not found", AgentApi.errorFrom(404, """{"detail":"Not found"}""").message)
     }
+
+    @Test
+    fun userMessageWithAttachmentsShowsImagesWithoutBytes() {
+        val items = Transcript.build(
+            listOf(
+                message(
+                    0,
+                    "user",
+                    "What's wrong with this UI?",
+                    """{"attachments":[{"kind":"image","media_type":"image/png","byte_size":120}]}""",
+                ),
+            ),
+        )
+        val user = items.single() as ChatItem.User
+        assertEquals("What's wrong with this UI?", user.text)
+        assertEquals(listOf(ChatItem.UserImage("image/png", 120)), user.images)
+    }
+
+    @Test
+    fun imageOnlyUserMessageStillAppears() {
+        val items = Transcript.build(
+            listOf(
+                message(
+                    0,
+                    "user",
+                    "",
+                    """{"attachments":[{"kind":"image","media_type":"image/jpeg","byte_size":40}]}""",
+                ),
+            ),
+        )
+        val user = items.single() as ChatItem.User
+        assertEquals("", user.text)
+        assertEquals("image/jpeg", user.images.single().mediaType)
+    }
 }

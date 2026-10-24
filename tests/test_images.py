@@ -1,13 +1,19 @@
+"""Image bytes on messages, through validation, provider payloads, and turn upload.
+
+Metadata stripping for the helper lives at the bottom of this file. The turn
+endpoint's strip-or-keep behavior is in test_turn_image_metadata.py.
+"""
+
 import base64
+import io
 import json
-import struct
-import zlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from ai_agent.agent.loop import AgentLoop, AgentRunResult
 from ai_agent.api.app import create_app
@@ -15,12 +21,16 @@ from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.api.transcript import message_from_record, message_metadata
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
+from ai_agent.attachments.cache import AttachmentCache
+from ai_agent.attachments.os_store import OSAttachmentStore
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
+from ai_agent.conversations.attachments import AttachmentCatalog
 from ai_agent.conversations.db import open_store_at
-from ai_agent.images import ImageRejected, parse_image_prompt, validate_image_bytes
+from ai_agent.images import ImageRejected, strip_image_metadata, validate_image_bytes
 from ai_agent.llm.base import ImageInput, LLMMessage, LLMResponse
+from ai_agent.llm.capabilities import ModelInfo
 from ai_agent.llm.client.provider import FacadeLlmClient
 from ai_agent.llm.http.errors import LLMErrorKind
 from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
@@ -33,35 +43,27 @@ from ai_agent_cli.api_client import AgentApiClient
 ALICE = "11111111-1111-4111-8111-111111111111"
 
 
-def _chunk(tag: bytes, data: bytes) -> bytes:
-    crc = zlib.crc32(tag + data) & 0xFFFFFFFF
-    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+def _image_bytes(fmt: str, **save_kwargs) -> bytes:
+    # Tiny RGB fixture. Callers choose the container format.
+    buffer = io.BytesIO()
+    Image.new("RGB", (1, 1), (12, 34, 56)).save(buffer, format=fmt, **save_kwargs)
+    return buffer.getvalue()
 
 
 def png_bytes() -> bytes:
-    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + _chunk(b"IHDR", ihdr)
-        + _chunk(b"IDAT", zlib.compress(b"\x00\x00"))
-        + _chunk(b"IEND", b"")
-    )
+    return _image_bytes("PNG")
 
 
 def jpeg_bytes() -> bytes:
-    app0 = b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
-    segment = b"\xff\xe0" + struct.pack(">H", len(app0) + 2) + app0
-    return b"\xff\xd8" + segment + b"\xff\xd9"
+    return _image_bytes("JPEG", quality=95)
 
 
 def webp_bytes() -> bytes:
-    payload = b"\x2f\x00\x00\x00\x00"
-    chunk = b"VP8L" + struct.pack("<I", len(payload)) + payload
-    body = b"WEBP" + chunk
-    return b"RIFF" + struct.pack("<I", len(body)) + body
+    return _image_bytes("WEBP", lossless=True)
 
 
 def _b64(data: bytes) -> str:
+    # The base64 form Ollama and vLLM put on the wire.
     return base64.b64encode(data).decode("ascii")
 
 
@@ -73,6 +75,8 @@ class _Tokens:
 
 
 class _CapturingAgent:
+    """Stand-in for AgentLoop. Records the images the turn handler handed over."""
+
     def __init__(self, **_kwargs) -> None:
         self.messages: list[LLMMessage] = []
         self.on_message = None
@@ -95,9 +99,22 @@ class _CapturingAgent:
         return AgentRunResult(final_message="Seen", iterations=1)
 
 
-def _api(tmp_path: Path):
+def _api(tmp_path: Path, *, vision: bool = True):
+    # Real attachment store so a turn test can read back what was written.
     store = open_store_at(f"sqlite:///{tmp_path / 'conversations.db'}")
-    app = create_app(Settings(), _Tokens(), store=store)
+    catalog = AttachmentCatalog(store.engine)
+    root = tmp_path / "attachments"
+    blobs = OSAttachmentStore(root, catalog)
+    cache = AttachmentCache(blobs, max_bytes=1024 * 1024)
+    app = create_app(
+        Settings(),
+        _Tokens(),
+        store=store,
+        model_info=_model_info(vision=vision),
+        attachment_store=blobs,
+        attachment_catalog=catalog,
+        attachment_cache=cache,
+    )
     holder: dict[str, _CapturingAgent] = {}
 
     def factory(**_kwargs):
@@ -106,6 +123,28 @@ def _api(tmp_path: Path):
 
     app.state.agent_factory = factory
     return TestClient(app), store, holder
+
+
+def _model_info(*, vision: bool) -> ModelInfo:
+    # vision=False is how a turn test hides the attach path.
+    capabilities = {"completion", "tools"}
+    if vision:
+        capabilities.add("vision")
+    return ModelInfo(
+        engine="ollama",
+        model="test",
+        upstream="http://127.0.0.1:9",
+        capabilities=frozenset(capabilities),
+        vision=vision,
+        tools=True,
+        vision_source="probed",
+        tools_source="probed",
+        vision_verified=vision,
+        tools_verified=True,
+    )
+
+
+# LLMMessage carries images on the object. Each message gets its own list.
 
 
 def test_text_only_message_has_no_images() -> None:
@@ -140,6 +179,9 @@ def test_image_lists_are_not_shared() -> None:
     assert second.images == []
 
 
+# validate_image_bytes sniffs the payload and returns those same bytes.
+
+
 def test_valid_png_jpeg_and_webp() -> None:
     png = validate_image_bytes(png_bytes(), declared_type="image/png")
     jpeg = validate_image_bytes(jpeg_bytes(), declared_type="image/jpeg")
@@ -153,6 +195,7 @@ def test_valid_png_jpeg_and_webp() -> None:
 
 
 def test_media_type_comes_from_bytes_not_the_filename() -> None:
+    # octet-stream is "no claim". The JPEG signature decides the type.
     image = validate_image_bytes(jpeg_bytes(), declared_type="application/octet-stream")
     assert image.media_type == "image/jpeg"
 
@@ -165,6 +208,7 @@ def test_unsupported_mime_type() -> None:
 
 def test_oversized_image() -> None:
     data = png_bytes()
+    # Limit sits under this fixture so the rejection is about size, not decode.
     with pytest.raises(ImageRejected, match="exceeds the limit of 8 bytes") as caught:
         validate_image_bytes(data, max_bytes=8)
     assert caught.value.status_code == 413
@@ -178,8 +222,12 @@ def test_invalid_image_data() -> None:
 
 
 def test_declared_type_must_match_the_bytes() -> None:
+    # A PNG content-type on JPEG bytes is rejected, not sniffed through.
     with pytest.raises(ImageRejected, match="Invalid image data."):
         validate_image_bytes(jpeg_bytes(), declared_type="image/png")
+
+
+# Ollama keeps the user text as a string and adds a list of raw base64 images.
 
 
 def test_ollama_request_uses_raw_base64_and_keeps_text() -> None:
@@ -202,6 +250,7 @@ def test_ollama_request_uses_raw_base64_and_keeps_text() -> None:
         "images": [_b64(raw), _b64(other)],
     }
     assert base64.b64decode(prepared["images"][0]) == raw
+    # Guard against encoding the already-encoded string a second time.
     assert prepared["images"][0] != _b64(_b64(raw).encode())
 
 
@@ -234,6 +283,7 @@ def test_ollama_engine_sends_images_and_streams_the_reply() -> None:
     session.base_url = "http://localhost:11434"
     session.stream_post.return_value = _Stream()
     engine = OllamaEngine(session, "llava")
+    # The caller still passes media types. The engine must not forward that field.
     payload = {
         "model": "llava",
         "messages": [
@@ -248,6 +298,7 @@ def test_ollama_engine_sends_images_and_streams_the_reply() -> None:
     }
     lines = list(engine.chat_lines(payload))
     sent = session.stream_post.call_args.args[1]
+    # image_media_types is internal. Ollama only receives the base64 list.
     assert sent["messages"] == [
         {
             "role": "user",
@@ -297,7 +348,11 @@ def test_ollama_engine_propagates_provider_errors() -> None:
             )
         )
     sent = session.stream_post.call_args.args[1]
+    # The error is propagated, and the image was still on the request that failed.
     assert sent["messages"][0]["images"] == [_b64(raw)]
+
+
+# vLLM uses an OpenAI content array: one text part, then a data-URI per image.
 
 
 def test_vllm_request_uses_image_url_data_uri() -> None:
@@ -342,6 +397,7 @@ def test_vllm_engine_sends_multimodal_body_and_streams() -> None:
     session.base_url = "http://localhost:8000"
     session.stream_post.return_value = _LineStream(sse)
     engine = VLLMEngine(session, "vision")
+    # Same internal image fields as Ollama. This engine rewrites them into parts.
     lines = list(
         engine.chat_lines(
             {
@@ -373,9 +429,13 @@ def test_vllm_engine_sends_multimodal_body_and_streams() -> None:
         }
     ]
     assert "images" not in sent["messages"][0]
+    # The engine folds the SSE deltas into the same event shape Ollama emits.
     payloads = [json.loads(line) for line in lines]
     assert payloads[0]["message"]["content"] == "Overlap"
     assert payloads[-1]["done"] is True
+
+
+# One-line NDJSON or SSE bodies for the engine tests above.
 
 
 class _EmptyStream:
@@ -410,6 +470,9 @@ class _LineStream:
 
     def iter_lines(self):
         yield from self._lines
+
+
+# FacadeLlmClient is what the agent calls. Images go out; a text turn omits them.
 
 
 def test_facade_streams_a_multimodal_request(monkeypatch) -> None:
@@ -451,6 +514,7 @@ def test_facade_streams_a_multimodal_request(monkeypatch) -> None:
 
     monkeypatch.setattr(httpx, "Client", _Client)
     provider = FacadeLlmClient(LlmHttpSession("http://127.0.0.1:9"), "vision")
+    # One image on the message. The captured body is the Ollama-shaped request.
     image = ImageInput(data=raw, media_type="image/png")
     chunks = list(
         provider.chat_stream(
@@ -461,6 +525,7 @@ def test_facade_streams_a_multimodal_request(monkeypatch) -> None:
     assert message["content"] == "What's wrong?"
     assert message["images"] == [_b64(raw)]
     assert message["image_media_types"] == ["image/png"]
+    # Text stays a string here. The vLLM engine turns it into parts later.
     assert isinstance(message["content"], str)
     assert chunks[0].content_delta == "Clipped title."
     assert chunks[-1].done is True
@@ -493,6 +558,9 @@ def test_facade_text_only_request_omits_images(monkeypatch) -> None:
     assert message == {"role": "user", "content": "hello"}
 
 
+# The agent loop does not re-encode. Stripping happens before agent.run.
+
+
 def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
     settings = Settings()
     settings.agent_max_iterations = 2
@@ -516,12 +584,16 @@ def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
         session=ApprovalSession(),
     )
     image = ImageInput(data=png_bytes(), media_type="image/png")
+    # The provider should see this exact object, not a re-encoded copy.
     result = agent.run("What's wrong with this UI?", images=[image])
     sent = llm.chat.call_args.args[0]
     user = next(message for message in sent if message.role == "user")
     assert user.content == "What's wrong with this UI?"
     assert user.images == [image]
     assert result.final_message == "The title is clipped."
+
+
+# Transcript rows store a reference. The base64 pixels must not be in that JSON.
 
 
 def test_history_keeps_an_attachment_reference_without_bytes() -> None:
@@ -532,6 +604,9 @@ def test_history_keeps_an_attachment_reference_without_bytes() -> None:
         {"kind": "image", "media_type": "image/png", "byte_size": len(image.data)}
     ]
     assert _b64(image.data) not in json.dumps(metadata)
+
+
+# Multipart turn: sniff each file, hand the bytes to the agent, persist ids only.
 
 
 def test_turn_upload_builds_a_multimodal_message(tmp_path: Path) -> None:
@@ -546,6 +621,7 @@ def test_turn_upload_builds_a_multimodal_message(tmp_path: Path) -> None:
             data={"content": "What's wrong with this screenshot?"},
             files=[
                 ("images", ("screenshot.png", png, "image/png")),
+                # Wrong filename and a generic type. The JPEG signature still wins.
                 ("images", ("shot.png", jpeg, "application/octet-stream")),
             ],
             headers=headers,
@@ -554,12 +630,17 @@ def test_turn_upload_builds_a_multimodal_message(tmp_path: Path) -> None:
     agent = holder["agent"]
     assert agent.images is not None
     assert [image.media_type for image in agent.images] == ["image/png", "image/jpeg"]
-    assert agent.images[0].data == png
-    assert agent.images[1].data == jpeg
+    assert agent.images[0].data.startswith(b"\x89PNG")
+    assert agent.images[1].data.startswith(b"\xff\xd8\xff")
+    assert agent.images[0].attachment_id
     saved = store.list_messages(ALICE, conversation_id)
     assert saved[0].content == "What's wrong with this screenshot?"
-    assert saved[0].metadata["attachments"][0]["media_type"] == "image/png"
+    attachment = saved[0].metadata["attachments"][0]
+    assert attachment["media_type"] == "image/png"
+    assert attachment["kind"] == "image"
+    assert attachment["id"] == agent.images[0].attachment_id
     assert _b64(png) not in json.dumps(saved[0].metadata)
+    # Reading the row back without a blob loader does not resurrect pixels.
     assert message_from_record(saved[0]).images == []
 
 
@@ -569,12 +650,14 @@ def test_turn_rejects_unsupported_oversized_and_invalid_images(tmp_path: Path) -
     with client:
         conversation_id = client.post("/api/conversations", json={}, headers=headers).json()["id"]
         url = f"/api/conversations/{conversation_id}/turns"
+        # GIF is the wrong type. Then a real PNG over a tiny cap. Then bytes that are not an image.
         gif = client.post(
             url,
             data={"content": "animate"},
             files=[("images", ("clip.gif", b"GIF89a\x01\x00\x01\x00", "image/gif"))],
             headers=headers,
         )
+        # Drop the cap under the fixture, then restore it for the garbage upload.
         client.app.state.settings = client.app.state.settings.model_copy(
             update={"image_max_bytes": 8}
         )
@@ -601,44 +684,7 @@ def test_turn_rejects_unsupported_oversized_and_invalid_images(tmp_path: Path) -
     assert garbage.json()["detail"] == "Invalid image data."
 
 
-def test_cli_prompt_parses_text_and_image_tokens(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "screenshot.png").write_bytes(png_bytes())
-    (tmp_path / "before.png").write_bytes(png_bytes())
-    (tmp_path / "after.png").write_bytes(jpeg_bytes())
-
-    assert parse_image_prompt("hello") == ("hello", [])
-
-    content, images = parse_image_prompt("@screenshot.png Explain this")
-    assert content == "Explain this"
-    assert len(images) == 1
-    assert images[0].media_type == "image/png"
-    assert images[0].data == png_bytes()
-
-    content, images = parse_image_prompt("@before.png @after.png Compare these")
-    assert content == "Compare these"
-    assert [image.media_type for image in images] == ["image/png", "image/jpeg"]
-
-    content, images = parse_image_prompt("Compare @before.png with @after.png")
-    assert content == "Compare with"
-    assert len(images) == 2
-
-
-def test_cli_prompt_reports_invalid_files(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "clip.png").write_bytes(b"GIF89a\x01\x00\x01\x00")
-    (tmp_path / "notes.png").write_bytes(b"not an image")
-    (tmp_path / "big.png").write_bytes(png_bytes())
-
-    with pytest.raises(ImageRejected, match="Image file not found: missing.png"):
-        parse_image_prompt("@missing.png Explain this")
-    with pytest.raises(ImageRejected, match="Unsupported image type: image/gif"):
-        parse_image_prompt("@clip.png Explain this")
-    with pytest.raises(ImageRejected, match="Invalid image data."):
-        parse_image_prompt("@notes.png Explain this")
-    with pytest.raises(ImageRejected, match="exceeds the limit"):
-        parse_image_prompt("@big.png Explain this", max_bytes=8)
-    assert parse_image_prompt("hello") == ("hello", [])
+# The CLI client sends images as multipart and leaves text-only turns as JSON.
 
 
 def test_cli_client_uploads_images_as_multipart() -> None:
@@ -676,3 +722,140 @@ def test_cli_client_keeps_text_only_turns_as_json() -> None:
     assert events == [{"type": "token", "text": "Hi"}]
     assert seen["content_type"].startswith("application/json")
     assert json.loads(seen["body"]) == {"content": "hello"}
+
+
+# Fail closed: truncated, wrong type, too wide, too many pixels, or animated.
+
+
+def test_truncated_and_disallowed_images_are_rejected() -> None:
+    from PIL import ImageFile
+
+    # Pillow must not quietly finish a partial file.
+    assert ImageFile.LOAD_TRUNCATED_IMAGES is False
+    samples = [
+        b"\xff\xd8\xff\x00",
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIH",
+        b"RIFF\x00\x00\x00\x00WEBP",
+        b"",
+        b"BM" + b"\x00" * 8,
+    ]
+    for sample in samples:
+        with pytest.raises(ImageRejected, match="Invalid image data.|Unsupported image type"):
+            validate_image_bytes(sample)
+    with pytest.raises(ImageRejected, match="Unsupported image type: image/gif"):
+        validate_image_bytes(b"GIF89a\x01\x00\x01\x00")
+    wide = io.BytesIO()
+    Image.new("RGB", (2, 1), (1, 2, 3)).save(wide, format="PNG")
+    # One side is over the test's dimension cap. 413, not a generic 400.
+    with pytest.raises(ImageRejected, match="exceed the limit") as caught:
+        validate_image_bytes(wide.getvalue(), max_dimension=1)
+    assert caught.value.status_code == 413
+    pixels = io.BytesIO()
+    Image.new("RGB", (2, 2), (1, 2, 3)).save(pixels, format="PNG")
+    # 2x2 is over a 3-pixel cap. Pillow reports that as a decompression bomb.
+    with pytest.raises(ImageRejected, match="Invalid image data.") as caught:
+        validate_image_bytes(pixels.getvalue(), max_pixels=3)
+    assert caught.value.status_code == 413
+
+
+def test_animated_webp_is_rejected() -> None:
+    # More than one frame is rejected even though the container is an allowed type.
+    frames = [
+        Image.new("RGB", (1, 1), (255, 0, 0)),
+        Image.new("RGB", (1, 1), (0, 255, 0)),
+    ]
+    buffer = io.BytesIO()
+    frames[0].save(
+        buffer,
+        format="WEBP",
+        save_all=True,
+        append_images=frames[1:],
+        duration=50,
+        loop=0,
+    )
+    with pytest.raises(ImageRejected, match="Invalid image data."):
+        validate_image_bytes(buffer.getvalue())
+
+
+# strip_image_metadata drops tags and bakes orientation. It does not consult settings.
+
+
+def test_strip_removes_jpeg_gps_and_bakes_orientation() -> None:
+    from PIL import ImageOps
+    from PIL.ExifTags import IFD
+    from PIL.TiffImagePlugin import IFDRational
+
+    # Corner pixels make a wrong rotation obvious. Orientation 6 turns 4x2 into 2x4.
+    original = Image.new("RGB", (4, 2), (0, 0, 0))
+    original.putpixel((0, 0), (255, 0, 0))
+    original.putpixel((3, 1), (0, 0, 255))
+    exif = original.getexif()
+    exif[274] = 6  # Orientation tag.
+    gps = exif.get_ifd(IFD.GPSInfo)  # 37°48' N, 122°25' W.
+    gps[1] = "N"
+    gps[2] = (IFDRational(37, 1), IFDRational(48, 1), IFDRational(0, 1))
+    gps[3] = "W"
+    gps[4] = (IFDRational(122, 1), IFDRational(25, 1), IFDRational(0, 1))
+    raw_buffer = io.BytesIO()
+    original.save(raw_buffer, format="JPEG", quality=95, exif=exif)
+    raw = raw_buffer.getvalue()
+    assert Image.open(io.BytesIO(raw)).getexif().get_ifd(IFD.GPSInfo)
+    checked = validate_image_bytes(raw)
+    assert checked.data == raw  # Validation must not strip on its own.
+    stripped = strip_image_metadata(checked)
+    assert stripped.media_type == "image/jpeg"
+    assert not Image.open(io.BytesIO(stripped.data)).getexif().get_ifd(IFD.GPSInfo)
+    validate_image_bytes(stripped.data, declared_type="image/jpeg")
+    # Pixels should match Pillow's own transpose of the original, within JPEG error.
+    expected = ImageOps.exif_transpose(Image.open(io.BytesIO(raw)))
+    actual = Image.open(io.BytesIO(stripped.data))
+    assert actual.size == expected.size == (2, 4)
+    for left, right in zip(expected.getdata(), actual.getdata(), strict=True):
+        assert all(abs(a - b) <= 40 for a, b in zip(left, right, strict=True))
+
+
+def test_strip_removes_png_text_and_keeps_it_when_skipped() -> None:
+    from PIL import PngImagePlugin
+
+    # tEXt comment is the stand-in for a location note.
+    image = Image.new("RGB", (1, 1), (9, 9, 9))
+    info = PngImagePlugin.PngInfo()
+    info.add_text("Comment", "gps-secret-marker")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", pnginfo=info)
+    raw = buffer.getvalue()
+    assert b"gps-secret-marker" in raw
+    stripped = strip_image_metadata(validate_image_bytes(raw))
+    assert stripped.media_type == "image/png"
+    assert b"gps-secret-marker" not in stripped.data
+    # validate() leaves the comment in place. Skipping strip is an endpoint choice.
+    assert validate_image_bytes(raw).data == raw
+
+
+def test_strip_removes_webp_exif_and_keeps_it_when_skipped() -> None:
+    image = Image.new("RGB", (2, 2), (1, 2, 3))
+    exif = image.getexif()
+    exif[270] = "gps-secret-marker"  # ImageDescription.
+    exif[274] = 1
+    buffer = io.BytesIO()
+    image.save(buffer, format="WEBP", quality=95, exif=exif)
+    raw = buffer.getvalue()
+    assert b"gps-secret-marker" in raw
+    checked = validate_image_bytes(raw)
+    assert checked.data == raw  # EXIF survives validation.
+    stripped = strip_image_metadata(checked)
+    assert stripped.media_type == "image/webp"
+    assert b"gps-secret-marker" not in stripped.data
+    assert not Image.open(io.BytesIO(stripped.data)).getexif().get(270)
+
+
+def test_strip_failure_does_not_return_the_original(monkeypatch) -> None:
+    image = validate_image_bytes(jpeg_bytes())
+
+    def boom(self, *args, **kwargs):
+        raise OSError("cannot save")
+
+    # The re-save is the strip. If it fails, the original bytes must not come back.
+    monkeypatch.setattr(Image.Image, "save", boom)
+    with pytest.raises(ImageRejected, match="Invalid image data."):
+        strip_image_metadata(image)

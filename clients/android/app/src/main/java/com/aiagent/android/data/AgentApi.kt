@@ -48,6 +48,14 @@ data class SpeechStatus(
     @SerialName("tts_configured") val ttsConfigured: Boolean = false,
 )
 
+@Serializable
+data class ModelInfo(
+    val engine: String = "",
+    val model: String = "",
+    val vision: Boolean = false,
+    val tools: Boolean = false,
+)
+
 /** An HTTP error from ai-agent-serve. [code] is set for whitelist refusals (see ACCESS_* codes). */
 class AgentApiException(
     val status: Int,
@@ -130,22 +138,31 @@ class AgentApi(private val baseUrl: String) {
         conversationId: String,
         content: String,
         speak: Boolean = false,
+        images: List<ImageUpload> = emptyList(),
         onConnection: (HttpURLConnection) -> Unit,
         onEvent: (TurnEvent) -> Unit,
     ) {
         val connection = open("POST", ApiEndpoints.conversationTurns(conversationId), accessToken).apply {
             readTimeout = 0
             doOutput = true
-            setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/x-ndjson")
         }
         onConnection(connection)
         try {
-            val payload = buildJsonObject {
-                put("content", JsonPrimitive(content))
-                if (speak) put("speak", JsonPrimitive(true))
+            if (images.isEmpty()) {
+                connection.setRequestProperty("Content-Type", "application/json")
+                val payload = buildJsonObject {
+                    put("content", JsonPrimitive(content))
+                    if (speak) put("speak", JsonPrimitive(true))
+                }
+                connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+            } else {
+                val boundary = TurnMultipart.boundary(images)
+                val body = TurnMultipart.encode(content, speak, images, boundary)
+                connection.setFixedLengthStreamingMode(body.size)
+                connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                connection.outputStream.use { it.write(body) }
             }
-            connection.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = connection.responseCode
             if (code !in 200..299) {
                 throw errorFrom(code, connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty())
@@ -164,6 +181,12 @@ class AgentApi(private val baseUrl: String) {
     /** Whether this server has CPU speech models configured. Does not load them. */
     fun speechStatus(accessToken: String): SpeechStatus {
         val body = request("GET", ApiEndpoints.SPEECH_STATUS, accessToken)
+        return json.decodeFromString(body)
+    }
+
+    /** Capabilities of the model this server process is running. */
+    fun modelInfo(accessToken: String): ModelInfo {
+        val body = request("GET", ApiEndpoints.MODEL, accessToken)
         return json.decodeFromString(body)
     }
 

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent.api.turns import AgentFactoryNotConfigured, _run_turn
+from ai_agent.cli.llm_serve import PreparedUpstream
 from ai_agent.config import LlmTransport, Settings
 from ai_agent.llm.server.process.ollama import OllamaEngineProcess
 from ai_agent.service.notify import sd_notify
@@ -157,7 +158,7 @@ def test_run_points_the_api_at_the_facade_and_stops_it(monkeypatch) -> None:
     httpd.server_address = ("127.0.0.1", 43111)
     seen: dict = {}
 
-    def run_api(api_settings, _store, _access_store, _target_repo, _admins, _console):
+    def run_api(api_settings, _store, _access_store, _target_repo, _admins, _console, model_info=None):
         seen["host"] = api_settings.llm_host
         seen["transport"] = api_settings.llm_transport
         return 0
@@ -172,7 +173,7 @@ def test_run_points_the_api_at_the_facade_and_stops_it(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "ai_agent.service.supervisor.prepare_upstream",
-        lambda *_a, **_k: _engine(),
+        lambda *_a, **_k: PreparedUpstream(engine=_engine(), model_info=MagicMock()),
     )
     monkeypatch.setattr("ai_agent.service.supervisor.bind_llm_server", lambda *_a, **_k: httpd)
     monkeypatch.setattr("ai_agent.service.supervisor._run_api", run_api)
@@ -202,7 +203,7 @@ def test_run_closes_the_facade_when_the_api_exits(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "ai_agent.service.supervisor.prepare_upstream",
-        lambda *_a, **_k: engine,
+        lambda *_a, **_k: PreparedUpstream(engine=engine, model_info=MagicMock()),
     )
     monkeypatch.setattr("ai_agent.service.supervisor.bind_llm_server", lambda *_a, **_k: httpd)
     monkeypatch.setattr("ai_agent.service.supervisor._run_api", run_api)

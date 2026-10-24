@@ -10,9 +10,13 @@ from ai_agent.agent.loop import AgentCancelled
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.api.transcript import message_from_record, message_metadata, message_payload
 from ai_agent.approval.session import ApprovalSession
+from ai_agent.attachments.image import ImageHandler
+from ai_agent.attachments.replay import select_replay_message_ids
+from ai_agent.attachments.store import AttachmentNotFound
+from ai_agent.attachments.types import Attachment, checksum_bytes
 from ai_agent.config import Settings
-from ai_agent.conversations.store import ConversationNotFound, ConversationStore
-from ai_agent.llm.client.types import ImageInput
+from ai_agent.conversations.store import ConversationNotFound, ConversationStore, Message
+from ai_agent.llm.client.types import ImageInput, LLMMessage
 from ai_agent.speech.live import SPEECH_NOT_CONFIGURED, ReplySpeaker
 
 logger = logging.getLogger(__name__)
@@ -42,6 +46,10 @@ def iter_turn_events(
     speak: bool = False,
     speaker=None,
     images: list[ImageInput] | None = None,
+    prior_history: list[Message] | None = None,
+    stored_user: Message | None = None,
+    attachment_catalog=None,
+    attachment_cache=None,
 ) -> Iterator[str]:
     """Run one agent turn and yield NDJSON events.
 
@@ -69,6 +77,10 @@ def iter_turn_events(
                 speak=speak,
                 speaker=speaker,
                 images=images,
+                prior_history=prior_history,
+                stored_user=stored_user,
+                attachment_catalog=attachment_catalog,
+                attachment_cache=attachment_cache,
             )
         except AgentCancelled:
             emit({"type": "done", "message": "", "error": "cancelled"})
@@ -111,6 +123,10 @@ def _run_turn(
     speak: bool = False,
     speaker=None,
     images: list[ImageInput] | None = None,
+    prior_history: list[Message] | None = None,
+    stored_user: Message | None = None,
+    attachment_catalog=None,
+    attachment_cache=None,
 ) -> None:
     session = sessions.setdefault(user_id, ApprovalSession())
     prompter = RemoteApprovalPrompter(
@@ -134,6 +150,7 @@ def _run_turn(
     try:
         _drive_agent(
             agent,
+            settings=settings,
             store=store,
             user_id=user_id,
             conversation_id=conversation_id,
@@ -143,6 +160,10 @@ def _run_turn(
             speak=speak,
             speaker=speaker,
             images=images,
+            prior_history=prior_history,
+            stored_user=stored_user,
+            attachment_catalog=attachment_catalog,
+            attachment_cache=attachment_cache,
         )
     finally:
         llm = getattr(agent, "llm", None)
@@ -154,6 +175,7 @@ def _run_turn(
 def _drive_agent(
     agent,
     *,
+    settings: Settings,
     store: ConversationStore,
     user_id: str,
     conversation_id: str,
@@ -163,6 +185,10 @@ def _drive_agent(
     speak: bool = False,
     speaker=None,
     images: list[ImageInput] | None = None,
+    prior_history: list[Message] | None = None,
+    stored_user: Message | None = None,
+    attachment_catalog=None,
+    attachment_cache=None,
 ) -> None:
     reply_speaker = None
     if speak:
@@ -171,7 +197,14 @@ def _drive_agent(
         else:
             reply_speaker = ReplySpeaker(speaker, emit, cancel)
 
+    sent_stored_user = False
+
     def on_message(message) -> None:
+        nonlocal sent_stored_user
+        if stored_user is not None and not sent_stored_user and message.role == "user":
+            sent_stored_user = True
+            emit({"type": "message", "message": message_payload(stored_user)})
+            return
         record = store.append_message(
             user_id,
             conversation_id,
@@ -183,9 +216,36 @@ def _drive_agent(
 
     agent.on_message = on_message
     agent.should_stop = cancel.is_set
-    history = store.list_messages(user_id, conversation_id)
+    history = (
+        store.list_messages(user_id, conversation_id)
+        if prior_history is None
+        else prior_history
+    )
+    chosen: set[str] = set()
+    loader = None
+    if attachment_catalog is not None and attachment_cache is not None:
+        current = images or []
+        chosen = select_replay_message_ids(
+            history,
+            current_images=len(current),
+            current_bytes=sum(len(image.data) for image in current),
+            max_messages=settings.attachment_replay_messages,
+            max_images=settings.attachment_replay_max_images,
+            max_bytes=settings.attachment_replay_max_bytes,
+        )
+        loader = _replay_loader(
+            user_id,
+            catalog=attachment_catalog,
+            cache=attachment_cache,
+        )
     for record in history:
-        agent.messages.append(message_from_record(record))
+        agent.messages.append(
+            message_from_record(
+                record,
+                loader=loader,
+                include_images=record.id in chosen,
+            )
+        )
 
     def on_token(text: str) -> None:
         if not text:
@@ -218,4 +278,96 @@ def _drive_agent(
             "message": result.final_message,
             "error": result.error,
         }
+    )
+
+
+def persist_user_turn(
+    *,
+    store: ConversationStore,
+    catalog,
+    user_id: str,
+    conversation_id: str,
+    refs: list[Attachment],
+    message: LLMMessage,
+) -> Message:
+    """Insert catalog rows and the user message in one transaction."""
+    from sqlalchemy.orm import Session
+
+    with Session(store.engine) as db:
+        for ref in refs:
+            catalog.insert(db, ref)
+        saved = store.append_message_in(
+            db,
+            user_id,
+            conversation_id,
+            role=message.role,
+            content=message.content or "",
+            metadata=message_metadata(message),
+        )
+        db.commit()
+        return saved
+
+
+def _replay_loader(user_id: str, *, catalog, cache):
+    """Load each image attachment at most once per turn."""
+    handler = ImageHandler()
+    memo: dict[str, ImageInput | None] = {}
+
+    def load(attachment_id: str) -> ImageInput | None:
+        if attachment_id in memo:
+            return memo[attachment_id]
+        attachment = catalog.get(user_id, attachment_id)
+        if attachment is None or attachment.kind != "image":
+            if attachment is None:
+                logger.warning(
+                    "Attachment %s is missing; omitting it from the turn",
+                    attachment_id,
+                )
+            memo[attachment_id] = None
+            return None
+        try:
+            data = _read_attachment(cache, attachment)
+        except AttachmentNotFound:
+            logger.warning(
+                "Attachment %s is missing; omitting it from the turn",
+                attachment_id,
+            )
+            memo[attachment_id] = None
+            return None
+        image = handler.to_model(attachment, data)
+        memo[attachment_id] = image
+        return image
+
+    return load
+
+
+def _read_attachment(cache, attachment: Attachment) -> bytes:
+    getter = cache.get
+    try:
+        return getter(
+            attachment.user_id,
+            attachment.id,
+            checksum=attachment.checksum,
+        )
+    except TypeError:
+        return attachment.load_bytes(cache)
+
+
+def attachment_from_image(
+    *,
+    user_id: str,
+    conversation_id: str,
+    image: ImageInput,
+    kind: str = "image",
+) -> Attachment:
+    if not image.attachment_id:
+        raise ValueError("attachment id is required")
+    return Attachment(
+        id=image.attachment_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        kind=kind,
+        media_type=image.media_type,
+        byte_size=len(image.data),
+        checksum=checksum_bytes(image.data),
     )

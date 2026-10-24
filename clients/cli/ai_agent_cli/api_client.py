@@ -44,6 +44,9 @@ class AgentApiClient:
         rows = payload.get("messages", [])
         return rows if isinstance(rows, list) else []
 
+    def get_model(self) -> dict:
+        return self._request("GET", "/api/model")
+
     def stream_turn(
         self,
         conversation_id: str,

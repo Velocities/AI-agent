@@ -9,6 +9,7 @@ import com.aiagent.android.data.ApprovalRequest
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.ChatMessage
 import com.aiagent.android.data.ConversationSummary
+import com.aiagent.android.data.ImageUpload
 import com.aiagent.android.data.Transcript
 import com.aiagent.android.data.TurnEvent
 import com.aiagent.android.speech.SpeechFailed
@@ -42,6 +43,7 @@ data class ChatUiState(
     val streamingText: String = "",
     /** The message just sent, shown until the server's copy of it arrives. */
     val pendingUserText: String? = null,
+    val pendingUserImages: List<ChatItem.UserImage> = emptyList(),
     val statusText: String? = null,
     val running: Boolean = false,
     val pendingApproval: ApprovalRequest? = null,
@@ -56,6 +58,8 @@ data class ChatUiState(
     val speaking: Boolean = false,
     /** Bumped when playback should stop. Clips from an older generation are ignored. */
     val speechGeneration: Int = 0,
+    /** False until GET /api/model says this process accepts images. */
+    val visionEnabled: Boolean = false,
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
@@ -81,9 +85,14 @@ class ChatViewModel : ViewModel() {
     private val speechLock = Any()
     private var clipsOutstanding = 0
     private var ttsConfigured = false
+    /** Previews for the last sent user message, keyed by the server's message id. */
+    private val imagePreviewById = mutableMapOf<String, List<ByteArray>>()
+    private var pendingUpload: List<ImageUpload> = emptyList()
+    private var modelInfoFetched = false
 
     init {
         refreshConversations()
+        refreshModelInfo()
     }
 
     fun refreshConversations() {
@@ -108,9 +117,13 @@ class ChatViewModel : ViewModel() {
                 loadingMessages = true,
                 pendingApproval = null,
                 pendingUserText = null,
+                pendingUserImages = emptyList(),
                 streamingText = "",
             )
         }
+        imagePreviewById.clear()
+        pendingUpload = emptyList()
+        refreshModelInfo()
         loadMessages(id)
     }
 
@@ -124,9 +137,12 @@ class ChatViewModel : ViewModel() {
                 items = emptyList(),
                 pendingApproval = null,
                 pendingUserText = null,
+                pendingUserImages = emptyList(),
                 streamingText = "",
             )
         }
+        imagePreviewById.clear()
+        pendingUpload = emptyList()
     }
 
     fun deleteConversation(id: String) {
@@ -149,13 +165,18 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun send(text: String, speakReply: Boolean = false) {
+    fun send(text: String, images: List<ImageUpload> = emptyList(), speakReply: Boolean = false) {
         val content = text.trim()
-        if (content.isEmpty() || _state.value.running) return
+        if ((content.isEmpty() && images.isEmpty()) || _state.value.running) return
+        if (images.isNotEmpty() && !_state.value.visionEnabled) {
+            _state.update { it.copy(error = "This model does not accept images.") }
+            return
+        }
         stopSpeech()
         stopRequested = false
         val speak = speakReply && ttsConfigured
         speakArmed = speak
+        pendingUpload = images
         turnJob = viewModelScope.launch {
             val job = coroutineContext[Job]
             try {
@@ -163,6 +184,7 @@ class ChatViewModel : ViewModel() {
                     it.copy(
                         running = true,
                         pendingUserText = content,
+                        pendingUserImages = images.toUserImages(),
                         streamingText = "",
                         statusText = null,
                         error = null,
@@ -175,7 +197,8 @@ class ChatViewModel : ViewModel() {
                     created.id
                 }
                 if (conversationId == null) {
-                    _state.update { it.copy(running = false, pendingUserText = null) }
+                    pendingUpload = emptyList()
+                    _state.update { it.copy(running = false, pendingUserText = null, pendingUserImages = emptyList()) }
                     return@launch
                 }
                 call(isStream = true) { token ->
@@ -184,6 +207,7 @@ class ChatViewModel : ViewModel() {
                         conversationId,
                         content,
                         speak = speak,
+                        images = images,
                         onConnection = { turnConnection = it },
                         onEvent = { event -> onTurnEvent(conversationId, event) },
                     )
@@ -217,6 +241,28 @@ class ChatViewModel : ViewModel() {
                     }
                 }
             }
+        }
+    }
+
+    private fun refreshModelInfo() {
+        if (modelInfoFetched || !_state.value.apiConfigured) return
+        viewModelScope.launch {
+            val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull()
+            if (token.isNullOrBlank()) return@launch
+            modelInfoFetched = true
+            val enabled = try {
+                withContext(Dispatchers.IO) { api().modelInfo(token).vision }
+            } catch (error: AgentApiException) {
+                if (error.status == 503) {
+                    _state.update {
+                        it.copy(notice = "Model information is unavailable. Image attach is off.")
+                    }
+                }
+                false
+            } catch (_: IOException) {
+                false
+            }
+            _state.update { it.copy(visionEnabled = enabled) }
         }
     }
 
@@ -366,9 +412,10 @@ class ChatViewModel : ViewModel() {
             if (rows == null) return@update state.copy(loadingMessages = false)
             state.copy(
                 messages = rows,
-                items = Transcript.build(rows),
+                items = decorateItems(Transcript.build(rows)),
                 loadingMessages = false,
                 pendingUserText = if (state.running) state.pendingUserText else null,
+                pendingUserImages = if (state.running) state.pendingUserImages else emptyList(),
                 streamingText = if (state.running) state.streamingText else "",
             )
         }
@@ -387,12 +434,17 @@ class ChatViewModel : ViewModel() {
                 is TurnEvent.Token -> state.copy(streamingText = state.streamingText + event.text)
                 is TurnEvent.Status -> state.copy(statusText = event.text)
                 is TurnEvent.Message -> {
+                    if (event.message.role == "user" && pendingUpload.isNotEmpty()) {
+                        imagePreviewById[event.message.id] = pendingUpload.map { it.data }
+                        pendingUpload = emptyList()
+                    }
                     val messages = state.messages.filterNot { it.id == event.message.id } + event.message
                     state.copy(
                         messages = messages,
-                        items = Transcript.build(messages),
+                        items = decorateItems(Transcript.build(messages)),
                         streamingText = if (event.message.role == "assistant") "" else state.streamingText,
                         pendingUserText = state.pendingUserText.takeUnless { event.message.role == "user" },
+                        pendingUserImages = if (event.message.role == "user") emptyList() else state.pendingUserImages,
                     )
                 }
                 is TurnEvent.ApprovalRequired -> state.copy(pendingApproval = event.request)
@@ -456,6 +508,28 @@ class ChatViewModel : ViewModel() {
             null
         }
     }
+
+    private fun decorateItems(items: List<ChatItem>): List<ChatItem> =
+        items.map { item ->
+            val user = item as? ChatItem.User ?: return@map item
+            val previews = imagePreviewById[user.key] ?: return@map item
+            if (user.images.isEmpty()) {
+                user.copy(
+                    images = previews.map { bytes ->
+                        ChatItem.UserImage(mediaType = "image/*", byteSize = bytes.size, preview = bytes)
+                    },
+                )
+            } else {
+                user.copy(
+                    images = user.images.mapIndexed { index, image ->
+                        image.copy(preview = previews.getOrNull(index))
+                    },
+                )
+            }
+        }
+
+    private fun List<ImageUpload>.toUserImages(): List<ChatItem.UserImage> =
+        map { ChatItem.UserImage(mediaType = it.mediaType, byteSize = it.data.size, preview = it.data) }
 
     private companion object {
         const val NOTICE_TITLE_CHARS = 32
