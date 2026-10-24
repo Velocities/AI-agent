@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from typing import Literal, Self
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
@@ -18,6 +19,7 @@ from ai_agent.api.turns import (
     iter_turn_events,
     persist_user_turn,
 )
+from ai_agent.approval.selection import InvalidApprovalDecision
 from ai_agent.attachments import select_handler
 from ai_agent.attachments.image import ImageHandler
 from ai_agent.attachments.store import AttachmentNotFound, AttachmentQuotaExceeded
@@ -56,11 +58,40 @@ class TurnRequest(BaseModel):
         return value
 
 
-class ApprovalBody(BaseModel):
+class CommandDecisionBody(BaseModel):
+    """One command in a batch, numbered from 1 in the approval event."""
+
     model_config = ConfigDict(extra="forbid")
 
-    approved: bool
+    id: int = Field(ge=1)
+    decision: Literal["accept", "reject"]
+
+
+class ApprovalBody(BaseModel):
+    """Approve or reject a whole batch, or send a decision for every command.
+
+    `approved` is the existing all-or-nothing choice. `decisions` lets the
+    client accept some commands and reject others. A session grant only applies
+    when the whole batch is approved.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool | None = None
     grant_scope: str | None = None
+    decisions: list[CommandDecisionBody] | None = None
+
+    @model_validator(mode="after")
+    def require_one_choice(self) -> Self:
+        if self.decisions:
+            if self.approved is not None:
+                raise ValueError("Omit approved when sending per-command decisions.")
+            if self.grant_scope is not None:
+                raise ValueError("A session grant applies only when every command is approved.")
+            return self
+        if self.approved is None:
+            raise ValueError("approved is required")
+        return self
 
 
 class ConversationResponse(BaseModel):
@@ -261,13 +292,20 @@ def resolve_approval(
     request: Request,
     user: AuthenticatedUser = Depends(require_deployment_access),
 ) -> dict[str, bool]:
-    found = request.app.state.broker.resolve(
-        user_id=user.user_id,
-        conversation_id=conversation_id,
-        approval_id=approval_id,
-        approved=body.approved,
-        grant_scope=body.grant_scope,
+    decisions = (
+        [(item.id, item.decision) for item in body.decisions] if body.decisions else None
     )
+    try:
+        found = request.app.state.broker.resolve(
+            user_id=user.user_id,
+            conversation_id=conversation_id,
+            approval_id=approval_id,
+            approved=bool(body.approved),
+            grant_scope=body.grant_scope,
+            decisions=decisions,
+        )
+    except InvalidApprovalDecision as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     if not found:
         raise HTTPException(status_code=404, detail="Approval not found.")
     return {"ok": True}

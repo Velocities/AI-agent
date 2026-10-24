@@ -39,6 +39,11 @@ def test_system_prompt_includes_runtime_platform() -> None:
     assert "Local target commands run as: Admin" in prompt
     assert "run_command" in prompt
     assert "run_commands" in prompt
+    assert '"ordered"' in prompt
+    assert '"unordered"' in prompt
+    assert "every command after it" in prompt
+    assert "never a string" in prompt
+    assert "one run_commands call" in prompt
     assert "respond" in prompt
     assert "finished" in prompt
     assert "docker, cat, grep" in prompt

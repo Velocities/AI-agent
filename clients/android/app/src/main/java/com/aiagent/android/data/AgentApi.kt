@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -113,12 +114,24 @@ class AgentApi(private val baseUrl: String) {
         accessToken: String,
         conversationId: String,
         approvalId: String,
-        approved: Boolean,
+        approved: Boolean?,
         grantScope: String?,
+        decisions: List<CommandDecision>? = null,
     ) {
         val body = buildJsonObject {
-            put("approved", JsonPrimitive(approved))
-            put("grant_scope", grantScope?.let(::JsonPrimitive) ?: JsonNull)
+            if (decisions != null) {
+                put("decisions", buildJsonArray {
+                    decisions.forEach { decision ->
+                        add(buildJsonObject {
+                            put("id", JsonPrimitive(decision.id))
+                            put("decision", JsonPrimitive(decision.decision))
+                        })
+                    }
+                })
+            } else {
+                put("approved", JsonPrimitive(approved == true))
+                put("grant_scope", grantScope?.let(::JsonPrimitive) ?: JsonNull)
+            }
         }
         request(
             "POST",

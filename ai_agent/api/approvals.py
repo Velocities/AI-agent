@@ -5,7 +5,13 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from ai_agent.approval.prompt import ApprovalResult, PendingCommand, auto_approves
+from ai_agent.approval.prompt import (
+    ApprovalResult,
+    PendingCommand,
+    auto_approves,
+    batch_runs_unattended,
+)
+from ai_agent.approval.selection import describe_ordering, normalize_groups, resolve_choices
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.commands.render import render_command
 from ai_agent.config import ConfirmationMode
@@ -23,6 +29,7 @@ class OpenApproval:
     user_id: str
     conversation_id: str
     risks: list[RiskLevel]
+    order_groups: list[int | None] = field(default_factory=list)
     event: threading.Event = field(default_factory=threading.Event)
     result: ApprovalResult | None = None
 
@@ -66,7 +73,13 @@ class ApprovalBroker:
         approval_id: str,
         approved: bool,
         grant_scope: str | None,
+        decisions: list[tuple[int, str]] | None = None,
     ) -> bool:
+        """Record the client's choice. Raises InvalidApprovalDecision for a bad id list.
+
+        A validation error leaves the approval open so the client can send a
+        corrected choice. Approve-all and reject-all keep using `approved`.
+        """
         with self._lock:
             approval = self._pending.get(approval_id)
             if approval is None:
@@ -75,10 +88,22 @@ class ApprovalBroker:
                 return False
             if approval.event.is_set():
                 return False
-            approval.result = ApprovalResult(
-                approved=approved,
-                grant_scope=_accepted_grant(approval.risks, grant_scope),
-            )
+            if decisions is not None:
+                approved_all, accepted, cascade = resolve_choices(
+                    decisions,
+                    len(approval.risks),
+                    approval.order_groups,
+                )
+                approval.result = ApprovalResult(
+                    approved=approved_all,
+                    accepted=accepted,
+                    cascade_rejected=cascade,
+                )
+            else:
+                approval.result = ApprovalResult(
+                    approved=approved,
+                    grant_scope=_accepted_grant(approval.risks, grant_scope),
+                )
             approval.event.set()
             return True
 
@@ -133,26 +158,18 @@ class RemoteApprovalPrompter:
             ]
         )
 
-    def prompt_batch(self, pending: list[PendingCommand]) -> ApprovalResult:
+    def prompt_batch(
+        self,
+        pending: list[PendingCommand],
+        *,
+        order_groups: list[int | None] | None = None,
+    ) -> ApprovalResult:
         if not pending:
             return ApprovalResult(approved=True)
+        groups = normalize_groups(order_groups, len(pending))
         if any(not item.decision.allowed for item in pending):
             return ApprovalResult(approved=False)
-        if any(item.decision.effective_risk != RiskLevel.READ_ONLY for item in pending):
-            for item in pending:
-                result = self.prompt_single(
-                    item.decision,
-                    reason=item.reason,
-                    target_display=item.target_display,
-                    target_name=item.target_name,
-                    target_kind=item.target_kind,
-                )
-                if not result.approved:
-                    return ApprovalResult(approved=False)
-            return ApprovalResult(approved=True)
-        if self.mode == ConfirmationMode.PERMISSIVE or (
-            self.mode == ConfirmationMode.BALANCED and self.session.has_read_only_auto()
-        ):
+        if batch_runs_unattended(self, pending):
             return ApprovalResult(approved=True)
         return self._wait(
             [
@@ -164,15 +181,28 @@ class RemoteApprovalPrompter:
                     target_kind=item.target_kind,
                 )
                 for item in pending
-            ]
+            ],
+            order_groups=groups,
         )
 
-    def _wait(self, commands: list[dict]) -> ApprovalResult:
+    def _wait(
+        self,
+        commands: list[dict],
+        *,
+        order_groups: list[int | None] | None = None,
+    ) -> ApprovalResult:
+        groups = normalize_groups(order_groups, len(commands))
+        for index, command in enumerate(commands, start=1):
+            command["id"] = index
+            group = groups[index - 1]
+            if group is not None:
+                command["order_group"] = group
         approval = OpenApproval(
             approval_id=str(uuid.uuid4()),
             user_id=self.user_id,
             conversation_id=self.conversation_id,
             risks=[_risk_from_summary(item) for item in commands],
+            order_groups=groups,
         )
         self.broker.register(approval)
         self.emit(
@@ -180,6 +210,7 @@ class RemoteApprovalPrompter:
                 "type": "approval_required",
                 "approval_id": approval.approval_id,
                 "conversation_id": self.conversation_id,
+                "ordering": describe_ordering(groups),
                 "commands": commands,
             }
         )

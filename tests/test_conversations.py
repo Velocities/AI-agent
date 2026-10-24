@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from ai_agent.agent.loop import AgentRunResult
 from ai_agent.api.app import create_app
-from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
+from ai_agent.api.approvals import ApprovalBroker, OpenApproval, RemoteApprovalPrompter
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.approval.session import ApprovalSession
 from ai_agent_cli.credentials import StoredSession, save_session, session_path
@@ -271,6 +271,97 @@ def test_approval_event_names_the_target_kind() -> None:
     assert command["target_name"] == "box"
     assert command["target_kind"] == "ssh"
     assert command["command"] == "uptime"
+    assert command["id"] == 1
+    assert seen[0]["ordering"] == "unordered"
+    assert "order_group" not in command
+
+
+def _post_approval(client, approval_id: str, body: dict, headers: dict):
+    return client.post(
+        f"/api/conversations/chat/approvals/{approval_id}",
+        json=body,
+        headers=headers,
+    )
+
+
+def test_batch_approval_accepts_selected_commands_and_keeps_all_or_nothing(tmp_path) -> None:
+    client, _store = _client(tmp_path)
+    broker = client.app.state.broker
+    headers = {"Authorization": "Bearer alice"}
+    ordered = OpenApproval(
+        approval_id="ordered",
+        user_id=ALICE,
+        conversation_id="chat",
+        risks=[RiskLevel.READ_ONLY] * 4,
+        order_groups=[0, 0, 0, 0],
+    )
+    unordered = OpenApproval(
+        approval_id="unordered",
+        user_id=ALICE,
+        conversation_id="chat",
+        risks=[RiskLevel.READ_ONLY] * 4,
+        order_groups=[None, None, None, None],
+    )
+    accepted = OpenApproval(
+        approval_id="accepted",
+        user_id=ALICE,
+        conversation_id="chat",
+        risks=[RiskLevel.READ_ONLY, RiskLevel.READ_ONLY],
+    )
+    denied = OpenApproval(
+        approval_id="denied",
+        user_id=ALICE,
+        conversation_id="chat",
+        risks=[RiskLevel.READ_ONLY, RiskLevel.READ_ONLY],
+    )
+    for approval in (ordered, unordered, accepted, denied):
+        broker.register(approval)
+    selected = [
+        {"id": 1, "decision": "accept"},
+        {"id": 2, "decision": "reject"},
+        {"id": 3, "decision": "accept"},
+        {"id": 4, "decision": "accept"},
+    ]
+    with client:
+        incomplete = _post_approval(client, "ordered", {"decisions": selected[:2]}, headers)
+        assert incomplete.status_code == 400
+        assert ordered.result is None
+        conflict = _post_approval(
+            client,
+            "ordered",
+            {"approved": True, "decisions": selected},
+            headers,
+        )
+        assert conflict.status_code == 422
+        assert ordered.result is None
+        partial = _post_approval(client, "ordered", {"decisions": selected}, headers)
+        assert partial.status_code == 200
+        independent = _post_approval(client, "unordered", {"decisions": selected}, headers)
+        assert independent.status_code == 200
+        allow = _post_approval(
+            client,
+            "accepted",
+            {"approved": True, "grant_scope": "read_only_session"},
+            headers,
+        )
+        assert allow.status_code == 200
+        reject = _post_approval(
+            client,
+            "denied",
+            {"approved": False, "grant_scope": None},
+            headers,
+        )
+        assert reject.status_code == 200
+    assert ordered.result is not None
+    assert ordered.result.accepted == (True, False, False, False)
+    assert ordered.result.cascade_rejected == (False, False, True, True)
+    assert unordered.result is not None
+    assert unordered.result.accepted == (True, False, True, True)
+    assert unordered.result.cascade_rejected == (False, False, False, False)
+    assert accepted.result == type(accepted.result)(approved=True, grant_scope="read_only_session")
+    assert denied.result is not None
+    assert denied.result.approved is False
+    assert denied.result.accepted is None
 
 
 def test_internal_nudges_are_flagged() -> None:

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 
 /** One line of the NDJSON stream from `POST /api/conversations/{id}/turns`. */
@@ -58,12 +59,33 @@ data class PendingCommand(
     val targetDisplay: String?,
     val targetName: String?,
     val targetKind: String?,
+    /** 1-based id in the approval event. 0 when a caller did not set one. */
+    val id: Int = 0,
+    /** Commands that share a group are one ordered sequence. Null means independent. */
+    val orderGroup: Int? = null,
 )
+
+/** One command the user accepted or rejected inside a batch. */
+data class CommandDecision(val id: Int, val decision: String) {
+    companion object {
+        const val ACCEPT = "accept"
+        const val REJECT = "reject"
+    }
+}
+
+/** Approve every command, reject every command, or send one decision per command. */
+sealed interface ApprovalAnswer {
+    data class Whole(val approved: Boolean, val grantScope: String?) : ApprovalAnswer
+    data class Selected(val decisions: List<CommandDecision>) : ApprovalAnswer
+}
 
 data class ApprovalRequest(
     val approvalId: String,
     val conversationId: String,
     val commands: List<PendingCommand>,
+    val ordering: String = UNORDERED,
+    /** True when this server understands per-command decisions. */
+    val selectionSupported: Boolean = false,
 ) {
     /** Same rule as the CLI's `a` answer: only READ_ONLY / REVERSIBLE risks can be granted. */
     val sessionGrantScope: String?
@@ -85,12 +107,13 @@ data class ApprovalRequest(
         const val RISK_REVERSIBLE = "REVERSIBLE"
         const val GRANT_READ_ONLY = "read_only_session"
         const val GRANT_REVERSIBLE = "reversible_session"
+        const val ORDERED = "ordered"
+        const val UNORDERED = "unordered"
+        const val MIXED = "mixed"
 
-        fun from(obj: JsonObject): ApprovalRequest = ApprovalRequest(
-            approvalId = obj.string("approval_id").orEmpty(),
-            conversationId = obj.string("conversation_id").orEmpty(),
-            commands = (obj["commands"] as? JsonArray).orEmpty().mapNotNull { item ->
-                val command = item as? JsonObject ?: return@mapNotNull null
+        fun from(obj: JsonObject): ApprovalRequest {
+            val commands = (obj["commands"] as? JsonArray).orEmpty().mapIndexedNotNull { index, item ->
+                val command = item as? JsonObject ?: return@mapIndexedNotNull null
                 PendingCommand(
                     command = command.string("command").orEmpty(),
                     risk = command.string("risk") ?: "DESTRUCTIVE",
@@ -99,11 +122,23 @@ data class ApprovalRequest(
                     targetDisplay = command.string("target"),
                     targetName = command.string("target_name"),
                     targetKind = command.string("target_kind"),
+                    id = command.int("id") ?: (index + 1),
+                    orderGroup = command.int("order_group"),
                 )
-            },
-        )
+            }
+            return ApprovalRequest(
+                approvalId = obj.string("approval_id").orEmpty(),
+                conversationId = obj.string("conversation_id").orEmpty(),
+                commands = commands,
+                ordering = obj.string("ordering") ?: UNORDERED,
+                selectionSupported = obj.containsKey("ordering"),
+            )
+        }
     }
 }
 
 internal fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+
+internal fun JsonObject.int(key: String): Int? =
+    (this[key] as? JsonPrimitive)?.intOrNull
