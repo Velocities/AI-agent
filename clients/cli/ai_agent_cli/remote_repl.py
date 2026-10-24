@@ -307,6 +307,7 @@ def _answer_approval(
     event: dict,
 ) -> None:
     commands = event.get("commands") or []
+    ordering = event.get("ordering") or "unordered"
     console.print("\n[bold]AI wants to execute:[/bold]")
     risks = []
     for index, command in enumerate(commands, start=1):
@@ -320,11 +321,32 @@ def _answer_approval(
         reason = command.get("reason")
         if reason:
             console.print(f"     {reason}")
+    if ordering == "ordered":
+        console.print(
+            "[dim]Ordered batch: rejecting a command also rejects every command below it.[/dim]"
+        )
+    elif ordering == "mixed":
+        console.print(
+            "[dim]Some commands are a sequence. Rejecting one also rejects "
+            "later commands in that sequence.[/dim]"
+        )
     allow_grant = bool(risks) and set(risks) <= {"READ_ONLY", "REVERSIBLE"}
-    prompt = "\nApprove? (y/n/a) " if allow_grant else "\nApprove? (y/n) "
+    selectable = len(commands) > 1
+    if selectable:
+        console.print("[dim]s = choose which commands to run[/dim]")
     if allow_grant:
         console.print("[dim]a = allow this risk for the rest of the server session[/dim]")
+        prompt = "\nApprove? (y/n/a/s) " if selectable else "\nApprove? (y/n/a) "
+    else:
+        prompt = "\nApprove? (y/n/s) " if selectable else "\nApprove? (y/n) "
     answer = input(prompt).strip().lower()
+    if answer in {"s", "select"} and selectable:
+        client.resolve_approval(
+            conversation_id,
+            event["approval_id"],
+            decisions=_selected_decisions(console, commands),
+        )
+        return
     approved = answer in {"y", "yes", "a", "allow"}
     grant = None
     if answer in {"a", "allow"}:
@@ -335,3 +357,26 @@ def _answer_approval(
         approved=approved,
         grant_scope=grant,
     )
+
+
+def _selected_decisions(console: Console, commands: list[dict]) -> list[dict]:
+    """Ask y/n per command. An ordered rejection skips the rest of that sequence."""
+    blocked: set[int] = set()
+    decisions: list[dict] = []
+    for index, command in enumerate(commands, start=1):
+        group = command.get("order_group")
+        rendered = command.get("command")
+        if isinstance(group, int) and group in blocked:
+            console.print(
+                f"  {index}. {rendered}  "
+                "[dim]rejected — an earlier command in this sequence was rejected[/dim]"
+            )
+            # Not an explicit rejection. The server applies the ordered rule.
+            decisions.append({"id": index, "decision": "accept"})
+            continue
+        choice = input(f"  Run {index}. {rendered}? (y/n) ").strip().lower()
+        accept = choice in {"y", "yes"}
+        if not accept and isinstance(group, int):
+            blocked.add(group)
+        decisions.append({"id": index, "decision": "accept" if accept else "reject"})
+    return decisions

@@ -88,15 +88,20 @@ class AgentApiClient:
         conversation_id: str,
         approval_id: str,
         *,
-        approved: bool,
+        approved: bool | None = None,
         grant_scope: str | None = None,
+        decisions: list[dict] | None = None,
     ) -> None:
         # A second connection: the turn stream is still open on self._http.
+        if decisions is not None:
+            payload: dict = {"decisions": decisions}
+        else:
+            payload = {"approved": approved, "grant_scope": grant_scope}
         with httpx.Client(timeout=30) as http:
             response = http.post(
                 f"{self.base_url}/api/conversations/{conversation_id}/approvals/{approval_id}",
                 headers=self._headers(),
-                json={"approved": approved, "grant_scope": grant_scope},
+                json=payload,
             )
         if response.status_code >= 400:
             message, code = _detail(response.text, response.status_code)

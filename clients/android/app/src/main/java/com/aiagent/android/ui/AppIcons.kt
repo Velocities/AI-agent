@@ -55,6 +55,11 @@ object AppIcons {
         "download",
         "M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z",
     )
+    val Info = icon(
+        "info",
+        "M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2z" +
+            "M13,17h-2v-6h2v6zM13,9h-2V7h2v2z",
+    )
     val Logout = icon(
         "logout",
         "M17,7l-1.41,1.41L18.17,11H8v2h10.17l-2.58,2.58L17,17l5,-5zM4,5h8V3H4c-1.1,0 -2,0.9 -2,2v14" +

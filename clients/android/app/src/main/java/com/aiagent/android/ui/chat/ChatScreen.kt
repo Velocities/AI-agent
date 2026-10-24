@@ -94,6 +94,7 @@ import com.aiagent.android.speech.SpeechHandled
 import com.aiagent.android.speech.SpeechProviderStore
 import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.speech.speechToTextConverter
+import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.CommandOutcome
 import com.aiagent.android.data.ImageRejected
@@ -420,7 +421,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Conversation(state: ChatUiState, onDecision: (Boolean, String?) -> Unit) {
+private fun Conversation(state: ChatUiState, onDecision: (ApprovalAnswer) -> Unit) {
     val listState = rememberLazyListState()
     val approval = state.pendingApproval
     val awaiting = approval?.commands?.map { it.command }?.toSet().orEmpty()

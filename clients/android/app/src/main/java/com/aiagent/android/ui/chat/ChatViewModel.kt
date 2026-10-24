@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.aiagent.android.AiAgentApp
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
+import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ApprovalRequest
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.ChatMessage
@@ -373,12 +374,28 @@ class ChatViewModel : ViewModel() {
         if (wasRunning && id != null) viewModelScope.launch { reloadMessages(id) }
     }
 
-    fun answerApproval(approved: Boolean, grantScope: String?) {
+    fun answerApproval(answer: ApprovalAnswer) {
         val request = _state.value.pendingApproval ?: return
         viewModelScope.launch {
             _state.update { it.copy(resolvingApproval = true) }
             call { token ->
-                api().resolveApproval(token, request.conversationId, request.approvalId, approved, grantScope)
+                when (answer) {
+                    is ApprovalAnswer.Whole -> api().resolveApproval(
+                        token,
+                        request.conversationId,
+                        request.approvalId,
+                        answer.approved,
+                        answer.grantScope,
+                    )
+                    is ApprovalAnswer.Selected -> api().resolveApproval(
+                        token,
+                        request.conversationId,
+                        request.approvalId,
+                        approved = null,
+                        grantScope = null,
+                        decisions = answer.decisions,
+                    )
+                }
             }
             _state.update { state ->
                 state.copy(

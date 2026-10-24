@@ -65,10 +65,11 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
                 "description": (
                     "Execute one structured command expression on a configured "
                     "execution target. Use argv arrays only (no shell, no ';' in argv). "
-                    "For several READ_ONLY steps (e.g. multiple grep -R searches), "
-                    "use run_commands instead. To save source or config files use "
-                    "write_file with path and content (not echo/redirect). "
-                    "find -exec requires separate argv elements ending with '{}' then '+'."
+                    "If you already know more than one command, do not call this once "
+                    "per command. Call run_commands once with all of them. "
+                    "To save source or config files use write_file with path and content "
+                    "(not echo/redirect). find -exec requires separate argv elements "
+                    "ending with '{}' then '+'."
                 ),
                 "parameters": {
                     "type": "object",
@@ -89,18 +90,39 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
             "function": {
                 "name": "run_commands",
                 "description": (
-                    "Execute a batch of READ_ONLY inspection commands on one "
-                    "configured execution target with one user approval. "
-                    "Preferred for repo/code search: multiple grep -R singles in "
-                    "commands=[...]. Every command must be its own CommandExpr; "
-                    "never join steps with semicolons."
+                    "Run every command you already intend to run, in one approval. "
+                    "Use this whenever the request needs more than one command, "
+                    "including commands that are not on the read-only allow-list. "
+                    "The user sees the whole batch and can run all of them or only "
+                    "some. commands must be a JSON array of objects, never a string. "
+                    "Do not put |, &&, or redirects inside argv. "
+                    "Default ordering is unordered. Use ordered only when a later "
+                    "command is useless unless an earlier one ran; rejecting one "
+                    "command then rejects every command after it."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "target": target_parameter,
+                        "ordering": {
+                            "type": "string",
+                            "enum": ["ordered", "unordered"],
+                            "description": (
+                                "unordered: each command stands alone. This is the "
+                                "right choice for independent checks such as uptime, "
+                                "df, free, and last. The user may run any subset. "
+                                "ordered: a later command is useless unless an earlier "
+                                "one ran. Rejecting one then rejects every command "
+                                "after it. Do not use ordered just because you listed "
+                                "the commands in a sensible order."
+                            ),
+                        },
                         "commands": {
                             "type": "array",
+                            "description": (
+                                "JSON array of command objects, one per command. "
+                                "Never wrap the array in a string."
+                            ),
                             "items": COMMAND_EXPR_SCHEMA,
                         },
                         "reason": {
@@ -108,7 +130,7 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
                             "description": "Why this batch is needed.",
                         },
                     },
-                    "required": ["commands", "reason"],
+                    "required": ["commands", "reason", "ordering"],
                 },
             },
         },
@@ -128,8 +150,10 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
                             "type": "boolean",
                             "description": (
                                 "True only when the user's request is fully complete and no "
-                                "further tools are needed. False if you will continue with "
-                                "more run_command or run_commands calls."
+                                "further tools are needed. False only when output you "
+                                "have not seen yet will decide the next command. If you "
+                                "already know the commands, use one run_commands call "
+                                "instead of continuing one command at a time."
                             ),
                         },
                         "message": {
@@ -151,14 +175,16 @@ TOOL_DEFINITIONS = build_tool_definitions()
 SCHEMA_NUDGE = (
     "Answer the user now as ordinary assistant text, or call run_command / "
     "run_commands if you still need to inspect a configured execution target. "
-    "Omitting target runs the command on local (this machine)."
+    "Omitting target runs the command on local (this machine). "
+    "run_commands must set ordering to ordered or unordered."
 )
 
 COMMAND_DUMP_NUDGE = (
     "The JSON you wrote is assistant text, not a tool call, so nothing ran. "
     "Call run_command (or run_commands) now with target, command, and reason. "
     "Do not print CommandExpr JSON. No semicolons in argv — use run_commands for "
-    "multiple grep -R steps. find -exec needs argv ending with '{}' then '+'."
+    "multiple grep -R steps, and set ordering to ordered or unordered. "
+    "find -exec needs argv ending with '{}' then '+'."
 )
 
 

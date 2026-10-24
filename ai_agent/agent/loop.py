@@ -14,7 +14,13 @@ from ai_agent.agent.tools import (
     looks_like_command_dump,
 )
 from ai_agent.agent.warmup import warmup_llm
-from ai_agent.approval.prompt import ApprovalPrompter, PendingCommand
+from ai_agent.approval.prompt import ApprovalPrompter, ApprovalResult, PendingCommand
+from ai_agent.approval.selection import (
+    apply_batch_approval,
+    approval_flags,
+    batch_ordering,
+    order_groups_for,
+)
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.ast import CommandExpr, parse_command_expr
@@ -38,9 +44,34 @@ from ai_agent.llm.streaming import (
     trim_resume_overlap,
 )
 from ai_agent.policy.engine import PolicyEngine
-from ai_agent.policy.risk import RiskLevel
 
 logger = logging.getLogger(__name__)
+
+_STRING_COMMANDS_ERROR = (
+    "commands must be a JSON array of command objects, not a string. "
+    "Call run_commands again with commands as an array. "
+    "Do not split the batch into separate run_command calls."
+)
+
+
+def coerce_command_list(value: object) -> tuple[list | None, str | None]:
+    """Accept the array models send, and the same array wrapped in a string.
+
+    Smaller models often encode ``commands`` as a string of JSON. That used
+    to fail the batch, after which the model retried each command alone.
+    """
+    if isinstance(value, list):
+        return value, None
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return parsed, None
+        return None, _STRING_COMMANDS_ERROR
+    return None, "commands must be an array of command expressions"
+
 
 _RECOVERABLE_TRUNCATION_KINDS = frozenset(
     {
@@ -440,12 +471,24 @@ class AgentLoop:
     def _handle_batch_tool_calls(self, tool_calls: list[ToolCall]) -> list[LLMMessage]:
         pending: list[PendingCommand] = []
         call_map: list[tuple[ToolCall, object, str, ExecutionTarget | None]] = []
+        groups: list[int | None] = []
+        next_group = 0
 
         for call in tool_calls:
             if call.name == "run_commands":
-                commands = call.arguments.get("commands", [])
-                if not isinstance(commands, list):
+                commands, commands_error = coerce_command_list(
+                    call.arguments.get("commands", [])
+                )
+                if commands_error or commands is None:
                     return [self._handle_tool_call(item) for item in tool_calls]
+                call.arguments["commands"] = commands
+                ordering, ordering_error = batch_ordering(call.arguments)
+                if ordering_error:
+                    return [self._handle_tool_call(item) for item in tool_calls]
+                group: int | None = None
+                if ordering == "ordered":
+                    group = next_group
+                    next_group += 1
                 for command_data in commands:
                     expr, parse_error = self._parse_command_for_tool(command_data)
                     if parse_error:
@@ -468,6 +511,7 @@ class AgentLoop:
                         )
                     )
                     call_map.append((call, expr, target_name, target))
+                    groups.append(group)
             elif call.name == "run_command":
                 expr, parse_error = self._parse_command_for_tool(
                     call.arguments.get("command", {})
@@ -492,54 +536,62 @@ class AgentLoop:
                     )
                 )
                 call_map.append((call, expr, target_name, target))
+                groups.append(None)
 
-        if any(item.decision.effective_risk != RiskLevel.READ_ONLY for item in pending):
-            results: list[LLMMessage] = []
-            for call in tool_calls:
-                results.append(self._handle_tool_call(call))
-            return results
-
-        approval = self.prompter.prompt_batch(pending)
-        results: list[LLMMessage] = []
-        for (call, expr, target_name, target), item in zip(
-            call_map, pending, strict=True
+        approval = self.prompter.prompt_batch(pending, order_groups=groups)
+        flags = approval_flags(approval.approved, approval.accepted, len(pending))
+        payloads: list[dict] = []
+        for index, ((call, expr, target_name, target), item) in enumerate(
+            zip(call_map, pending, strict=True)
         ):
-            result_payload = self._execute_with_audit(
-                tool_name=call.name,
-                arguments=call.arguments,
-                expr=expr,
-                decision=item.decision,
-                approved=approval.approved,
-                target_name=target_name,
-                target=target,
-            )
-            results.append(
-                LLMMessage(
-                    role="tool",
-                    name=call.name,
-                    content=json.dumps(result_payload, ensure_ascii=True),
-                    tool_call_id=call.id,
+            payloads.append(
+                self._execute_with_audit(
+                    tool_name=call.name,
+                    arguments=call.arguments,
+                    expr=expr,
+                    decision=item.decision,
+                    approved=flags[index],
+                    target_name=target_name,
+                    target=target,
                 )
             )
-        return results
+        self._annotate_partial_batch(payloads, approval)
+        return [
+            LLMMessage(
+                role="tool",
+                name=call.name,
+                content=json.dumps(payload, ensure_ascii=True),
+                tool_call_id=call.id,
+            )
+            for payload, (call, _expr, _target_name, _target) in zip(
+                payloads, call_map, strict=True
+            )
+        ]
 
     def _handle_tool_call(self, call: ToolCall) -> LLMMessage:
         if call.name == "run_commands":
-            commands = call.arguments.get("commands", [])
-            if not isinstance(commands, list):
-                payload = {
-                    "success": False,
-                    "error": "commands must be an array of command expressions",
-                }
+            commands, commands_error = coerce_command_list(call.arguments.get("commands", []))
+            if commands_error or commands is None:
+                payload = {"success": False, "error": commands_error}
                 return LLMMessage(
                     role="tool",
                     name=call.name,
                     content=json.dumps(payload, ensure_ascii=True),
                     tool_call_id=call.id,
                 )
+            call.arguments["commands"] = commands
 
             parsed: list[object | str] = []
             pending = []
+            ordering, ordering_error = batch_ordering(call.arguments)
+            if ordering_error:
+                payload = {"success": False, "error": ordering_error}
+                return LLMMessage(
+                    role="tool",
+                    name=call.name,
+                    content=json.dumps(payload, ensure_ascii=True),
+                    tool_call_id=call.id,
+                )
             target_name, target, target_error = self._resolve_target(call.arguments)
             if target_error:
                 payload = {"success": False, "error": target_error}
@@ -566,25 +618,41 @@ class AgentLoop:
                     )
                 )
 
-            approval = self.prompter.prompt_batch(pending) if pending else None
+            approval = (
+                self.prompter.prompt_batch(
+                    pending,
+                    order_groups=order_groups_for(ordering, len(pending)),
+                )
+                if pending
+                else None
+            )
+            flags = (
+                approval_flags(approval.approved, approval.accepted, len(pending))
+                if approval is not None
+                else []
+            )
+            flag_iter = iter(flags)
             payloads = []
+            decided: list[dict] = []
             pending_iter = iter(pending)
             for item in parsed:
                 if isinstance(item, str):
                     payloads.append({"success": False, "error": item})
                     continue
                 pending_item = next(pending_iter)
-                payloads.append(
-                    self._execute_with_audit(
-                        tool_name=call.name,
-                        arguments=call.arguments,
-                        expr=item,
-                        decision=pending_item.decision,
-                        approved=approval.approved if approval else False,
-                        target_name=target_name,
-                        target=target,
-                    )
+                payload = self._execute_with_audit(
+                    tool_name=call.name,
+                    arguments=call.arguments,
+                    expr=item,
+                    decision=pending_item.decision,
+                    approved=next(flag_iter),
+                    target_name=target_name,
+                    target=target,
                 )
+                payloads.append(payload)
+                decided.append(payload)
+            if approval is not None:
+                self._annotate_partial_batch(decided, approval)
             return LLMMessage(
                 role="tool",
                 name=call.name,
@@ -710,6 +778,14 @@ class AgentLoop:
             "kind": target.kind if target else None,
         }
         return payload
+
+    @staticmethod
+    def _annotate_partial_batch(payloads: list[dict], approval: ApprovalResult) -> None:
+        apply_batch_approval(
+            payloads,
+            accepted=approval.accepted,
+            cascade_rejected=approval.cascade_rejected,
+        )
 
     def _run_audited(
         self,

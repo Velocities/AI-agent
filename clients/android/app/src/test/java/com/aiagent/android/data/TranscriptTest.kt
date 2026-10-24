@@ -136,6 +136,18 @@ class TranscriptTest {
                  "target":"web (docker:web)","target_name":"web","target_kind":"docker"}]}""",
         ) as TurnEvent.ApprovalRequired
         assertEquals("docker", event.request.commands.single().targetKind)
+        assertEquals(1, event.request.commands.single().id)
+        assertEquals(ApprovalRequest.UNORDERED, event.request.ordering)
+        assertEquals(false, event.request.selectionSupported)
+        val ordered = TurnEvent.parse(
+            """{"type":"approval_required","approval_id":"a2","conversation_id":"c1","ordering":"ordered","commands":[
+                {"id":1,"command":"pwd","risk":"READ_ONLY","reason":"where","allowed":true,"order_group":0},
+                {"id":2,"command":"ls","risk":"READ_ONLY","reason":"list","allowed":true,"order_group":0}]}""",
+        ) as TurnEvent.ApprovalRequired
+        assertEquals(ApprovalRequest.ORDERED, ordered.request.ordering)
+        assertEquals(true, ordered.request.selectionSupported)
+        assertEquals(0, ordered.request.commands[1].orderGroup)
+        assertEquals(2, ordered.request.commands[1].id)
         assertEquals(TurnEvent.Token("hi"), TurnEvent.parse("""{"type":"token","text":"hi"}"""))
         val message = TurnEvent.parse(
             """{"type":"message","message":{"id":"m","role":"user","content":"x","created_at":"t","metadata":{},"position":2}}""",
