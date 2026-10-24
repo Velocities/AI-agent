@@ -1,26 +1,44 @@
-"""Validate uploaded images and parse CLI image attachments.
+"""Validate uploaded images and strip metadata at the agent boundary.
 
 The bytes stay provider-neutral. Ollama and vLLM adapters translate
-`ImageInput` into their own request bodies.
+`ImageInput` into their own request bodies. Decode and metadata removal
+use Pillow. Clients may sniff and check size for UX; this module is the
+security boundary.
 """
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
+import io
+import logging
+import threading
+import warnings
 from typing import TYPE_CHECKING
+
+from PIL import Image, ImageFile, ImageOps, UnidentifiedImageError
+from PIL.Image import DecompressionBombError, DecompressionBombWarning
 
 if TYPE_CHECKING:
     from ai_agent.llm.client.types import ImageInput
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_IMAGE_MAX_COUNT = 8
+DEFAULT_IMAGE_MAX_PIXELS = 20_000_000
+DEFAULT_IMAGE_MAX_DIMENSION = 8192
 
 ALLOWED_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
-_IMAGE_TOKEN = re.compile(r"(?<!\S)@(\S+)")
-_IMAGE_SUFFIX = re.compile(r"\.(?:png|jpe?g|webp)$", re.IGNORECASE)
-
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PILLOW_FORMATS = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
+_PILLOW_LOCK = threading.RLock()
+
+# Truncated files are rejected. Never enable Pillow's truncated-image loader.
+ImageFile.LOAD_TRUNCATED_IMAGES = False
 
 
 class ImageRejected(ValueError):
@@ -36,11 +54,14 @@ def validate_image_bytes(
     *,
     declared_type: str | None = None,
     max_bytes: int = DEFAULT_IMAGE_MAX_BYTES,
+    max_pixels: int = DEFAULT_IMAGE_MAX_PIXELS,
+    max_dimension: int = DEFAULT_IMAGE_MAX_DIMENSION,
 ) -> ImageInput:
     """Accept PNG, JPEG, and WebP bytes. Reject everything else.
 
     The media type comes from the file contents. A filename is never enough,
     and a declared type is only accepted when it matches those contents.
+    Returns the original bytes. Metadata stripping is a separate step.
     """
     if not data:
         raise ImageRejected("Invalid image data.")
@@ -50,7 +71,7 @@ def validate_image_bytes(
             status_code=413,
         )
 
-    declared = _normalize_media_type(declared_type)
+    declared = normalize_media_type(declared_type)
     if declared is not None and declared not in ALLOWED_IMAGE_TYPES:
         raise ImageRejected(f"Unsupported image type: {declared}")
 
@@ -61,11 +82,61 @@ def validate_image_bytes(
         raise ImageRejected("Invalid image data.")
     if declared is not None and declared != sniffed:
         raise ImageRejected("Invalid image data.")
-    if not _structure_ok(data, sniffed):
-        raise ImageRejected("Invalid image data.")
+
+    _decode_image(data, sniffed=sniffed, max_pixels=max_pixels, max_dimension=max_dimension)
     from ai_agent.llm.client.types import ImageInput
 
     return ImageInput(data=data, media_type=sniffed)
+
+
+def strip_image_metadata(image: ImageInput) -> ImageInput:
+    """Bake EXIF orientation into pixels and drop metadata. Re-validates.
+
+    Failure raises ImageRejected and does not return the original bytes.
+    """
+    from ai_agent.llm.client.types import ImageInput
+
+    try:
+        with _PILLOW_LOCK:
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
+            previous_limit = Image.MAX_IMAGE_PIXELS
+            Image.MAX_IMAGE_PIXELS = DEFAULT_IMAGE_MAX_PIXELS
+            opened = None
+            transposed = None
+            prepared = None
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", DecompressionBombWarning)
+                    opened = Image.open(io.BytesIO(image.data))
+                    lossless_webp = _webp_is_lossless(image.data, opened)
+                    transposed = ImageOps.exif_transpose(opened)
+                    prepared = _mode_for_save(
+                        transposed,
+                        image.media_type,
+                        lossless_webp=lossless_webp,
+                    )
+                    payload = _save_without_metadata(
+                        prepared,
+                        image.media_type,
+                        lossless_webp=lossless_webp and image.media_type == "image/webp",
+                    )
+            finally:
+                Image.MAX_IMAGE_PIXELS = previous_limit
+                for handle in (prepared, transposed, opened):
+                    if handle is not None:
+                        try:
+                            handle.close()
+                        except Exception:
+                            logger.debug("Could not close an image during metadata strip", exc_info=True)
+    except ImageRejected:
+        raise
+    except (UnidentifiedImageError, DecompressionBombError, DecompressionBombWarning, OSError, SyntaxError, ValueError) as exc:
+        status = 413 if isinstance(exc, (DecompressionBombError, DecompressionBombWarning)) else 400
+        raise ImageRejected("Invalid image data.", status_code=status) from exc
+
+    # Re-validate. A failure here must not fall back to the original bytes.
+    checked = validate_image_bytes(payload, declared_type=image.media_type)
+    return ImageInput(data=checked.data, media_type=checked.media_type, attachment_id=image.attachment_id)
 
 
 def sniff_image_media_type(data: bytes) -> str | None:
@@ -85,45 +156,7 @@ def sniff_image_media_type(data: bytes) -> str | None:
     return None
 
 
-def parse_image_prompt(
-    text: str,
-    *,
-    max_bytes: int = DEFAULT_IMAGE_MAX_BYTES,
-) -> tuple[str, list[ImageInput]]:
-    """Split `@path.png` tokens out of a CLI line.
-
-    Tokens that do not end in a supported image extension stay in the text.
-    Image tokens are removed and loaded in left-to-right order.
-    """
-    images: list[ImageInput] = []
-    pieces: list[str] = []
-    cursor = 0
-    for match in _IMAGE_TOKEN.finditer(text):
-        token = match.group(1)
-        if _IMAGE_SUFFIX.search(token) is None:
-            continue
-        pieces.append(text[cursor : match.start()])
-        images.append(_load_image_file(token, max_bytes=max_bytes))
-        cursor = match.end()
-    if not images:
-        return text, []
-    pieces.append(text[cursor:])
-    content = re.sub(r"[ \t]{2,}", " ", "".join(pieces)).strip()
-    return content, images
-
-
-def _load_image_file(token: str, *, max_bytes: int) -> ImageInput:
-    path = Path(token).expanduser()
-    if not path.is_file():
-        raise ImageRejected(f"Image file not found: {token}")
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        raise ImageRejected(f"Could not read image file: {token}") from exc
-    return validate_image_bytes(data, max_bytes=max_bytes)
-
-
-def _normalize_media_type(value: str | None) -> str | None:
+def normalize_media_type(value: str | None) -> str | None:
     if not value:
         return None
     media = value.split(";", 1)[0].strip().lower()
@@ -136,81 +169,94 @@ def _normalize_media_type(value: str | None) -> str | None:
     return media
 
 
-def _structure_ok(data: bytes, media_type: str) -> bool:
-    if media_type == "image/png":
-        return _png_ok(data)
+def _decode_image(
+    data: bytes,
+    *,
+    sniffed: str,
+    max_pixels: int,
+    max_dimension: int,
+) -> None:
+    with _PILLOW_LOCK:
+        ImageFile.LOAD_TRUNCATED_IMAGES = False
+        previous_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = max_pixels
+        probe = None
+        image = None
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DecompressionBombWarning)
+                try:
+                    probe = Image.open(io.BytesIO(data))
+                    probe.verify()
+                except ImageRejected:
+                    raise
+                except (UnidentifiedImageError, DecompressionBombError, DecompressionBombWarning, OSError, SyntaxError, ValueError) as exc:
+                    _reject_decode(exc)
+                finally:
+                    if probe is not None:
+                        probe.close()
+                        probe = None
+                try:
+                    image = Image.open(io.BytesIO(data))
+                    image.load()
+                except (UnidentifiedImageError, DecompressionBombError, DecompressionBombWarning, OSError, SyntaxError, ValueError) as exc:
+                    _reject_decode(exc)
+                frames = getattr(image, "n_frames", 1) or 1
+                if frames > 1:
+                    raise ImageRejected("Invalid image data.")
+                reported = _PILLOW_FORMATS.get(image.format or "")
+                if reported != sniffed:
+                    raise ImageRejected("Invalid image data.")
+                width, height = image.size
+                if width < 1 or height < 1:
+                    raise ImageRejected("Invalid image data.")
+                if width > max_dimension or height > max_dimension or width * height > max_pixels:
+                    raise ImageRejected(
+                        f"Image dimensions {width}x{height} exceed the limit.",
+                        status_code=413,
+                    )
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
+            if image is not None:
+                image.close()
+
+
+def _reject_decode(exc: BaseException) -> None:
+    status = 413 if isinstance(exc, (DecompressionBombError, DecompressionBombWarning)) else 400
+    raise ImageRejected("Invalid image data.", status_code=status) from exc
+
+
+def _webp_is_lossless(data: bytes, image: Image.Image) -> bool:
+    if image.info.get("lossless"):
+        return True
+    return len(data) >= 16 and data[12:16] == b"VP8L"
+
+
+def _mode_for_save(image: Image.Image, media_type: str, *, lossless_webp: bool) -> Image.Image:
+    if media_type == "image/png" or (media_type == "image/webp" and lossless_webp):
+        if image.mode == "P" and "transparency" in image.info:
+            return image.convert("RGBA")
+        if image.mode in {"1", "L", "LA", "P", "RGB", "RGBA"}:
+            return image
+        if "A" in image.mode:
+            return image.convert("RGBA")
+        return image.convert("RGB")
+    if image.mode in {"RGB", "L"}:
+        return image
+    return image.convert("RGB")
+
+
+def _save_without_metadata(image: Image.Image, media_type: str, *, lossless_webp: bool) -> bytes:
+    buffer = io.BytesIO()
     if media_type == "image/jpeg":
-        return _jpeg_ok(data)
-    if media_type == "image/webp":
-        return _webp_ok(data)
-    return False
-
-
-def _png_ok(data: bytes) -> bool:
-    if not data.startswith(_PNG_SIGNATURE):
-        return False
-    index = len(_PNG_SIGNATURE)
-    seen_ihdr = False
-    while index + 8 <= len(data):
-        length = int.from_bytes(data[index : index + 4], "big")
-        chunk_type = data[index + 4 : index + 8]
-        index += 8
-        if index + length + 4 > len(data):
-            return False
-        if not seen_ihdr:
-            if chunk_type != b"IHDR" or length != 13:
-                return False
-            seen_ihdr = True
-        index += length + 4
-        if chunk_type == b"IEND":
-            return True
-    return False
-
-
-def _jpeg_ok(data: bytes) -> bool:
-    if len(data) < 4 or not data.startswith(b"\xff\xd8"):
-        return False
-    index = 2
-    seen_segment = False
-    while index < len(data):
-        if data[index] != 0xFF:
-            return False
-        while index < len(data) and data[index] == 0xFF:
-            index += 1
-        if index >= len(data):
-            return False
-        marker = data[index]
-        index += 1
-        if marker == 0xD9:
-            return seen_segment
-        if marker in {0x00, 0xD8}:
-            return False
-        seen_segment = True
-        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
-            continue
-        if index + 2 > len(data):
-            return False
-        length = int.from_bytes(data[index : index + 2], "big")
-        if length < 2 or index + length > len(data):
-            return False
-        if marker == 0xDA:
-            scan = index + length
-            while scan + 1 < len(data):
-                if data[scan] == 0xFF and data[scan + 1] == 0xD9:
-                    return True
-                scan += 1
-            return False
-        index += length
-    return False
-
-
-def _webp_ok(data: bytes) -> bool:
-    if len(data) < 20 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-        return False
-    fourcc = data[12:16]
-    if fourcc not in {b"VP8 ", b"VP8L", b"VP8X"}:
-        return False
-    chunk_size = int.from_bytes(data[16:20], "little")
-    if chunk_size < 1:
-        return False
-    return 20 + chunk_size <= len(data)
+        image.save(buffer, format="JPEG", quality=95, optimize=False)
+    elif media_type == "image/png":
+        image.save(buffer, format="PNG")
+    elif media_type == "image/webp":
+        if lossless_webp:
+            image.save(buffer, format="WEBP", lossless=True)
+        else:
+            image.save(buffer, format="WEBP", quality=95)
+    else:
+        raise ImageRejected("Invalid image data.")
+    return buffer.getvalue()

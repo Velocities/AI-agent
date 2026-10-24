@@ -31,9 +31,10 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 
 | Input | What it does |
 |-------|----------------|
-| any other text | Sends that message as a turn. |
-| `@file.png` in the text | Attaches that PNG, JPEG, or WebP. Example: `@screenshot.png What's wrong with this UI?` |
-| `/new` | Starts a new conversation. |
+| any other text | Sends that message as a turn. Staged images go with it. |
+| `/attach PATH` | Stages a PNG, JPEG, or WebP for the next message. Example: `/attach screenshot.png` then `What's wrong with this UI?` |
+| `/detach` | Drops staged images. `/attach --clear` does the same. |
+| `/new` | Starts a new conversation and drops staged images. |
 | `/list` | Lists conversations on the server. |
 | `/server` | Prints the saved server URL. |
 | `/server URL` | Saves a new server URL. A different URL signs you out and ends the chat. |

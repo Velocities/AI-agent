@@ -82,6 +82,34 @@ class MonitoringAdminRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class UserSettingRow(Base):
+    """Per-user preferences. Missing row means the defaults (strip images on)."""
+
+    __tablename__ = "user_setting"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strip_image_metadata: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AttachmentRow(Base):
+    """Catalog row for one stored file. Bytes live under ATTACHMENT_ROOT."""
+
+    __tablename__ = "attachment"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    media_type: Mapped[str] = mapped_column(String(32))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    checksum: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class ExecutionTargetRow(Base):
     """Named SSH/Docker command destinations owned by one Supabase user."""
 

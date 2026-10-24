@@ -21,10 +21,13 @@ class ImageInput:
 
     Providers translate this into their own request format. `data` is the
     raw file bytes and `media_type` is an IANA type such as ``image/png``.
+    `attachment_id` is set once the server has stored the bytes. Adapters
+    ignore it and read only `data` and `media_type`.
     """
 
     data: bytes
     media_type: str
+    attachment_id: str | None = None
 
 
 @dataclass

@@ -4,7 +4,12 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ai_agent.images import DEFAULT_IMAGE_MAX_BYTES
+from ai_agent.images import (
+    DEFAULT_IMAGE_MAX_BYTES,
+    DEFAULT_IMAGE_MAX_COUNT,
+    DEFAULT_IMAGE_MAX_DIMENSION,
+    DEFAULT_IMAGE_MAX_PIXELS,
+)
 
 
 class ConfirmationMode(str, Enum):
@@ -157,6 +162,76 @@ class Settings(BaseSettings):
         ge=1,
         description="Maximum size in bytes for one image attached to a chat message.",
     )
+    image_max_count: int = Field(
+        default=DEFAULT_IMAGE_MAX_COUNT,
+        alias="IMAGE_MAX_COUNT",
+        ge=1,
+        description="Maximum number of images on one chat turn.",
+    )
+    image_max_pixels: int = Field(
+        default=DEFAULT_IMAGE_MAX_PIXELS,
+        alias="IMAGE_MAX_PIXELS",
+        ge=1,
+        description="Maximum width times height accepted when decoding an image.",
+    )
+    image_max_dimension: int = Field(
+        default=DEFAULT_IMAGE_MAX_DIMENSION,
+        alias="IMAGE_MAX_DIMENSION",
+        ge=1,
+        description="Maximum width or height of a decoded image.",
+    )
+    llm_vision: bool = Field(
+        default=False,
+        alias="LLM_VISION",
+        description=(
+            "vLLM only. When true, advertise vision from operator configuration. "
+            "Ollama vision comes from the engine probe and ignores this flag."
+        ),
+    )
+    attachment_root: str = Field(
+        default="",
+        alias="ATTACHMENT_ROOT",
+        description=(
+            "Directory for attachment bytes. Empty uses a sibling of the SQLite "
+            "conversation database, or ~/.local/share/ai-agent/attachments."
+        ),
+    )
+    attachment_quota_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        alias="ATTACHMENT_QUOTA_BYTES",
+        ge=1,
+        description="Maximum stored attachment bytes per user.",
+    )
+    attachment_quota_count: int = Field(
+        default=200,
+        alias="ATTACHMENT_QUOTA_COUNT",
+        ge=1,
+        description="Maximum stored attachment objects per user.",
+    )
+    attachment_cache_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        alias="ATTACHMENT_CACHE_BYTES",
+        ge=1,
+        description="Process-local LRU cap for attachment bytes.",
+    )
+    attachment_replay_messages: int = Field(
+        default=4,
+        alias="ATTACHMENT_REPLAY_MESSAGES",
+        ge=0,
+        description="How many prior image-bearing user messages to consider for replay.",
+    )
+    attachment_replay_max_images: int = Field(
+        default=8,
+        alias="ATTACHMENT_REPLAY_MAX_IMAGES",
+        ge=1,
+        description="Maximum images sent to the model on one request, including the current turn.",
+    )
+    attachment_replay_max_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        alias="ATTACHMENT_REPLAY_MAX_BYTES",
+        ge=1,
+        description="Maximum stored image bytes sent to the model on one request.",
+    )
     agent_audit_log: str | None = Field(default=None, alias="AGENT_AUDIT_LOG")
     agent_policy_file: str | None = Field(default=None, alias="AGENT_POLICY_FILE")
     agent_scratch_dir: Path = Field(
@@ -268,3 +343,17 @@ class Settings(BaseSettings):
         if self.agent_policy_file:
             return Path(self.agent_policy_file)
         return Path(__file__).resolve().parent / "policy" / "default_policy.yaml"
+
+    def resolved_attachment_root(self) -> Path:
+        """Directory for attachment bytes. Created by the API process, not here."""
+        configured = self.attachment_root.strip()
+        if configured:
+            return Path(configured)
+        from sqlalchemy.engine import make_url
+
+        from ai_agent.conversations.db import database_url
+
+        made = make_url(database_url(self))
+        if made.drivername.startswith("sqlite") and made.database and made.database != ":memory:":
+            return Path(made.database).resolve().parent / "attachments"
+        return Path.home() / ".local" / "share" / "ai-agent" / "attachments"

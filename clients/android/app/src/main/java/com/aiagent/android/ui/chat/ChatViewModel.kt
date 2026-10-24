@@ -58,6 +58,8 @@ data class ChatUiState(
     val speaking: Boolean = false,
     /** Bumped when playback should stop. Clips from an older generation are ignored. */
     val speechGeneration: Int = 0,
+    /** False until GET /api/model says this process accepts images. */
+    val visionEnabled: Boolean = false,
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
@@ -86,9 +88,11 @@ class ChatViewModel : ViewModel() {
     /** Previews for the last sent user message, keyed by the server's message id. */
     private val imagePreviewById = mutableMapOf<String, List<ByteArray>>()
     private var pendingUpload: List<ImageUpload> = emptyList()
+    private var modelInfoFetched = false
 
     init {
         refreshConversations()
+        refreshModelInfo()
     }
 
     fun refreshConversations() {
@@ -119,6 +123,7 @@ class ChatViewModel : ViewModel() {
         }
         imagePreviewById.clear()
         pendingUpload = emptyList()
+        refreshModelInfo()
         loadMessages(id)
     }
 
@@ -163,6 +168,10 @@ class ChatViewModel : ViewModel() {
     fun send(text: String, images: List<ImageUpload> = emptyList(), speakReply: Boolean = false) {
         val content = text.trim()
         if ((content.isEmpty() && images.isEmpty()) || _state.value.running) return
+        if (images.isNotEmpty() && !_state.value.visionEnabled) {
+            _state.update { it.copy(error = "This model does not accept images.") }
+            return
+        }
         stopSpeech()
         stopRequested = false
         val speak = speakReply && ttsConfigured
@@ -232,6 +241,28 @@ class ChatViewModel : ViewModel() {
                     }
                 }
             }
+        }
+    }
+
+    private fun refreshModelInfo() {
+        if (modelInfoFetched || !_state.value.apiConfigured) return
+        viewModelScope.launch {
+            val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull()
+            if (token.isNullOrBlank()) return@launch
+            modelInfoFetched = true
+            val enabled = try {
+                withContext(Dispatchers.IO) { api().modelInfo(token).vision }
+            } catch (error: AgentApiException) {
+                if (error.status == 503) {
+                    _state.update {
+                        it.copy(notice = "Model information is unavailable. Image attach is off.")
+                    }
+                }
+                false
+            } catch (_: IOException) {
+                false
+            }
+            _state.update { it.copy(visionEnabled = enabled) }
         }
     }
 

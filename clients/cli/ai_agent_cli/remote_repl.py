@@ -3,8 +3,9 @@ from __future__ import annotations
 import httpx
 from rich.console import Console
 
+from ai_agent.cli.image_stage import ImageStage, StageCommand
 from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
-from ai_agent.images import ImageRejected, parse_image_prompt
+from ai_agent.images import ImageRejected
 from ai_agent.llm.client.types import ImageInput
 from ai_agent_cli.api_client import AgentApiClient, AgentApiError
 from ai_agent_cli.api_url import public_api_base_url_hint
@@ -31,6 +32,7 @@ def run_remote_repl() -> int:
     client = AgentApiClient(config.server_url, token)
     try:
         conversation_id = _current_conversation(client, console)
+        vision = _model_vision(client, console)
     except AgentApiError as exc:
         _print_access_error(console, exc)
         client.close()
@@ -47,7 +49,8 @@ def run_remote_repl() -> int:
     console.print(f"API: {config.server_url}")
     if hint := public_api_base_url_hint(config.server_url):
         console.print(f"[yellow]{hint}[/yellow]")
-    console.print("Type /new, /list, /server, or exit.\n")
+    console.print("Type /new, /list, /server, /attach, or exit.\n")
+    stage = ImageStage(vision=vision)
 
     try:
         while True:
@@ -59,6 +62,7 @@ def run_remote_repl() -> int:
             if not user_input:
                 continue
             if user_input.lower() in {"exit", "quit"}:
+                stage.clear()
                 console.print("Goodbye.")
                 return 0
             if user_input == "/list":
@@ -76,6 +80,7 @@ def run_remote_repl() -> int:
                 config = updated
                 continue
             if user_input == "/new":
+                stage.clear()
                 created = _create_conversation(client, console)
                 if created is None:
                     return 1
@@ -84,15 +89,44 @@ def run_remote_repl() -> int:
                 console.print("[dim]Started a new chat.[/dim]")
                 continue
             try:
-                content, images = parse_image_prompt(user_input)
+                command = stage.handle(user_input)
             except ImageRejected as exc:
                 console.print(f"[red]{exc}[/red]")
                 continue
-            if not _play_turn(client, console, conversation_id, content, images):
+            if command.handled:
+                _print_stage(console, command)
+                continue
+            images = stage.take()
+            if images and not vision:
+                console.print("[red]This server's model does not accept images.[/red]")
+                continue
+            if not _play_turn(client, console, conversation_id, user_input, images):
                 return 1
             console.print()
     finally:
         client.close()
+
+
+def _model_vision(client: AgentApiClient, console: Console) -> bool:
+    try:
+        document = client.get_model()
+    except AgentApiError as exc:
+        if exc.status == 503:
+            console.print("[dim]Model information is unavailable.[/dim]")
+            return False
+        raise
+    return bool(document.get("vision"))
+
+
+def _print_stage(console: Console, command: StageCommand) -> None:
+    if not command.message:
+        return
+    if command.error:
+        console.print(f"[red]{command.message}[/red]")
+    elif command.dim:
+        console.print(f"[dim]{command.message}[/dim]")
+    else:
+        console.print(command.message)
 
 
 def _access_token(config: ServerConfig, console: Console) -> str | None:

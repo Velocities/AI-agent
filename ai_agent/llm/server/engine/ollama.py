@@ -52,6 +52,20 @@ class OllamaEngine(LlmEngine):
             )
         return payload
 
+    def show_model(self) -> dict[str, Any]:
+        """Return the Ollama `/api/show` document for the configured model."""
+        payload = self.session.post_json(
+            "/api/show",
+            {"name": self._model},
+            timeout=10.0,
+        )
+        if not isinstance(payload, dict):
+            raise LlmSessionError(
+                LLMErrorKind.PROTOCOL,
+                "Ollama /api/show returned an unexpected payload.",
+            )
+        return payload
+
     def chat_lines(self, payload: dict[str, Any]) -> Iterator[str]:
         upstream_payload = dict(payload)
         upstream_payload.setdefault("model", self._model)

@@ -48,6 +48,14 @@ data class SpeechStatus(
     @SerialName("tts_configured") val ttsConfigured: Boolean = false,
 )
 
+@Serializable
+data class ModelInfo(
+    val engine: String = "",
+    val model: String = "",
+    val vision: Boolean = false,
+    val tools: Boolean = false,
+)
+
 /** An HTTP error from ai-agent-serve. [code] is set for whitelist refusals (see ACCESS_* codes). */
 class AgentApiException(
     val status: Int,
@@ -173,6 +181,12 @@ class AgentApi(private val baseUrl: String) {
     /** Whether this server has CPU speech models configured. Does not load them. */
     fun speechStatus(accessToken: String): SpeechStatus {
         val body = request("GET", ApiEndpoints.SPEECH_STATUS, accessToken)
+        return json.decodeFromString(body)
+    }
+
+    /** Capabilities of the model this server process is running. */
+    fun modelInfo(accessToken: String): ModelInfo {
+        val body = request("GET", ApiEndpoints.MODEL, accessToken)
         return json.decodeFromString(body)
     }
 

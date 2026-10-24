@@ -75,6 +75,46 @@ class LlmHttpSession:
                 "LLM stream was interrupted.",
             ) from exc
 
+    def post_json(
+        self,
+        path: str,
+        payload: dict,
+        *,
+        timeout: float | None = None,
+    ) -> object:
+        self._prepare()
+        request_timeout = timeout if timeout is not None else self._timeout
+        try:
+            response = self._client.post(
+                self._url(path),
+                json=payload,
+                timeout=request_timeout,
+            )
+            self._raise_for_status(response)
+            return response.json()
+        except LlmSessionError:
+            raise
+        except json.JSONDecodeError as exc:
+            raise LlmSessionError(
+                LLMErrorKind.PROTOCOL,
+                "LLM returned malformed JSON.",
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise LlmSessionError(
+                LLMErrorKind.UNAVAILABLE,
+                f"LLM endpoint is unavailable: {self.base_url}",
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise LlmSessionError(
+                LLMErrorKind.TIMEOUT,
+                "LLM request timed out.",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LlmSessionError(
+                LLMErrorKind.UNAVAILABLE,
+                f"LLM request failed: {exc}",
+            ) from exc
+
     def get_json(self, path: str, *, timeout: float | None = None) -> object:
         self._prepare()
         request_timeout = timeout if timeout is not None else self._timeout

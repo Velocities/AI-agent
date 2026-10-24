@@ -347,6 +347,7 @@ fun ChatScreen(
                         heard = heard,
                         speaking = state.speaking,
                         voiceBusy = voiceBusy,
+                        visionEnabled = state.visionEnabled,
                         provider = provider,
                         onProvider = { chosen ->
                             providerId = chosen.id
@@ -678,6 +679,7 @@ private fun Composer(
     heard: String,
     speaking: Boolean,
     voiceBusy: Boolean,
+    visionEnabled: Boolean,
     provider: SttProvider,
     onProvider: (SttProvider) -> Unit,
     onProviderInfo: () -> Unit,
@@ -728,15 +730,17 @@ private fun Composer(
             Spacer(Modifier.height(6.dp))
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            IconButton(
-                enabled = canType && remaining > 0,
-                onClick = {
-                    pickImages.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
-                },
-            ) {
-                Icon(AppIcons.Image, contentDescription = "Attach image")
+            if (visionEnabled) {
+                IconButton(
+                    enabled = canType && remaining > 0,
+                    onClick = {
+                        pickImages.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                ) {
+                    Icon(AppIcons.Image, contentDescription = "Attach image")
+                }
             }
             MessageField(
                 value = shown,

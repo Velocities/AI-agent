@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from rich.console import Console
 
 from ai_agent.agent.context import build_system_prompt, gather_runtime_context
 from ai_agent.agent.factory import configure_logging, configure_stdio_encoding
 from ai_agent.cli.errors import startup_should_exit
-from ai_agent.config import Settings
+from ai_agent.config import LlmEngineKind, Settings
+from ai_agent.llm.capabilities import ModelInfo, probe_model_info
 from ai_agent.llm.server.engine.base import LlmEngine
 from ai_agent.llm.server.facade import AgentLlmFacade, bind_llm_server, public_url
 from ai_agent.llm.server.factory import create_engine
@@ -17,6 +19,12 @@ from ai_agent.llm.server.warmup import warmup_engine
 from ai_agent.policy.engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PreparedUpstream:
+    engine: LlmEngine
+    model_info: ModelInfo
 
 
 def _system_prompt(settings: Settings) -> str:
@@ -34,7 +42,7 @@ def prepare_upstream(
     console: Console,
     *,
     upstream_url: str | None = None,
-) -> LlmEngine | None:
+) -> PreparedUpstream | None:
     engine = create_engine(settings, base_url=upstream_url)
     health = engine.healthcheck()
     if not health.ok:
@@ -42,6 +50,16 @@ def prepare_upstream(
         console.print(f"[red]LLM endpoint unavailable:[/red] {health.message}")
         engine.close()
         return None
+
+    if settings.llm_engine == LlmEngineKind.OLLAMA:
+        probed = probe_model_info(engine, settings, warmup_ok=False)
+        if not probed.tools:
+            logger.error("Model %s does not support tools", settings.llm_model)
+            console.print(
+                f"[red]LLM model does not support tools:[/red] {settings.llm_model}"
+            )
+            engine.close()
+            return None
 
     with console.status(
         f"[bold cyan]Loading {engine.model}[/bold cyan] "
@@ -56,11 +74,20 @@ def prepare_upstream(
         engine.close()
         return None
 
+    info = probe_model_info(engine, settings, warmup_ok=True)
+    if not info.tools:
+        logger.error("Model %s does not support tools", settings.llm_model)
+        console.print(
+            f"[red]LLM model does not support tools:[/red] {settings.llm_model}"
+        )
+        engine.close()
+        return None
+
     console.print(
         f"[green]✓[/green] {engine.engine_name} ready in [bold]{duration:.1f}s[/bold] "
         "[dim](system prompt + tools loaded)[/dim]"
     )
-    return engine
+    return PreparedUpstream(engine=engine, model_info=info)
 
 
 def serve_ready_engine(
@@ -102,14 +129,14 @@ def main() -> int:
 
     try:
         with managed_engine_process(settings, console) as process:
-            engine = prepare_upstream(
+            prepared = prepare_upstream(
                 settings,
                 console,
                 upstream_url=process.upstream_url,
             )
-            if engine is None:
+            if prepared is None:
                 return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
-            return serve_ready_engine(engine, settings, console)
+            return serve_ready_engine(prepared.engine, settings, console)
     except EngineProcessError:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0
 

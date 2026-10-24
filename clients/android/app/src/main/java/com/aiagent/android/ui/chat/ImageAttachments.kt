@@ -28,7 +28,10 @@ object ImageAttachments {
             }
             buffer.toByteArray()
         } ?: throw ImageRejected("Could not read that image.")
-        return ImageTypes.accept(data, declaredType = declared, filename = name)
+        return ImageTypes.accept(data, declaredType = declared, filename = name).also {
+            // TODO: maybeStripForTransit(upload, policy) — client-side metadata strip is
+            // not implemented. The server strips by default (docs/vision-and-attachments.md §3).
+        }
     }
 
     fun thumbnail(data: ByteArray, maxPx: Int = 256): ImageBitmap? {

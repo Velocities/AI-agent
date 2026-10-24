@@ -85,13 +85,25 @@ class ConversationStore:
             row = _owned(db, owner, conversation_id)
             return None if row is None else _conversation(row)
 
-    def delete_conversation(self, user_id: str, conversation_id: str) -> bool:
-        """Remove a conversation and its messages. False when it is not this user's."""
+    def delete_conversation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        catalog=None,
+    ) -> bool:
+        """Remove a conversation and its messages. False when it is not this user's.
+
+        When `catalog` is set, attachment rows for this chat are deleted in the
+        same transaction, before the conversation row.
+        """
         owner = _require_user_id(user_id)
         with self._session() as db:
             row = _owned(db, owner, conversation_id)
             if row is None:
                 return False
+            if catalog is not None:
+                catalog.delete_for_conversation(db, owner, conversation_id)
             db.delete(row)
             db.commit()
             return True
@@ -106,36 +118,59 @@ class ConversationStore:
         metadata: dict | None = None,
     ) -> Message:
         owner = _require_user_id(user_id)
+        with self._session() as db:
+            message = self.append_message_in(
+                db,
+                owner,
+                conversation_id,
+                role=role,
+                content=content,
+                metadata=metadata,
+            )
+            db.commit()
+            return message
+
+    def append_message_in(
+        self,
+        db: Session,
+        user_id: str,
+        conversation_id: str,
+        *,
+        role: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> Message:
+        """Insert one message on an existing session. The caller commits."""
+        owner = _require_user_id(user_id)
         if role not in MESSAGE_ROLES:
             raise InvalidMessage(f"Unsupported message role {role!r}.")
         payload = dict(metadata or {})
         now = _now()
-        with self._session() as db:
-            conversation = _owned(db, owner, conversation_id)
-            if conversation is None:
-                raise ConversationNotFound(conversation_id)
-            last = db.scalar(
-                select(MessageRow.position)
-                .where(MessageRow.conversation_id == conversation.id)
-                .order_by(MessageRow.position.desc())
-                .limit(1)
-            )
-            position = 0 if last is None else last + 1
-            if not conversation.title and role == "user" and content.strip():
-                conversation.title = _clean_title(content.strip().splitlines()[0])
-            conversation.updated_at = now
-            row = MessageRow(
-                id=str(uuid4()),
-                conversation_id=conversation.id,
-                position=position,
-                role=role,
-                content=content,
-                created_at=now,
-                metadata_json=payload,
-            )
-            db.add(row)
-            db.commit()
-            return _message(row)
+        conversation = _owned(db, owner, conversation_id)
+        if conversation is None:
+            raise ConversationNotFound(conversation_id)
+        last = db.scalar(
+            select(MessageRow.position)
+            .where(MessageRow.conversation_id == conversation.id)
+            .order_by(MessageRow.position.desc())
+            .limit(1)
+        )
+        position = 0 if last is None else last + 1
+        if not conversation.title and role == "user" and content.strip():
+            conversation.title = _clean_title(content.strip().splitlines()[0])
+        conversation.updated_at = now
+        row = MessageRow(
+            id=str(uuid4()),
+            conversation_id=conversation.id,
+            position=position,
+            role=role,
+            content=content,
+            created_at=now,
+            metadata_json=payload,
+        )
+        db.add(row)
+        db.flush()
+        return _message(row)
 
     def list_messages(self, user_id: str, conversation_id: str) -> list[Message]:
         owner = _require_user_id(user_id)

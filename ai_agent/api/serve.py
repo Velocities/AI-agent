@@ -7,6 +7,7 @@ from rich.console import Console
 
 from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
+from ai_agent.attachments.runtime import open_attachment_services
 from ai_agent.config import Settings
 from ai_agent.conversations.db import database_display_path, database_url, open_stores
 
@@ -86,11 +87,19 @@ def main() -> int:
         "The database file is not served. Ctrl+C to stop.[/dim]\n"
     )
 
+    user_settings, catalog, attachment_store, attachment_cache = open_attachment_services(
+        settings,
+        store.engine,
+    )
     app = create_app(
         settings,
         store=store,
         access_store=access_store,
         monitoring_admin_store=monitoring_admins,
+        user_settings=user_settings,
+        attachment_store=attachment_store,
+        attachment_catalog=catalog,
+        attachment_cache=attachment_cache,
     )
     app.state.agent_factory = build_api_agent_factory(access_store, target_repo)
     uvicorn.run(

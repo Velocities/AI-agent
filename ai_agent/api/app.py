@@ -10,10 +10,15 @@ from ai_agent.api.conversations import router as conversation_router
 from ai_agent.api.monitoring import router as monitoring_router
 from ai_agent.api.speech import router as speech_router
 from ai_agent.api.deps import get_current_user, require_deployment_access
+from ai_agent.api.model import router as model_router
+from ai_agent.api.settings import router as settings_router
 from ai_agent.config import Settings
+from ai_agent.conversations.attachments import AttachmentCatalog
 from ai_agent.conversations.store import ConversationStore
+from ai_agent.conversations.user_settings import UserSettingsStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
+from ai_agent.llm.capabilities import ModelInfo
 from ai_agent.speech.check import note_speech_configuration
 
 __all__ = ["create_app", "get_current_user"]
@@ -29,6 +34,11 @@ def create_app(
     monitoring_admin_store: MonitoringAdminStore | None = None,
     broker: ApprovalBroker | None = None,
     enforce_access: bool = True,
+    model_info: ModelInfo | None = None,
+    user_settings: UserSettingsStore | None = None,
+    attachment_store=None,
+    attachment_catalog: AttachmentCatalog | None = None,
+    attachment_cache=None,
 ) -> FastAPI:
     """Build the public API.
 
@@ -54,6 +64,15 @@ def create_app(
     app.state.agent_factory = None
     app.state.speech_to_text = None
     app.state.text_to_speech = None
+    app.state.model_info = model_info
+    app.state.user_settings = user_settings or (
+        UserSettingsStore(store.engine) if store is not None else None
+    )
+    app.state.attachment_catalog = attachment_catalog or (
+        AttachmentCatalog(store.engine) if store is not None else None
+    )
+    app.state.attachment_store = attachment_store
+    app.state.attachment_cache = attachment_cache
     note_speech_configuration(settings)
 
     @app.get("/health")
@@ -83,4 +102,6 @@ def create_app(
     app.include_router(monitoring_router)
     app.include_router(apk_router)
     app.include_router(speech_router)
+    app.include_router(model_router)
+    app.include_router(settings_router)
     return app
