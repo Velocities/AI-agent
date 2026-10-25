@@ -9,15 +9,21 @@ from ai_agent.images import ImageRejected
 from ai_agent.llm.client.types import ImageInput
 from ai_agent_cli.api_client import AgentApiClient, AgentApiError
 from ai_agent_cli.api_url import public_api_base_url_hint
-from ai_agent_cli.credentials import (
+from ai_agent_cli.client_state import (
     load_conversation_id,
-    load_session,
+    load_session_for,
     save_conversation_id,
-    save_session,
+    save_session_for,
     session_is_fresh,
 )
 from ai_agent_cli.login import refresh_session
-from ai_agent_cli.server_config import ServerConfig, ensure_server_config, set_server_url
+from ai_agent_cli.server_config import (
+    ServerConfig,
+    ensure_server_config,
+    list_servers,
+    remove_server,
+    set_server_url,
+)
 
 
 def run_remote_repl() -> int:
@@ -25,6 +31,15 @@ def run_remote_repl() -> int:
     config = ensure_server_config(console)
     if config is None:
         return 1
+    while True:
+        result = _chat_with(console, config)
+        if not isinstance(result, ServerConfig):
+            return result
+        config = result
+
+
+def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
+    """Chat with [config]. Return another server when the user switches to one."""
     token = _access_token(config, console)
     if token is None:
         return 1
@@ -70,14 +85,15 @@ def run_remote_repl() -> int:
                     return 1
                 continue
             if user_input == "/server" or user_input.startswith("/server "):
-                updated = _apply_server_command(
+                switched = _apply_server_command(
                     console,
                     config,
                     user_input[len("/server") :].strip(),
                 )
-                if updated is None:
+                if isinstance(switched, ServerConfig):
+                    return switched
+                if switched:
                     return 0
-                config = updated
                 continue
             if user_input == "/new":
                 stage.clear()
@@ -130,9 +146,11 @@ def _print_stage(console: Console, command: StageCommand) -> None:
 
 
 def _access_token(config: ServerConfig, console: Console) -> str | None:
-    session = load_session()
+    session = load_session_for(config.server_url)
     if session is None:
-        console.print("Not signed in. Run [bold]ai-agent login[/bold].")
+        console.print(
+            f"Not signed in to {config.server_url}. Run [bold]ai-agent login[/bold]."
+        )
         return None
     if session_is_fresh(session):
         return session.access_token
@@ -148,7 +166,7 @@ def _access_token(config: ServerConfig, console: Console) -> str | None:
     except httpx.HTTPError:
         console.print("[red]Could not refresh sign-in. Run ai-agent login.[/red]")
         return None
-    save_session(refreshed)
+    save_session_for(config.server_url, refreshed)
     return refreshed.access_token
 
 
@@ -156,26 +174,66 @@ def _apply_server_command(
     console: Console,
     current: ServerConfig,
     argument: str,
-) -> ServerConfig | None:
-    """Apply `/server`. Return None when the chat should stop so the user can sign in."""
+) -> ServerConfig | bool:
+    """Apply `/server`.
+
+    Return a server to open that chat, True when this chat should stop, or
+    False to keep talking to [current].
+    """
     if not argument:
-        console.print(current.server_url)
-        console.print("[dim]Change it with /server https://agent.example.com[/dim]")
-        return current
+        _print_saved_servers(console, current)
+        return False
+    if argument == "remove" or argument.startswith("remove "):
+        raw = argument.removeprefix("remove").strip()
+        if not raw:
+            console.print("[red]Usage: /server remove URL[/red]")
+            return False
+        return _remove_saved_server(console, current, raw)
     try:
         update = set_server_url(argument)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
-        return current
+        return False
     except httpx.HTTPError as exc:
         console.print(f"[red]Could not reach that server:[/red] {exc}")
-        return current
-    if update.signed_out:
-        console.print(f"Server URL updated to {update.config.server_url}.")
-        console.print("Signed out. Run [bold]ai-agent login[/bold] to sign in again.")
-        return None
-    console.print(f"Server URL saved: {update.config.server_url}")
+        return False
+    console.print(f"Using {update.config.server_url}.")
+    if update.needs_login:
+        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
+        return True
+    if update.config.server_url == current.server_url:
+        return False
     return update.config
+
+
+def _print_saved_servers(console: Console, current: ServerConfig) -> None:
+    for server in list_servers():
+        mark = "*" if server.server_url == current.server_url else " "
+        console.print(f"{mark} {server.server_url}")
+    console.print("[dim]/server URL adds or switches. /server remove URL forgets one.[/dim]")
+
+
+def _remove_saved_server(
+    console: Console,
+    current: ServerConfig,
+    raw: str,
+) -> ServerConfig | bool:
+    try:
+        remaining = remove_server(raw)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return False
+    console.print("Removed that server.")
+    if remaining is None:
+        console.print("No servers saved.")
+        return True
+    if remaining.server_url == current.server_url:
+        return False
+    console.print(f"Using {remaining.server_url}.")
+    if load_session_for(remaining.server_url) is None:
+        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
+        return True
+    return remaining
 
 
 def _current_conversation(client: AgentApiClient, console: Console) -> str:

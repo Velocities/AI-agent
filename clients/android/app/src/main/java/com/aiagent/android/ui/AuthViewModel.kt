@@ -6,6 +6,7 @@ import com.aiagent.android.AiAgentApp
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.Profile
 import com.aiagent.android.data.SavedServer
+import com.aiagent.android.data.ServerAuthStore
 import com.aiagent.android.data.SupabaseModule
 import com.aiagent.android.data.fetchClientConfig
 import com.aiagent.android.data.normalizeServerUrl
@@ -30,10 +31,14 @@ import kotlinx.serialization.json.Json
 data class AuthUiState(
     val configured: Boolean = false,
     val serverUrl: String? = null,
+    val servers: List<SavedServer> = emptyList(),
+    /** Origins that still have a saved Supabase session on this device. */
+    val savedSessionUrls: Set<String> = emptySet(),
     val promptForServer: Boolean = false,
     /** True until a saved server's Supabase session has been read. Startup stays on the loader. */
     val checkingSession: Boolean = false,
-    val editingServer: Boolean = false,
+    val managingServers: Boolean = false,
+    val addingServer: Boolean = false,
     val serverBusy: Boolean = false,
     val serverError: String? = null,
     val sessionStatusLabel: String = "Initializing",
@@ -53,12 +58,16 @@ data class AuthUiState(
 
 class AuthViewModel : ViewModel() {
     private val json = Json { prettyPrint = true; encodeDefaults = true }
-    private val saved = AiAgentApp.instance.serverConfig.load()
+    private val store = AiAgentApp.instance.serverConfig
+    private val authStore = ServerAuthStore(AiAgentApp.instance)
+    private val saved = store.load()
     private val ready = saved != null && AiAgentApp.instance.supabase != null
     private val _state = MutableStateFlow(
         AuthUiState(
             configured = ready,
             serverUrl = saved?.serverUrl,
+            servers = store.list(),
+            savedSessionUrls = savedSessionUrls(),
             promptForServer = !ready,
             checkingSession = ready,
             sessionStatusLabel = if (ready) "Initializing" else "Server URL required",
@@ -71,12 +80,96 @@ class AuthViewModel : ViewModel() {
         AiAgentApp.instance.supabase?.let(::watchSession)
     }
 
-    fun beginServerEdit() {
-        _state.update { it.copy(editingServer = true, serverError = null) }
+    fun beginServerManagement() {
+        _state.update {
+            it.copy(
+                managingServers = true,
+                addingServer = false,
+                serverError = null,
+                servers = store.list(),
+                savedSessionUrls = savedSessionUrls(),
+            )
+        }
+    }
+
+    fun beginAddServer() {
+        _state.update { it.copy(addingServer = true, serverError = null) }
     }
 
     fun cancelServerEdit() {
-        _state.update { it.copy(editingServer = false, serverError = null) }
+        _state.update {
+            if (it.addingServer && !it.promptForServer) {
+                it.copy(addingServer = false, serverError = null)
+            } else {
+                it.copy(managingServers = false, addingServer = false, serverError = null)
+            }
+        }
+    }
+
+    fun selectServer(serverUrl: String) {
+        val server = store.list().firstOrNull { it.serverUrl == serverUrl } ?: return
+        if (server.serverUrl == _state.value.serverUrl && AiAgentApp.instance.supabase != null) {
+            _state.update { it.copy(managingServers = false, addingServer = false, serverError = null) }
+            return
+        }
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    checkingSession = true,
+                    managingServers = false,
+                    addingServer = false,
+                    signedIn = false,
+                    serverBusy = true,
+                    serverError = null,
+                )
+            }
+            switchTo(server)
+        }
+    }
+
+    fun removeServer(serverUrl: String) {
+        val server = store.list().firstOrNull { it.serverUrl == serverUrl } ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(serverBusy = true, serverError = null) }
+            val removingActive = store.load()?.serverUrl == server.serverUrl
+            if (removingActive) {
+                sessionJob?.cancel()
+                sessionJob?.join()
+            }
+            revokeLocalSession(server, useLiveClient = removingActive)
+            val active = store.remove(server.serverUrl)
+            if (active == null) {
+                AiAgentApp.instance.clearClient()
+                _state.update {
+                    it.copy(
+                        configured = false,
+                        serverUrl = null,
+                        servers = emptyList(),
+                        savedSessionUrls = emptySet(),
+                        promptForServer = true,
+                        checkingSession = false,
+                        managingServers = false,
+                        addingServer = false,
+                        signedIn = false,
+                        serverBusy = false,
+                        sessionStatusLabel = "Server URL required",
+                    )
+                }
+                return@launch
+            }
+            if (removingActive) {
+                _state.update { it.copy(checkingSession = true, signedIn = false, managingServers = false) }
+                switchTo(active)
+            } else {
+                _state.update {
+                    it.copy(
+                        serverBusy = false,
+                        servers = store.list(),
+                        savedSessionUrls = savedSessionUrls(),
+                    )
+                }
+            }
+        }
     }
 
     fun submitServerUrl(raw: String) {
@@ -85,41 +178,45 @@ class AuthViewModel : ViewModel() {
             try {
                 val normalized = normalizeServerUrl(raw)
                 val remote = withContext(Dispatchers.IO) { fetchClientConfig(normalized) }
-                val previous = AiAgentApp.instance.serverConfig.load()
-                val urlChanged = previous != null && previous.serverUrl != normalized
-                val supabaseChanged = previous != null && (
-                    previous.supabaseUrl != remote.supabaseUrl ||
-                        previous.supabasePublishableKey != remote.supabasePublishableKey
+                val existing = store.list().firstOrNull { it.serverUrl == normalized }
+                val supabaseChanged = existing != null && (
+                    existing.supabaseUrl != remote.supabaseUrl ||
+                        existing.supabasePublishableKey != remote.supabasePublishableKey
                     )
-                val mustSignInAgain = urlChanged || supabaseChanged
-                if (mustSignInAgain) {
-                    sessionJob?.cancel()
-                    clearLocalSession()
+                if (supabaseChanged) {
+                    authStore.delete(normalized)
                 }
                 val stored = SavedServer(
                     serverUrl = normalized,
                     supabaseUrl = remote.supabaseUrl,
                     supabasePublishableKey = remote.supabasePublishableKey,
                 )
-                AiAgentApp.instance.serverConfig.save(stored)
-                val replaceClient = previous == null || supabaseChanged || AiAgentApp.instance.supabase == null
-                if (replaceClient) {
-                    val client = SupabaseModule.createClient(remote.supabaseUrl, remote.supabasePublishableKey)
-                    AiAgentApp.instance.replaceSupabase(client)
-                    watchSession(client)
-                } else if (mustSignInAgain) {
+                val previousUrl = store.load()?.serverUrl
+                val mustSwap = existing == null ||
+                    supabaseChanged ||
+                    previousUrl != normalized ||
+                    AiAgentApp.instance.supabase == null
+                store.upsert(stored)
+                if (mustSwap) {
+                    sessionJob?.cancel()
+                    sessionJob?.join()
+                    _state.update {
+                        it.copy(checkingSession = true, signedIn = false, sessionStatusLabel = "Initializing")
+                    }
+                    AiAgentApp.instance.open(stored)
                     AiAgentApp.instance.supabase?.let(::watchSession)
                 }
                 _state.update {
                     it.copy(
-                        configured = true,
+                        configured = AiAgentApp.instance.supabase != null,
                         serverUrl = normalized,
+                        servers = store.list(),
+                        savedSessionUrls = savedSessionUrls(),
                         promptForServer = false,
-                        editingServer = false,
+                        managingServers = false,
+                        addingServer = false,
                         serverBusy = false,
                         serverError = null,
-                        signedIn = if (mustSignInAgain) false else it.signedIn,
-                        sessionStatusLabel = if (mustSignInAgain) "Not authenticated" else it.sessionStatusLabel,
                     )
                 }
             } catch (error: CancellationException) {
@@ -134,6 +231,52 @@ class AuthViewModel : ViewModel() {
             }
         }
     }
+
+    private suspend fun switchTo(server: SavedServer) {
+        sessionJob?.cancel()
+        sessionJob?.join()
+        store.select(server.serverUrl)
+        AiAgentApp.instance.open(server)
+        val client = AiAgentApp.instance.supabase
+        if (client != null) {
+            watchSession(client)
+        }
+        _state.update {
+            it.copy(
+                configured = client != null,
+                serverUrl = server.serverUrl,
+                servers = store.list(),
+                savedSessionUrls = savedSessionUrls(),
+                promptForServer = false,
+                serverBusy = false,
+                checkingSession = if (client == null) false else it.checkingSession,
+            )
+        }
+    }
+
+    private suspend fun revokeLocalSession(server: SavedServer, useLiveClient: Boolean) {
+        val live = AiAgentApp.instance.supabase
+        val client = if (useLiveClient && live != null) {
+            live
+        } else {
+            runCatching { SupabaseModule.createClient(AiAgentApp.instance, server) }.getOrNull()
+        }
+        if (client != null) {
+            try {
+                client.auth.signOut()
+            } catch (_: Exception) {
+            }
+            if (client !== live) {
+                client.close()
+            } else if (useLiveClient) {
+                AiAgentApp.instance.clearClient()
+            }
+        }
+        authStore.delete(server.serverUrl)
+    }
+
+    private fun savedSessionUrls(): Set<String> =
+        store.list().filter { authStore.hasSession(it.serverUrl) }.map { it.serverUrl }.toSet()
 
     fun signInWithDiscord() {
         val client = AiAgentApp.instance.supabase ?: return
@@ -168,18 +311,6 @@ class AuthViewModel : ViewModel() {
         sessionJob = viewModelScope.launch {
             client.auth.sessionStatus.collect { status ->
                 applySessionStatus(status)
-            }
-        }
-    }
-
-    private suspend fun clearLocalSession() {
-        val client = AiAgentApp.instance.supabase ?: return
-        try {
-            client.auth.clearSession()
-        } catch (_: Exception) {
-            try {
-                client.auth.sessionManager.deleteSession()
-            } catch (_: Exception) {
             }
         }
     }
@@ -250,7 +381,7 @@ class AuthViewModel : ViewModel() {
     }
 
     private suspend fun loadIsAdmin(): Boolean {
-        val url = AiAgentApp.instance.serverConfig.load()?.serverUrl ?: return false
+        val url = store.load()?.serverUrl ?: return false
         val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull() ?: return false
         return try {
             withContext(Dispatchers.IO) { AgentApi(url).isMonitoringAdmin(token) }

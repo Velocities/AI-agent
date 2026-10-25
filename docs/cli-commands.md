@@ -17,9 +17,9 @@ Two other programs are installed beside it and are not subcommands of `ai-agent`
 | `ai-agent apk` | Publish a debug APK for the admin download page. |
 | `ai-agent config` | Change deployment settings without opening a chat. |
 | `ai-agent host-setup` | Install the laptop SSH key on a GPU machine. |
-| `ai-agent server-url` | Show or save the chat client's server URL. |
+| `ai-agent server-url` | Show, add, list, or remove chat servers. Each keeps its own sign-in. |
 | `ai-agent login` | Sign in with Discord in the browser. |
-| `ai-agent logout` | Forget the saved sign-in. |
+| `ai-agent logout` | Forget the active server's sign-in. |
 
 ---
 
@@ -36,8 +36,9 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 | `/detach` | Drops staged images. `/attach --clear` does the same. |
 | `/new` | Starts a new conversation and drops staged images. |
 | `/list` | Lists conversations on the server. |
-| `/server` | Prints the saved server URL. |
-| `/server URL` | Saves a new server URL. A different URL signs you out and ends the chat. |
+| `/server` | Lists saved servers. `*` is the one this chat is using. |
+| `/server URL` | Adds that server or switches to it. A server you have not signed in to ends the chat so you can run `ai-agent login`. |
+| `/server remove URL` | Forgets that server and its sign-in. |
 | `exit` or `quit` | Leaves the chat. |
 
 ---
@@ -182,10 +183,12 @@ These run on the chat client machine. They save files under `~/.config/ai-agent/
 
 | Command | What it does |
 |---------|----------------|
-| `ai-agent server-url` | Prints the saved server URL. |
-| `ai-agent server-url URL` | Saves an `http` or `https` origin with no path. A different URL signs you out. |
-| `ai-agent login` | Opens Discord sign-in in the browser and stores the session. Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list the first time. |
-| `ai-agent logout` | Deletes the saved session. |
+| `ai-agent server-url` | Prints the active server URL. |
+| `ai-agent server-url --list` | Lists saved servers. `*` marks the active one. |
+| `ai-agent server-url URL` | Adds an `http` or `https` origin, or switches to it. That server's sign-in is kept. Other servers are not signed out. |
+| `ai-agent server-url --remove URL` | Forgets that server and deletes its saved sign-in. |
+| `ai-agent login` | Opens Discord sign-in for the active server. Add `http://127.0.0.1:53682/callback` to that server's Supabase redirect allow list the first time. |
+| `ai-agent logout` | Deletes the active server's saved sign-in. Other servers stay signed in. |
 
 ---
 

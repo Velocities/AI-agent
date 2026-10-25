@@ -1,5 +1,6 @@
 package com.aiagent.android.data
 
+import android.content.Context
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.ExternalAuthAction
@@ -12,19 +13,22 @@ object SupabaseModule {
     const val AUTH_HOST = "login-callback"
     const val AUTH_REDIRECT_URL = "$AUTH_SCHEME://$AUTH_HOST"
 
-    fun createClient(supabaseUrl: String, publishableKey: String): SupabaseClient {
-        check(supabaseUrl.isNotBlank() && publishableKey.isNotBlank()) {
+    fun createClient(context: Context, server: SavedServer): SupabaseClient {
+        check(server.supabaseUrl.isNotBlank() && server.supabasePublishableKey.isNotBlank()) {
             "Supabase URL and publishable key are required."
         }
+        val auth = ServerAuthStore(context)
         return createSupabaseClient(
-            supabaseUrl = supabaseUrl,
-            supabaseKey = publishableKey,
+            supabaseUrl = server.supabaseUrl,
+            supabaseKey = server.supabasePublishableKey,
         ) {
             install(Auth) {
                 scheme = AUTH_SCHEME
                 host = AUTH_HOST
                 flowType = FlowType.PKCE
                 defaultExternalAuthAction = ExternalAuthAction.CustomTabs()
+                sessionManager = auth.sessionManager(server.serverUrl)
+                codeVerifierCache = auth.codeVerifierCache(server.serverUrl)
             }
             install(Postgrest)
         }

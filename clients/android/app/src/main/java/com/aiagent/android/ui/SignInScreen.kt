@@ -33,7 +33,7 @@ fun SignInScreen(
         ) {
             Text("AI Agent", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Sign in with Discord. Supabase keeps the session.",
+                "Sign in with Discord for this server. The sign-in stays on this device.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Button(
@@ -46,7 +46,7 @@ fun SignInScreen(
             state.serverUrl?.let { url ->
                 Text(url, style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = onChangeServer, enabled = !state.busy) {
-                    Text("Change server")
+                    Text("Servers")
                 }
             }
             state.lastError?.let {

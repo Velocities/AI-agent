@@ -12,7 +12,7 @@ from ai_agent.api.app import create_app
 from ai_agent.api.approvals import ApprovalBroker, OpenApproval, RemoteApprovalPrompter
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.approval.session import ApprovalSession
-from ai_agent_cli.credentials import StoredSession, save_session, session_path
+from ai_agent_cli.client_state import StoredSession, save_session_for, session_path_for
 from ai_agent_cli.login import authorize_url, exchange_code, pkce_pair
 from ai_agent.commands.ast import SingleCommand
 from ai_agent.config import ConfirmationMode, Settings
@@ -455,6 +455,6 @@ def test_pkce_and_private_session_file(tmp_path, monkeypatch: pytest.MonkeyPatch
     )
     assert session.access_token == "access"
     monkeypatch.setenv("AI_AGENT_CONFIG_DIR", str(tmp_path))
-    save_session(session)
-    mode = session_path().stat().st_mode & 0o777
+    save_session_for("https://agent.example.com", session)
+    mode = session_path_for("https://agent.example.com").stat().st_mode & 0o777
     assert mode == stat.S_IRUSR | stat.S_IWUSR

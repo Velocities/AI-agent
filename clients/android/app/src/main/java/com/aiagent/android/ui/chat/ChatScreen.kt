@@ -115,7 +115,7 @@ fun ChatScreen(
     onChangeServer: () -> Unit,
     onOpenMonitoring: () -> Unit,
     onOpenApkBuilds: () -> Unit,
-    viewModel: ChatViewModel = viewModel(),
+    viewModel: ChatViewModel = viewModel(key = auth.serverUrl ?: "none"),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val view = LocalView.current

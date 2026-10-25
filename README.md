@@ -97,7 +97,7 @@ Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
 
 **3. Run the server and the client.**
 
-Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key) on the **server**. In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`. The chat client does not read those values from `.env`. The first `ai-agent login` or `ai-agent` asks for the server URL (`http://127.0.0.1:8000` on this machine), saves it, and downloads Supabase settings from `GET /api/client-config`. Change it later with `ai-agent server-url https://agent.example.com` or `/server` in the chat. A different URL signs you out.
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key) on the **server**. In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`. The chat client does not read those values from `.env`. The first `ai-agent login` or `ai-agent` asks for the server URL (`http://127.0.0.1:8000` on this machine), saves it, and downloads Supabase settings from `GET /api/client-config`. Add another with `ai-agent server-url https://agent.example.com` or `/server` in the chat. Each server keeps its own sign-in.
 
 Recommended — one terminal for model + API (`ai-agent serve` starts Ollama when needed and does not require setting `LLM_HOST`):
 
@@ -426,7 +426,7 @@ The first start creates the conversation SQLite file and applies the Alembic mig
 
 `{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
 
-**CLI on your PC.** The first `ai-agent login` or `ai-agent` asks for the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. The CLI saves that URL and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Change it with `ai-agent server-url https://agent.example.com` (or `/server` in the chat); a different URL signs you out. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
+**CLI on your PC.** The first `ai-agent login` or `ai-agent` asks for the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. The CLI saves that URL and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Add or switch servers with `ai-agent server-url https://agent.example.com` (or `/server` in the chat). Each server keeps its own sign-in. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
 
 **CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
 

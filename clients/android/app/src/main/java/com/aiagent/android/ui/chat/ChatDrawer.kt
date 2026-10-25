@@ -239,6 +239,15 @@ private fun AccountRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            auth.serverUrl?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Box {
             IconButton(onClick = { menuOpen = true }) {
@@ -255,7 +264,7 @@ private fun AccountRow(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Change server") },
+                    text = { Text("Servers") },
                     onClick = {
                         menuOpen = false
                         onChangeServer()
