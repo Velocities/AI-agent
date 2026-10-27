@@ -2,6 +2,8 @@ package com.aiagent.android.speech
 
 import android.speech.SpeechRecognizer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SttProviderTest {
@@ -16,6 +18,13 @@ class SttProviderTest {
         SttProvider.entries.forEach { provider ->
             assertEquals(provider, SttProvider.fromId(provider.id))
         }
+    }
+
+    @Test
+    fun googleStreamsWordsWhileSpeaking() {
+        assertTrue(SttProvider.GOOGLE_REMOTE.liveTranscript)
+        assertTrue(SttProvider.GOOGLE_LOCAL.liveTranscript)
+        assertFalse(SttProvider.VOSK.liveTranscript)
     }
 
     @Test

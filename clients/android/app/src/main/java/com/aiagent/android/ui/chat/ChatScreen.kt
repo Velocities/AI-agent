@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,21 +63,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -592,6 +604,17 @@ private fun CenteredNote(text: String, emphasised: Boolean = false) {
 }
 
 private const val MessageMaxLines = 6
+private val ScrollbarThickness = 5.dp
+private val ScrollbarInset = 3.dp
+private val ScrollbarGutter = 14.dp
+private val ScrollbarMinThumb = 36.dp
+
+private data class MessageScrollSnapshot(
+    val maxScroll: Int,
+    val viewport: Int,
+    val cursorTop: Float,
+    val cursorBottom: Float,
+)
 
 @Composable
 private fun MessageField(
@@ -599,29 +622,93 @@ private fun MessageField(
     onValueChange: (String) -> Unit,
     enabled: Boolean,
     placeholder: String,
+    followLatest: Boolean,
     modifier: Modifier = Modifier,
     trailingIcon: @Composable () -> Unit,
 ) {
     val textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
     val interactionSource = remember { MutableInteractionSource() }
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val maxFieldHeight = with(density) {
+        val oneLine = measurer.measure(text = "H", style = textStyle, maxLines = 1).size.height
+        val twoLines = measurer.measure(text = "H\nH", style = textStyle, maxLines = 2).size.height
+        val step = (twoLines - oneLine).coerceAtLeast(0)
+        (oneLine + step * (MessageMaxLines - 1)).coerceAtLeast(oneLine).toDp()
+    }
+    // Keep the caret from a typed edit. Speech replaces the whole string, so that caret is dropped
+    // and the field lands on the latest word instead.
+    var edited by remember { mutableStateOf<TextFieldValue?>(null) }
+    val held = edited
+    val fieldValue = if (held != null && held.text == value) {
+        held
+    } else {
+        TextFieldValue(text = value, selection = TextRange(value.length))
+    }
+    var cursorTop by remember { mutableFloatStateOf(0f) }
+    var cursorBottom by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(followLatest, fieldValue.text, fieldValue.selection) {
+        snapshotFlow {
+            MessageScrollSnapshot(
+                maxScroll = scrollState.maxValue,
+                viewport = scrollState.viewportSize,
+                cursorTop = cursorTop,
+                cursorBottom = cursorBottom,
+            )
+        }.collect { snap ->
+            val target = messageFieldScrollTarget(
+                followLatest = followLatest,
+                viewportPx = snap.viewport,
+                maxScrollPx = snap.maxScroll,
+                currentScrollPx = scrollState.value,
+                cursorTopPx = snap.cursorTop,
+                cursorBottomPx = snap.cursorBottom,
+            )
+            if (scrollState.value != target) scrollState.scrollTo(target)
+        }
+    }
+    val scrollable = scrollState.maxValue > 0
+    val thumb = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
     BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        // A disabled field cannot be scrolled. Stay enabled and block edits with readOnly
-        // so a live transcript still scrolls once it passes maxLines.
-        enabled = true,
+        value = fieldValue,
+        onValueChange = { updated ->
+            edited = updated
+            onValueChange(updated.text)
+        },
+        enabled = enabled,
         readOnly = !enabled,
         textStyle = textStyle,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         minLines = 1,
-        maxLines = MessageMaxLines,
+        // The outer scroller owns the six-line viewport. Int.MAX_VALUE means the field itself
+        // does not cap or scroll, so the bar we draw can stay visible and follow live speech.
+        maxLines = Int.MAX_VALUE,
+        onTextLayout = { layout ->
+            val offset = fieldValue.selection.end.coerceIn(0, layout.layoutInput.text.length)
+            val rect = layout.getCursorRect(offset)
+            cursorTop = rect.top
+            cursorBottom = rect.bottom
+        },
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         interactionSource = interactionSource,
         modifier = modifier,
         decorationBox = { innerTextField ->
             TextFieldDefaults.DecorationBox(
-                value = value,
-                innerTextField = innerTextField,
+                value = fieldValue.text,
+                innerTextField = {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = maxFieldHeight)
+                            .persistentVerticalScrollbar(scrollState, thumb, track)
+                            .verticalScroll(scrollState)
+                            .padding(end = if (scrollable) ScrollbarGutter else 0.dp),
+                    ) {
+                        innerTextField()
+                    }
+                },
                 enabled = enabled,
                 singleLine = false,
                 visualTransformation = VisualTransformation.None,
@@ -637,6 +724,39 @@ private fun MessageField(
                 ),
             )
         },
+    )
+}
+
+private fun Modifier.persistentVerticalScrollbar(
+    state: ScrollState,
+    thumbColor: Color,
+    trackColor: Color,
+): Modifier = drawWithContent {
+    drawContent()
+    val max = state.maxValue
+    val viewport = size.height
+    if (max <= 0 || viewport <= 0f) return@drawWithContent
+    val thickness = ScrollbarThickness.toPx()
+    val inset = ScrollbarInset.toPx()
+    val trackHeight = (viewport - inset * 2).coerceAtLeast(0f)
+    if (trackHeight <= 0f) return@drawWithContent
+    val minThumb = ScrollbarMinThumb.toPx().coerceAtMost(trackHeight)
+    val thumbHeight = (trackHeight * viewport / (viewport + max)).coerceIn(minThumb, trackHeight)
+    val travel = (trackHeight - thumbHeight).coerceAtLeast(0f)
+    val thumbTop = inset + (state.value / max.toFloat()) * travel
+    val left = size.width - thickness - inset
+    val radius = CornerRadius(thickness / 2f)
+    drawRoundRect(
+        color = trackColor,
+        topLeft = Offset(left, inset),
+        size = Size(thickness, trackHeight),
+        cornerRadius = radius,
+    )
+    drawRoundRect(
+        color = thumbColor,
+        topLeft = Offset(left, thumbTop),
+        size = Size(thickness, thumbHeight),
+        cornerRadius = radius,
     )
 }
 
@@ -717,6 +837,7 @@ private fun Composer(
                 onValueChange = { draft = it },
                 enabled = canType,
                 placeholder = if (listening) "Listening…" else "Message",
+                followLatest = listening && provider.liveTranscript,
                 modifier = Modifier.weight(1f),
                 trailingIcon = {
                     IconButton(enabled = enabled && !running && !voiceBusy, onClick = onMic) {

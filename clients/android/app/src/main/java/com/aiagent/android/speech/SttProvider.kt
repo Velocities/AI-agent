@@ -11,6 +11,9 @@ enum class SttProvider(val id: String, val title: String, val where: String) {
 
     val label: String get() = "$title ($where)"
 
+    /** Google streams words while you speak. Vosk waits until the recording stops. */
+    val liveTranscript: Boolean get() = this != VOSK
+
     companion object {
         fun fromId(id: String?): SttProvider =
             entries.firstOrNull { it.id == id } ?: GOOGLE_REMOTE
