@@ -13,7 +13,12 @@ import httpx
 from rich.console import Console
 
 from ai_agent.config import Settings
-from ai_agent_cli.credentials import StoredSession, clear_session, save_session
+from ai_agent_cli.client_state import (
+    StoredSession,
+    clear_session_for,
+    load_server_config,
+    save_session_for,
+)
 from ai_agent_cli.server_config import ensure_server_config
 
 _LOGIN_TIMEOUT = 180.0
@@ -136,14 +141,21 @@ def main(argv: list[str] | None = None) -> int:
     except httpx.HTTPError as exc:
         console.print(f"[red]Could not finish sign-in:[/red] {exc}")
         return 1
-    save_session(session)
-    console.print("[green]Signed in.[/green] Start a chat with [bold]ai-agent[/bold].")
+    save_session_for(config.server_url, session)
+    console.print(f"[green]Signed in to {config.server_url}.[/green]")
+    console.print("Start a chat with [bold]ai-agent[/bold].")
     return 0
 
 
 def logout() -> int:
-    clear_session()
-    Console().print("Signed out.")
+    config = load_server_config()
+    if config is not None:
+        clear_session_for(config.server_url)
+    console = Console()
+    if config is None:
+        console.print("Signed out.")
+    else:
+        console.print(f"Signed out of {config.server_url}.")
     return 0
 
 

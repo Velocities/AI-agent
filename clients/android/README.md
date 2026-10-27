@@ -8,7 +8,7 @@ Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, the
 - **Approvals** match the CLI's `y` / `n` / `a`: **Deny**, **Approve** (red **Run anyway** for destructive commands), and **Approve, and allow … for this session** when the CLI would offer `a`.
 - **Voice.** The mic uses the transcription option under the message box. Google Remote sends audio off the phone (usually to Google). Google Local keeps it on the phone and needs a downloaded language pack. Vosk uploads the clip to this server. The text is sent as a normal chat turn. When the reply finishes, the server synthesizes it with Kokoro-82M (CPU) and the phone plays it. Typed messages are not spoken. Setup and testing: [docs/voice-prototype.md](../../docs/voice-prototype.md).
 
-The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. The first time you open the app it asks for that server’s URL (for example `https://agent.example.com`). The app saves it and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Change the URL from the sign-in screen or the account menu; a different URL signs you out. Do not point it at the SQLite file or at Ollama.
+The access token from this sign-in is what [`ai-agent-serve`](../../README.md#path-f--public-api-through-cloudflare) checks. The first time you open the app it asks for that server’s URL (for example `https://agent.example.com`). The app saves it and downloads Supabase settings from `GET /api/client-config`. Add more from **Servers** on the sign-in screen or in the account menu. Each server keeps its own Discord sign-in. Do not point it at the SQLite file or at Ollama.
 
 ## Stack (pinned)
 

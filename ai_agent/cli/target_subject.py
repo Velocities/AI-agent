@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ai_agent.api.auth import InvalidTokenError, build_verifier
 from ai_agent.config import Settings
-from ai_agent_cli.credentials import load_session, session_is_fresh
+from ai_agent_cli.client_state import load_session, session_is_fresh
 
 
 class TargetSubjectError(ValueError):

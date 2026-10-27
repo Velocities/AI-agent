@@ -20,19 +20,32 @@ private const val ROUTE_APK_BUILDS = "apk_builds"
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    if (state.checkingSession) {
-        StartupScreen()
-        return
-    }
-    if (state.promptForServer || state.editingServer) {
+    if (state.promptForServer || state.addingServer) {
         ServerUrlScreen(
-            initialUrl = state.serverUrl.orEmpty(),
+            initialUrl = if (state.promptForServer) state.serverUrl.orEmpty() else "",
             required = state.promptForServer,
             busy = state.serverBusy,
             error = state.serverError,
             onSubmit = viewModel::submitServerUrl,
             onCancel = if (state.promptForServer) null else viewModel::cancelServerEdit,
         )
+        return
+    }
+    if (state.managingServers) {
+        ServerListScreen(
+            servers = state.servers,
+            activeServerUrl = state.serverUrl,
+            savedSessionUrls = state.savedSessionUrls,
+            busy = state.serverBusy,
+            onSelect = viewModel::selectServer,
+            onRemove = viewModel::removeServer,
+            onAdd = viewModel::beginAddServer,
+            onBack = viewModel::cancelServerEdit,
+        )
+        return
+    }
+    if (state.checkingSession) {
+        StartupScreen()
         return
     }
     val navController = rememberNavController()
@@ -56,14 +69,14 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             SignInScreen(
                 state = state,
                 onSignIn = viewModel::signInWithDiscord,
-                onChangeServer = viewModel::beginServerEdit,
+                onChangeServer = viewModel::beginServerManagement,
             )
         }
         composable(ROUTE_SIGNED_IN) {
             ChatScreen(
                 auth = state,
                 onSignOut = viewModel::signOut,
-                onChangeServer = viewModel::beginServerEdit,
+                onChangeServer = viewModel::beginServerManagement,
                 onOpenMonitoring = { navController.navigate(ROUTE_MONITORING) },
                 onOpenApkBuilds = { navController.navigate(ROUTE_APK_BUILDS) },
             )

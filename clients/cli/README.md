@@ -9,9 +9,9 @@ This is the sibling of [`clients/android/`](../android/README.md). Both clients 
 | Module | Role |
 |--------|------|
 | `ai_agent_cli/api_client.py` | HTTP client (conversations, turns, approvals) |
-| `ai_agent_cli/server_config.py` | Saved server URL + downloaded Supabase settings |
+| `ai_agent_cli/client_state.py` | Saved servers, and each server's sign-in and chat id |
+| `ai_agent_cli/server_config.py` | Download Supabase settings and the `server-url` command |
 | `ai_agent_cli/login.py` | Browser PKCE sign-in |
-| `ai_agent_cli/credentials.py` | `~/.config/ai-agent/` session and chat id |
 | `ai_agent_cli/remote_repl.py` | Interactive chat REPL |
 
 The `ai-agent` console script still lives in the main Python package (`ai_agent.cli.app`); it dispatches here for `login`, `logout`, `server-url`, and the default chat loop.

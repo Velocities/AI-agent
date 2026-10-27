@@ -1,40 +1,54 @@
 package com.aiagent.android.data
 
 import android.content.Context
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
-/** AI server URL and the Supabase settings downloaded from it. */
-data class SavedServer(
-    val serverUrl: String,
-    val supabaseUrl: String,
-    val supabasePublishableKey: String,
-)
-
+/** Saved agent servers. Each entry's sign-in lives in [ServerAuthStore], not here. */
 class ServerConfigStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun load(): SavedServer? {
-        val serverUrl = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
-        val supabaseUrl = prefs.getString(KEY_SUPABASE_URL, null)?.trim().orEmpty()
-        val key = prefs.getString(KEY_SUPABASE_KEY, null)?.trim().orEmpty()
-        if (serverUrl.isEmpty() || supabaseUrl.isEmpty() || key.isEmpty()) return null
-        return SavedServer(serverUrl, supabaseUrl, key)
+    fun load(): SavedServer? = snapshot().active()
+
+    fun list(): List<SavedServer> = snapshot().servers
+
+    fun snapshot(): ServerRegistrySnapshot = read()
+
+    fun upsert(server: SavedServer) {
+        write(snapshot().withServer(server))
     }
 
-    fun save(config: SavedServer) {
-        val wrote = prefs.edit()
-            .putString(KEY_SERVER, config.serverUrl)
-            .putString(KEY_SUPABASE_URL, config.supabaseUrl)
-            .putString(KEY_SUPABASE_KEY, config.supabasePublishableKey)
-            .commit()
+    fun select(serverUrl: String): SavedServer? {
+        val next = snapshot().select(serverUrl)
+        write(next)
+        return next.active()
+    }
+
+    fun remove(serverUrl: String): SavedServer? {
+        val next = snapshot().remove(serverUrl)
+        write(next)
+        return next.active()
+    }
+
+    private fun read(): ServerRegistrySnapshot {
+        val raw = prefs.getString(KEY_DOCUMENT, null) ?: return ServerRegistrySnapshot()
+        return try {
+            json.decodeFromString<ServerRegistrySnapshot>(raw)
+        } catch (_: Exception) {
+            ServerRegistrySnapshot()
+        }
+    }
+
+    private fun write(snapshot: ServerRegistrySnapshot) {
+        val wrote = prefs.edit().putString(KEY_DOCUMENT, json.encodeToString(snapshot)).commit()
         if (!wrote) {
-            throw IllegalStateException("Could not save the server URL.")
+            throw IllegalStateException("Could not save the server list.")
         }
     }
 
     private companion object {
-        const val PREFS = "ai_agent_server"
-        const val KEY_SERVER = "server_url"
-        const val KEY_SUPABASE_URL = "supabase_url"
-        const val KEY_SUPABASE_KEY = "supabase_publishable_key"
+        const val PREFS = "ai_agent_servers"
+        const val KEY_DOCUMENT = "registry"
     }
 }

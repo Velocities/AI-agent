@@ -46,14 +46,14 @@ fun ServerUrlScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (required) "Connect to your AI server" else "Change server",
+                if (required) "Connect to your AI server" else "Add a server",
                 style = MaterialTheme.typography.headlineMedium,
             )
             Text(
                 if (required) {
                     "Enter the server address. Sign-in settings are loaded from that server."
                 } else {
-                    "Saving a different address signs you out. Sign in again after it changes."
+                    "This server is saved on this device. Its Discord sign-in stays separate from your other servers."
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -83,7 +83,7 @@ fun ServerUrlScreen(
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                 } else {
-                    Text(if (required) "Continue" else "Save")
+                    Text(if (required) "Continue" else "Add server")
                 }
             }
             if (!required && onCancel != null) {

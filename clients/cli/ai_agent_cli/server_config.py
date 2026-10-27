@@ -1,98 +1,36 @@
 from __future__ import annotations
 
-import json
-import stat
 import sys
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 import httpx
 from rich.console import Console
 
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH
-from ai_agent_cli.credentials import (
-    clear_conversation_id,
-    clear_session,
-    config_dir,
-    load_session,
+from ai_agent_cli.client_state import (
+    ServerConfig,
+    clear_session_for,
+    list_servers,
+    load_server_config,
+    load_session_for,
+    normalize_server_url,
+    replace_server_list,
+    save_server_config,
 )
 
 _USAGE = (
-    "usage: ai-agent server-url [URL]\n"
+    "usage: ai-agent server-url [--list | --remove URL | URL]\n"
     "\n"
-    "Show the saved AI server URL, or save a new one.\n"
+    "Show the active AI server, list saved servers, add one, or remove one.\n"
     "The CLI downloads Supabase settings from that server.\n"
-    "A different URL signs you out; run ai-agent login again."
+    "Each server keeps its own sign-in."
 )
-
-
-@dataclass(frozen=True)
-class ServerConfig:
-    server_url: str
-    supabase_url: str
-    supabase_publishable_key: str
 
 
 @dataclass(frozen=True)
 class ServerUpdate:
     config: ServerConfig
-    signed_out: bool
-
-
-def server_config_path():
-    return config_dir() / "server.json"
-
-
-def normalize_server_url(raw: str) -> str:
-    """Origin only, with no trailing slash. Raises ValueError when it is not a URL."""
-    value = raw.strip().rstrip("/")
-    if not value:
-        raise ValueError("Enter the server URL.")
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError(
-            "Enter an http or https URL, for example https://agent.example.com."
-        )
-    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
-        raise ValueError("Enter the server address only, without a path.")
-    if parsed.username or parsed.password:
-        raise ValueError("Enter the server address without a username or password.")
-    return value
-
-
-def load_server_config() -> ServerConfig | None:
-    path = server_config_path()
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    try:
-        return ServerConfig(
-            server_url=normalize_server_url(str(payload.get("server_url", ""))),
-            supabase_url=_required_text(payload, "supabase_url").rstrip("/"),
-            supabase_publishable_key=_required_text(payload, "supabase_publishable_key"),
-        )
-    except ValueError:
-        return None
-
-
-def save_server_config(config: ServerConfig) -> None:
-    path = server_config_path()
-    path.write_text(
-        json.dumps(
-            {
-                "server_url": config.server_url,
-                "supabase_url": config.supabase_url,
-                "supabase_publishable_key": config.supabase_publishable_key,
-            }
-        ),
-        encoding="utf-8",
-    )
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    needs_login: bool
 
 
 def fetch_client_config(server_url: str, *, client: httpx.Client | None = None) -> ServerConfig:
@@ -120,28 +58,54 @@ def fetch_client_config(server_url: str, *, client: httpx.Client | None = None) 
 
 
 def set_server_url(raw: str, *, client: httpx.Client | None = None) -> ServerUpdate:
-    """Save [raw] after downloading its Supabase settings.
+    """Save [raw] and make it the active server.
 
-    A different server URL, or a different Supabase project on the same URL,
-    drops the saved sign-in and the current chat id.
+    A server that was already saved keeps its sign-in and chat id. Those are
+    dropped only when that same server's Supabase project changes. Other
+    servers are not touched.
     """
     config = fetch_client_config(raw, client=client)
-    previous = load_server_config()
-    url_changed = previous is not None and previous.server_url != config.server_url
+    previous = next(
+        (server for server in list_servers() if server.server_url == config.server_url),
+        None,
+    )
     supabase_changed = previous is not None and (
         previous.supabase_url != config.supabase_url
         or previous.supabase_publishable_key != config.supabase_publishable_key
     )
-    save_server_config(config)
-    signed_out = url_changed or supabase_changed
-    if signed_out:
-        clear_session()
-        clear_conversation_id()
-    return ServerUpdate(config=config, signed_out=signed_out)
+    conversation_id = None if previous is None or supabase_changed else previous.conversation_id
+    if supabase_changed:
+        clear_session_for(config.server_url)
+    stored = ServerConfig(
+        server_url=config.server_url,
+        supabase_url=config.supabase_url,
+        supabase_publishable_key=config.supabase_publishable_key,
+        conversation_id=conversation_id,
+    )
+    save_server_config(stored)
+    return ServerUpdate(config=stored, needs_login=load_session_for(stored.server_url) is None)
+
+
+def remove_server(raw: str) -> ServerConfig | None:
+    """Forget [raw], including its sign-in. Returns the server that is active now."""
+    origin = normalize_server_url(raw)
+    servers = list_servers()
+    if not any(server.server_url == origin for server in servers):
+        raise ValueError("That server is not saved.")
+    clear_session_for(origin)
+    remaining = [server for server in servers if server.server_url != origin]
+    active = load_server_config()
+    next_url = None
+    if remaining:
+        next_url = remaining[0].server_url
+        if active is not None and active.server_url != origin:
+            next_url = active.server_url
+    replace_server_list(remaining, next_url)
+    return load_server_config()
 
 
 def ensure_server_config(console: Console) -> ServerConfig | None:
-    """Return the saved server, or ask for one on the first run."""
+    """Return the active server, or ask for one on the first run."""
     existing = load_server_config()
     if existing is not None:
         return existing
@@ -172,6 +136,24 @@ def main(argv: list[str] | None = None) -> int:
     if any(arg in {"-h", "--help"} for arg in args):
         console.print(_USAGE)
         return 0
+    if args == ["--list"]:
+        _print_servers(console)
+        return 0
+    if args and args[0] == "--remove":
+        if len(args) != 2:
+            console.print(_USAGE)
+            return 2
+        try:
+            remaining = remove_server(args[1])
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
+        console.print(f"Removed {normalize_server_url(args[1])}.")
+        if remaining is None:
+            console.print("No servers saved.")
+        else:
+            console.print(f"Using {remaining.server_url}.")
+        return 0
     if len(args) > 1:
         console.print(_USAGE)
         return 2
@@ -192,14 +174,21 @@ def main(argv: list[str] | None = None) -> int:
     except httpx.HTTPError as exc:
         console.print(f"[red]Could not reach that server:[/red] {exc}")
         return 1
-    if update.signed_out:
-        console.print(f"Server URL updated to {update.config.server_url}.")
-        console.print("Signed out. Run [bold]ai-agent login[/bold] to sign in again.")
-    else:
-        console.print(f"Server URL saved: {update.config.server_url}")
-        if load_session() is None:
-            console.print("Run [bold]ai-agent login[/bold] to sign in.")
+    console.print(f"Using {update.config.server_url}.")
+    if update.needs_login:
+        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
     return 0
+
+
+def _print_servers(console: Console) -> None:
+    servers = list_servers()
+    active = load_server_config()
+    if not servers:
+        console.print("No servers saved.")
+        return
+    for server in servers:
+        mark = "*" if active is not None and server.server_url == active.server_url else " "
+        console.print(f"{mark} {server.server_url}")
 
 
 def _required_text(payload: dict, key: str) -> str:

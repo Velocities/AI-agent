@@ -9,17 +9,21 @@ from rich.console import Console
 
 from ai_agent.api.app import create_app
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH
-from ai_agent_cli.credentials import (
+from ai_agent_cli.client_state import (
     StoredSession,
     load_conversation_id,
     load_session,
+    load_session_for,
     save_conversation_id,
     save_session,
+    save_session_for,
 )
 from ai_agent_cli.server_config import (
     ensure_server_config,
+    list_servers,
     load_server_config,
     normalize_server_url,
+    remove_server,
     set_server_url,
 )
 from ai_agent.config import Settings
@@ -77,10 +81,8 @@ def test_normalize_server_url_keeps_the_origin_only() -> None:
         normalize_server_url("https://agent.example.com/extra")
 
 
-def test_set_server_url_persists_config_and_signs_out_on_change(tmp_path, monkeypatch) -> None:
+def test_servers_keep_separate_sessions(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AI_AGENT_CONFIG_DIR", str(tmp_path))
-    save_session(StoredSession("access", "refresh", time.time() + 3600))
-    save_conversation_id("chat-1")
     first = _http(
         {
             "supabase_url": "https://supabase.example.com",
@@ -88,8 +90,11 @@ def test_set_server_url_persists_config_and_signs_out_on_change(tmp_path, monkey
         }
     )
     created = set_server_url("https://agent.example.com/", client=first)
-    assert created.signed_out is False
+    assert created.needs_login is True
+    save_session(StoredSession("access", "refresh", time.time() + 3600))
+    save_conversation_id("chat-1")
     assert load_session() is not None
+    assert load_session().access_token == "access"
     assert load_conversation_id() == "chat-1"
     saved = load_server_config()
     assert saved is not None
@@ -98,7 +103,7 @@ def test_set_server_url_persists_config_and_signs_out_on_change(tmp_path, monkey
     assert saved.supabase_publishable_key == "sb_publishable_one"
 
     same = set_server_url("https://agent.example.com", client=first)
-    assert same.signed_out is False
+    assert same.needs_login is False
     assert load_session() is not None
 
     changed = set_server_url(
@@ -110,11 +115,109 @@ def test_set_server_url_persists_config_and_signs_out_on_change(tmp_path, monkey
             }
         ),
     )
-    assert changed.signed_out is True
+    assert changed.needs_login is True
     assert load_session() is None
     assert load_conversation_id() is None
     assert load_server_config() is not None
     assert load_server_config().server_url == "https://other.example.com"
+    assert [server.server_url for server in list_servers()] == [
+        "https://agent.example.com",
+        "https://other.example.com",
+    ]
+    first_session = load_session_for("https://agent.example.com")
+    assert first_session is not None
+    assert first_session.access_token == "access"
+
+    save_session_for(
+        "https://other.example.com",
+        StoredSession("other-access", "other-refresh", time.time() + 3600),
+    )
+    save_conversation_id("chat-2")
+    switched_back = set_server_url("https://agent.example.com", client=first)
+    assert switched_back.needs_login is False
+    assert load_session() is not None
+    assert load_session().access_token == "access"
+    assert load_conversation_id() == "chat-1"
+    assert load_session_for("https://other.example.com") is not None
+    assert load_session_for("https://other.example.com").access_token == "other-access"
+
+
+def test_supabase_change_clears_only_that_servers_session(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AI_AGENT_CONFIG_DIR", str(tmp_path))
+    home = _http(
+        {
+            "supabase_url": "https://supabase.example.com",
+            "supabase_publishable_key": "sb_publishable_one",
+        }
+    )
+    set_server_url("https://agent.example.com", client=home)
+    set_server_url(
+        "https://other.example.com",
+        client=_http(
+            {
+                "supabase_url": "https://other.supabase.example.com",
+                "supabase_publishable_key": "sb_publishable_two",
+            }
+        ),
+    )
+    save_session_for(
+        "https://agent.example.com",
+        StoredSession("home", "home-refresh", time.time() + 3600),
+    )
+    save_session_for(
+        "https://other.example.com",
+        StoredSession("other", "other-refresh", time.time() + 3600),
+    )
+    updated = set_server_url(
+        "https://agent.example.com",
+        client=_http(
+            {
+                "supabase_url": "https://replaced.supabase.example.com",
+                "supabase_publishable_key": "sb_publishable_replaced",
+            }
+        ),
+    )
+    assert updated.needs_login is True
+    assert load_session_for("https://agent.example.com") is None
+    other = load_session_for("https://other.example.com")
+    assert other is not None
+    assert other.access_token == "other"
+
+
+def test_remove_server_deletes_its_session_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AI_AGENT_CONFIG_DIR", str(tmp_path))
+    set_server_url(
+        "https://agent.example.com",
+        client=_http(
+            {
+                "supabase_url": "https://supabase.example.com",
+                "supabase_publishable_key": "sb_publishable_one",
+            }
+        ),
+    )
+    set_server_url(
+        "https://other.example.com",
+        client=_http(
+            {
+                "supabase_url": "https://other.supabase.example.com",
+                "supabase_publishable_key": "sb_publishable_two",
+            }
+        ),
+    )
+    save_session_for(
+        "https://agent.example.com",
+        StoredSession("home", "home-refresh", time.time() + 3600),
+    )
+    save_session_for(
+        "https://other.example.com",
+        StoredSession("other", "other-refresh", time.time() + 3600),
+    )
+    remaining = remove_server("https://other.example.com/")
+    assert remaining is not None
+    assert remaining.server_url == "https://agent.example.com"
+    assert load_session_for("https://other.example.com") is None
+    assert load_session() is not None
+    assert load_session().access_token == "home"
 
 
 def test_ensure_server_config_does_not_prompt_once_saved(tmp_path, monkeypatch) -> None:
