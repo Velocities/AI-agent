@@ -69,19 +69,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -607,12 +603,14 @@ private fun MessageField(
     trailingIcon: @Composable () -> Unit,
 ) {
     val textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
-    val textMeasurer = rememberTextMeasurer()
     val interactionSource = remember { MutableInteractionSource() }
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        enabled = enabled,
+        // A disabled field cannot be scrolled. Stay enabled and block edits with readOnly
+        // so a live transcript still scrolls once it passes maxLines.
+        enabled = true,
+        readOnly = !enabled,
         textStyle = textStyle,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         minLines = 1,
@@ -623,36 +621,7 @@ private fun MessageField(
         decorationBox = { innerTextField ->
             TextFieldDefaults.DecorationBox(
                 value = value,
-                innerTextField = {
-                    BoxWithConstraints {
-                        val width = constraints.maxWidth
-                        val overflows = value.isNotEmpty() &&
-                            width > 0 &&
-                            width != Constraints.Infinity &&
-                            textMeasurer.measure(
-                                text = value,
-                                style = textStyle,
-                                overflow = TextOverflow.Ellipsis,
-                                softWrap = true,
-                                maxLines = MessageMaxLines,
-                                constraints = Constraints(maxWidth = width),
-                            ).hasVisualOverflow
-                        Box {
-                            // The field keeps the full string, so sending is unchanged. Once it
-                            // no longer fits, hide that scrolling text and draw an ellipsis instead.
-                            Box(Modifier.alpha(if (overflows) 0f else 1f)) { innerTextField() }
-                            if (overflows) {
-                                Text(
-                                    text = value,
-                                    modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
-                                    style = textStyle,
-                                    maxLines = MessageMaxLines,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                },
+                innerTextField = innerTextField,
                 enabled = enabled,
                 singleLine = false,
                 visualTransformation = VisualTransformation.None,
