@@ -5,7 +5,12 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ai_agent.agent.context import RuntimeContext, build_system_prompt, gather_runtime_context
+from ai_agent.agent.context import (
+    RuntimeContext,
+    append_personalization,
+    build_system_prompt,
+    gather_runtime_context,
+)
 from ai_agent.agent.tools import (
     COMMAND_DUMP_NUDGE,
     CONTINUE_NUDGE,
@@ -28,6 +33,7 @@ from ai_agent.commands.validate import command_expression_issue
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.commands.render import render_command
 from ai_agent.config import Settings
+from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
 from ai_agent.llm.base import (
@@ -106,6 +112,7 @@ class AgentLoop:
         session: ApprovalSession,
         router: ExecutionTargetRouter | None = None,
         runtime_context: RuntimeContext | None = None,
+        personalization: UserPreferences | None = None,
     ):
         self.settings = settings
         self.llm = llm
@@ -117,12 +124,15 @@ class AgentLoop:
         self.session = session
         self.tool_definitions = build_tool_definitions(self.router.names())
         runtime = runtime_context or gather_runtime_context(settings)
-        system_prompt = build_system_prompt(
-            runtime,
-            policy.allowed_binaries(),
-            self.router.summaries(),
-            default_target=self.router.default_name,
-            unlisted_need_approval=policy.unlisted_need_approval(),
+        system_prompt = append_personalization(
+            build_system_prompt(
+                runtime,
+                policy.allowed_binaries(),
+                self.router.summaries(),
+                default_target=self.router.default_name,
+                unlisted_need_approval=policy.unlisted_need_approval(),
+            ),
+            personalization,
         )
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)

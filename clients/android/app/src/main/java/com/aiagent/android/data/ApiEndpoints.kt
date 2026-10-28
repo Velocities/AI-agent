@@ -9,6 +9,8 @@ internal object ApiEndpoints {
     const val MONITORING_GPUS = "/api/monitoring/gpus"
     const val MONITORING_TELEMETRY = "/api/monitoring/telemetry"
 
+    const val SETTINGS = "/api/me/settings"
+
     const val SPEECH_STATUS = "/api/speech/status"
     const val SPEECH_TRANSCRIBE = "/api/speech/transcribe"
     const val SPEECH_SYNTHESIZE = "/api/speech/synthesize"

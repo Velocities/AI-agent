@@ -260,6 +260,7 @@ async def start_turn(
         broker.finish(conversation_id)
         raise HTTPException(status_code=500, detail="The turn failed.") from None
     speaker = load_text_to_speech(request) if speak else None
+    pronunciations = _speech_pronunciations(request, user.user_id) if speak else ()
     generator = iter_turn_events(
         settings=request.app.state.settings,
         store=store,
@@ -276,6 +277,7 @@ async def start_turn(
         stored_user=stored_user,
         attachment_catalog=getattr(request.app.state, "attachment_catalog", None),
         attachment_cache=getattr(request.app.state, "attachment_cache", None),
+        pronunciations=pronunciations,
     )
     return StreamingResponse(
         generator,
@@ -389,6 +391,14 @@ async def _read_multipart_turn(request: Request) -> tuple[str, list[ImageInput],
 def _vision_enabled(request: Request) -> bool:
     info = getattr(request.app.state, "model_info", None)
     return bool(info is not None and info.vision)
+
+
+def _speech_pronunciations(request: Request, user_id: str) -> tuple[tuple[str, str], ...]:
+    """Written names to swap for respellings before Kokoro. Empty when unset."""
+    store = getattr(request.app.state, "user_settings", None)
+    if store is None:
+        return ()
+    return store.get_preferences(user_id).speech_pairs()
 
 
 def _prepare_images(request: Request, user_id: str, images: list[ImageInput]) -> list[ImageInput]:

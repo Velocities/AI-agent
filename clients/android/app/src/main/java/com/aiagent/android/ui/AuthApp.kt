@@ -11,11 +11,13 @@ import androidx.navigation.compose.rememberNavController
 import com.aiagent.android.ui.apk.ApkBuildsScreen
 import com.aiagent.android.ui.chat.ChatScreen
 import com.aiagent.android.ui.monitoring.MonitoringScreen
+import com.aiagent.android.ui.settings.PersonalizationScreen
 
 private const val ROUTE_SIGN_IN = "sign_in"
 private const val ROUTE_SIGNED_IN = "signed_in"
 private const val ROUTE_MONITORING = "monitoring"
 private const val ROUTE_APK_BUILDS = "apk_builds"
+private const val ROUTE_PERSONALIZATION = "personalization"
 
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
@@ -77,9 +79,13 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
                 auth = state,
                 onSignOut = viewModel::signOut,
                 onChangeServer = viewModel::beginServerManagement,
+                onOpenPersonalization = { navController.navigate(ROUTE_PERSONALIZATION) },
                 onOpenMonitoring = { navController.navigate(ROUTE_MONITORING) },
                 onOpenApkBuilds = { navController.navigate(ROUTE_APK_BUILDS) },
             )
+        }
+        composable(ROUTE_PERSONALIZATION) {
+            PersonalizationScreen(onBack = { navController.popBackStack() })
         }
         composable(ROUTE_MONITORING) {
             MonitoringScreen(onBack = { navController.popBackStack() })

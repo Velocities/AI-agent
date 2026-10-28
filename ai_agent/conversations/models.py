@@ -83,12 +83,23 @@ class MonitoringAdminRow(Base):
 
 
 class UserSettingRow(Base):
-    """Per-user preferences. Missing row means the defaults (strip images on)."""
+    """Per-user preferences. Missing row means the defaults (strip images on).
+
+    Personalization columns are null until set. Null matches the empty-string
+    and `normal` reply-length defaults.
+    """
 
     __tablename__ = "user_setting"
 
     user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     strip_image_metadata: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    agent_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    agent_name_pronunciation: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    user_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    user_name_pronunciation: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    coding_preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply_length: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

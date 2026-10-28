@@ -2,6 +2,7 @@ package com.aiagent.android.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
+import java.net.ProtocolException
 import java.net.URL
 
 @Serializable
@@ -235,6 +237,22 @@ class AgentApi(private val baseUrl: String) {
         }
     }
 
+    fun userSettings(accessToken: String): UserSettings {
+        val body = request("GET", ApiEndpoints.SETTINGS, accessToken)
+        return json.decodeFromString(body)
+    }
+
+    /** Replace this account's preferences. Image stripping is included so a save does not reset it. */
+    fun updateUserSettings(accessToken: String, settings: UserSettings): UserSettings {
+        val body = request(
+            "PATCH",
+            ApiEndpoints.SETTINGS,
+            accessToken,
+            json.encodeToString(settings),
+        )
+        return json.decodeFromString(body)
+    }
+
     /** Synthesize [text] with Kokoro-82M and return a WAV file. */
     fun synthesize(accessToken: String, text: String): ByteArray {
         val connection = open("POST", ApiEndpoints.SPEECH_SYNTHESIZE, accessToken).apply {
@@ -259,7 +277,7 @@ class AgentApi(private val baseUrl: String) {
 
     private fun open(method: String, path: String, accessToken: String): HttpURLConnection =
         (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
+            applyMethod(method)
             connectTimeout = 10_000
             readTimeout = 30_000
             setRequestProperty("Authorization", "Bearer $accessToken")
@@ -305,5 +323,29 @@ class AgentApi(private val baseUrl: String) {
             }
             return AgentApiException(status, body.take(200).ifBlank { "HTTP $status" })
         }
+    }
+}
+
+/**
+ * HttpURLConnection on older Android releases rejects PATCH. The request still
+ * reads the method field, so set that when the public setter refuses.
+ */
+private fun HttpURLConnection.applyMethod(method: String) {
+    try {
+        requestMethod = method
+    } catch (exception: ProtocolException) {
+        if (method != "PATCH") throw exception
+        var type: Class<*>? = javaClass
+        while (type != null) {
+            try {
+                val field = type.getDeclaredField("method")
+                field.isAccessible = true
+                field.set(this, "PATCH")
+                return
+            } catch (_: NoSuchFieldException) {
+                type = type.superclass
+            }
+        }
+        throw exception
     }
 }

@@ -121,6 +121,7 @@ fun ChatScreen(
     auth: AuthUiState,
     onSignOut: () -> Unit,
     onChangeServer: () -> Unit,
+    onOpenPersonalization: () -> Unit,
     onOpenMonitoring: () -> Unit,
     onOpenApkBuilds: () -> Unit,
     viewModel: ChatViewModel = viewModel(key = auth.serverUrl ?: "none"),
@@ -284,6 +285,7 @@ fun ChatScreen(
                         onSignOut = onSignOut,
                         onChangeServer = { closeDrawerThen(onChangeServer) },
                         onShowAuthDebug = { closeDrawerThen { showAuthDebug = true } },
+                        onOpenPersonalization = { closeDrawerThen(onOpenPersonalization) },
                         onOpenMonitoring = if (auth.isAdmin) {
                             { closeDrawerThen(onOpenMonitoring) }
                         } else {

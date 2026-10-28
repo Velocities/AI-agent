@@ -4,6 +4,10 @@
 camera, timestamp, and other image tags on disk under ATTACHMENT_ROOT and
 sends those bytes to the model. It is not a split that stores the original
 and strips only the provider payload.
+
+Personalization fields are optional on PATCH. Omitted fields stay as stored.
+A name requires its sounds-like respelling. That respelling is for speech
+only and is not repeated in the model prompt.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
+from ai_agent.conversations.personalization import PersonalizationError, UserPreferences
 from ai_agent.conversations.user_settings import UserSettingsStore
 
 router = APIRouter(tags=["settings"])
@@ -21,7 +26,42 @@ router = APIRouter(tags=["settings"])
 class UserSettingsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    strip_image_metadata: bool
+    strip_image_metadata: bool = True
+    agent_name: str = ""
+    agent_name_pronunciation: str = ""
+    user_name: str = ""
+    user_name_pronunciation: str = ""
+    coding_preferences: str = ""
+    reply_length: str = "normal"
+    timezone: str = ""
+
+    @classmethod
+    def from_preferences(cls, prefs: UserPreferences) -> UserSettingsBody:
+        return cls(
+            strip_image_metadata=prefs.strip_image_metadata,
+            agent_name=prefs.agent_name,
+            agent_name_pronunciation=prefs.agent_name_pronunciation,
+            user_name=prefs.user_name,
+            user_name_pronunciation=prefs.user_name_pronunciation,
+            coding_preferences=prefs.coding_preferences,
+            reply_length=prefs.reply_length,
+            timezone=prefs.timezone,
+        )
+
+
+class UserSettingsPatch(BaseModel):
+    """Partial update. Fields left out are not changed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strip_image_metadata: bool | None = None
+    agent_name: str | None = None
+    agent_name_pronunciation: str | None = None
+    user_name: str | None = None
+    user_name_pronunciation: str | None = None
+    coding_preferences: str | None = None
+    reply_length: str | None = None
+    timezone: str | None = None
 
 
 def get_user_settings(request: Request) -> UserSettingsStore:
@@ -42,16 +82,43 @@ def read_settings(
     false persists GPS, camera, timestamp, and other image tags on disk and
     sends them to the model.
     """
-    return UserSettingsBody(
-        strip_image_metadata=settings.get_strip_image_metadata(user.user_id)
-    )
+    return UserSettingsBody.from_preferences(settings.get_preferences(user.user_id))
 
 
 @router.patch("/api/me/settings", response_model=UserSettingsBody)
 def update_settings(
-    body: UserSettingsBody,
+    body: UserSettingsPatch,
     user: AuthenticatedUser = Depends(require_deployment_access),
     settings: UserSettingsStore = Depends(get_user_settings),
 ) -> UserSettingsBody:
-    stored = settings.set_strip_image_metadata(user.user_id, body.strip_image_metadata)
-    return UserSettingsBody(strip_image_metadata=stored)
+    current = settings.get_preferences(user.user_id)
+    merged = _merge(current, body)
+    try:
+        stored = settings.save_preferences(user.user_id, merged)
+    except PersonalizationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return UserSettingsBody.from_preferences(stored)
+
+
+def _merge(current: UserPreferences, body: UserSettingsPatch) -> UserPreferences:
+    provided = body.model_fields_set
+
+    def text(field: str, current_value: str) -> str:
+        if field not in provided:
+            return current_value
+        value = getattr(body, field)
+        return "" if value is None else value
+
+    strip = current.strip_image_metadata
+    if "strip_image_metadata" in provided and body.strip_image_metadata is not None:
+        strip = body.strip_image_metadata
+    return UserPreferences(
+        strip_image_metadata=strip,
+        agent_name=text("agent_name", current.agent_name),
+        agent_name_pronunciation=text("agent_name_pronunciation", current.agent_name_pronunciation),
+        user_name=text("user_name", current.user_name),
+        user_name_pronunciation=text("user_name_pronunciation", current.user_name_pronunciation),
+        coding_preferences=text("coding_preferences", current.coding_preferences),
+        reply_length=text("reply_length", current.reply_length) or current.reply_length,
+        timezone=text("timezone", current.timezone),
+    )

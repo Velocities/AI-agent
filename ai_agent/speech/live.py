@@ -25,11 +25,17 @@ SPEECH_NOT_CONFIGURED = (
 class ReplySpeaker:
     """Feed spoken sentences to a `TextToSpeechConverter` on a side thread."""
 
-    def __init__(self, speaker, emit, cancel: threading.Event) -> None:
+    def __init__(
+        self,
+        speaker,
+        emit,
+        cancel: threading.Event,
+        pronunciations: tuple[tuple[str, str], ...] = (),
+    ) -> None:
         self._speaker = speaker
         self._emit = emit
         self._cancel = cancel
-        self._buffer = SpokenSentenceBuffer()
+        self._buffer = SpokenSentenceBuffer(pronunciations=pronunciations)
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._failed = False
         self._thread = threading.Thread(target=self._run, name="speech-stream", daemon=True)
