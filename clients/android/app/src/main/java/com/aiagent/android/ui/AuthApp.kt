@@ -1,8 +1,20 @@
 package com.aiagent.android.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -11,7 +23,10 @@ import androidx.navigation.compose.rememberNavController
 import com.aiagent.android.ui.apk.ApkBuildsScreen
 import com.aiagent.android.ui.chat.ChatScreen
 import com.aiagent.android.ui.monitoring.MonitoringScreen
+import com.aiagent.android.ui.settings.PERSONALIZATION_SAVED_BANNER_MS
+import com.aiagent.android.ui.settings.PersonalizationSavedBanner
 import com.aiagent.android.ui.settings.PersonalizationScreen
+import kotlinx.coroutines.delay
 
 private const val ROUTE_SIGN_IN = "sign_in"
 private const val ROUTE_SIGNED_IN = "signed_in"
@@ -51,6 +66,12 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
         return
     }
     val navController = rememberNavController()
+    var savedNotice by remember { mutableIntStateOf(0) }
+    LaunchedEffect(savedNotice) {
+        if (savedNotice == 0) return@LaunchedEffect
+        delay(PERSONALIZATION_SAVED_BANNER_MS)
+        savedNotice = 0
+    }
 
     LaunchedEffect(state.signedIn) {
         val target = if (state.signedIn) ROUTE_SIGNED_IN else ROUTE_SIGN_IN
@@ -63,6 +84,7 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
         startDestination = if (state.signedIn) ROUTE_SIGNED_IN else ROUTE_SIGN_IN,
@@ -85,7 +107,10 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             )
         }
         composable(ROUTE_PERSONALIZATION) {
-            PersonalizationScreen(onBack = { navController.popBackStack() })
+            PersonalizationScreen(
+                onBack = { navController.popBackStack() },
+                onSaved = { savedNotice += 1 },
+            )
         }
         composable(ROUTE_MONITORING) {
             MonitoringScreen(onBack = { navController.popBackStack() })
@@ -93,5 +118,13 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
         composable(ROUTE_APK_BUILDS) {
             ApkBuildsScreen(onBack = { navController.popBackStack() })
         }
+    }
+        PersonalizationSavedBanner(
+            visible = savedNotice != 0,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+        )
     }
 }
