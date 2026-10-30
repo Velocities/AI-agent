@@ -17,7 +17,11 @@ from pydantic import BaseModel, ConfigDict
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
-from ai_agent.conversations.personalization import PersonalizationError, UserPreferences
+from ai_agent.conversations.personalization import (
+    PersonalizationError,
+    UserPreferences,
+    selectable_timezones,
+)
 from ai_agent.conversations.user_settings import UserSettingsStore
 
 router = APIRouter(tags=["settings"])
@@ -47,6 +51,12 @@ class UserSettingsBody(BaseModel):
             reply_length=prefs.reply_length,
             timezone=prefs.timezone,
         )
+
+
+class TimezoneCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timezones: list[str]
 
 
 class UserSettingsPatch(BaseModel):
@@ -83,6 +93,14 @@ def read_settings(
     sends them to the model.
     """
     return UserSettingsBody.from_preferences(settings.get_preferences(user.user_id))
+
+
+@router.get("/api/timezones", response_model=TimezoneCatalog)
+def list_timezones(
+    _user: AuthenticatedUser = Depends(require_deployment_access),
+) -> TimezoneCatalog:
+    """IANA zones the client may offer. Each one passes settings validation."""
+    return TimezoneCatalog(timezones=list(selectable_timezones()))
 
 
 @router.patch("/api/me/settings", response_model=UserSettingsBody)

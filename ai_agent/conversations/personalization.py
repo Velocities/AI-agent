@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import zoneinfo
 from dataclasses import dataclass
+from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 NAME_MAX = 40
@@ -120,6 +122,22 @@ def _reply_length(value: str) -> str:
     if length not in REPLY_LENGTHS:
         raise PersonalizationError("Reply length must be brief, normal, or thorough.")
     return length
+
+
+# Fixed-offset Etc/* names use an inverted sign (Etc/GMT+5 means UTC−5), so the
+# picker offers city zones and UTC instead.
+_PICKER_HIDDEN_PREFIXES = ("Etc/",)
+
+
+@lru_cache(maxsize=1)
+def selectable_timezones() -> tuple[str, ...]:
+    """IANA zones the settings picker offers. Every entry is accepted by ZoneInfo."""
+    names = [
+        name
+        for name in zoneinfo.available_timezones()
+        if name == "UTC" or ("/" in name and not name.startswith(_PICKER_HIDDEN_PREFIXES))
+    ]
+    return tuple(sorted(names))
 
 
 def _timezone(value: str) -> str:

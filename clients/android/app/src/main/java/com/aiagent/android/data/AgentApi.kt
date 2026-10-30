@@ -242,6 +242,11 @@ class AgentApi(private val baseUrl: String) {
         return json.decodeFromString(body)
     }
 
+    fun timezones(accessToken: String): List<String> {
+        val body = request("GET", ApiEndpoints.TIMEZONES, accessToken)
+        return json.decodeFromString<TimezoneCatalog>(body).timezones
+    }
+
     /** Replace this account's preferences. Image stripping is included so a save does not reset it. */
     fun updateUserSettings(accessToken: String, settings: UserSettings): UserSettings {
         val body = request(

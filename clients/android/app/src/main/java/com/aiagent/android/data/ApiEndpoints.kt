@@ -10,6 +10,7 @@ internal object ApiEndpoints {
     const val MONITORING_TELEMETRY = "/api/monitoring/telemetry"
 
     const val SETTINGS = "/api/me/settings"
+    const val TIMEZONES = "/api/timezones"
 
     const val SPEECH_STATUS = "/api/speech/status"
     const val SPEECH_TRANSCRIBE = "/api/speech/transcribe"

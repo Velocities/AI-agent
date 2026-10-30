@@ -148,6 +148,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
     var userPronunciation by remember { mutableStateOf("") }
     var replyLength by remember { mutableStateOf("normal") }
     var timezone by remember { mutableStateOf(phoneZone) }
+    var zoneCatalog by remember { mutableStateOf<List<String>>(emptyList()) }
     var coding by remember { mutableStateOf(TextFieldValue("")) }
     var editingCoding by remember { mutableStateOf(true) }
     var hearTarget by remember { mutableStateOf<HearTarget?>(null) }
@@ -192,6 +193,12 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
             savedForm = draft
             applyDraft(draft, moveCursor = true)
             editingCoding = draft.codingPreferences.isBlank()
+            zoneCatalog = try {
+                withContext(Dispatchers.IO) { api.timezones(access) }
+            } catch (exception: Exception) {
+                error = exception.message ?: "Couldn't load timezones."
+                emptyList()
+            }
         } catch (exception: AgentApiException) {
             error = exception.message
         } catch (exception: Exception) {
@@ -415,12 +422,11 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
                 selected = replyLength,
                 onSelect = { replyLength = it },
             )
-            OutlinedTextField(
-                value = timezone,
-                onValueChange = { timezone = it.take(64).replace("\n", "").replace(" ", "") },
-                label = { Text("Timezone") },
-                supportingText = { Text("This phone is $phoneZone.") },
-                singleLine = true,
+            TimezoneField(
+                selected = timezone,
+                catalog = zoneCatalog,
+                phoneZone = phoneZone,
+                onSelect = { timezone = it },
                 modifier = Modifier.fillMaxWidth(),
             )
             Text("Coding preferences", style = MaterialTheme.typography.labelLarge)

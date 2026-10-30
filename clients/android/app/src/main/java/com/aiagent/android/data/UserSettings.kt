@@ -15,3 +15,9 @@ data class UserSettings(
     @SerialName("reply_length") val replyLength: String = "normal",
     val timezone: String = "",
 )
+
+/** IANA zones from GET /api/timezones. */
+@Serializable
+data class TimezoneCatalog(
+    val timezones: List<String> = emptyList(),
+)

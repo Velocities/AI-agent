@@ -16,7 +16,9 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.config import Settings
 from ai_agent.conversations.db import open_store_at
-from ai_agent.conversations.personalization import UserPreferences
+from zoneinfo import ZoneInfo
+
+from ai_agent.conversations.personalization import UserPreferences, selectable_timezones
 from ai_agent.policy.engine import PolicyEngine
 from ai_agent.speech.text import SpokenSentenceBuffer, apply_pronunciations
 
@@ -88,6 +90,23 @@ def test_name_requires_a_respelling_and_partial_patch_keeps_it(tmp_path: Path) -
     assert cleared.json()["user_name"] == "Sam"
     assert empty_zone.status_code == 422
     assert UserSettingsBody().reply_length == "normal"
+
+
+def test_timezone_catalog_lists_only_zones_the_server_accepts(tmp_path: Path) -> None:
+    headers = {"Authorization": "Bearer alice"}
+    with _client(tmp_path) as client:
+        missing = client.get("/api/timezones")
+        listed = client.get("/api/timezones", headers=headers)
+    assert missing.status_code == 401
+    assert listed.status_code == 200
+    zones = listed.json()["timezones"]
+    assert zones == list(selectable_timezones())
+    assert zones == sorted(zones)
+    assert "America/New_York" in zones
+    assert "UTC" in zones
+    assert "Etc/GMT+5" not in zones
+    assert "Factory" not in zones
+    assert all(ZoneInfo(zone) for zone in zones)
 
 
 def test_defaults_do_not_change_the_system_prompt(tmp_path: Path) -> None:
