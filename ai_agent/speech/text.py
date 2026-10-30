@@ -45,6 +45,22 @@ def clean_spoken(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def apply_pronunciations(text: str, names: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> str:
+    """Replace written names with speech respellings.
+
+    Longer names are applied first so a short name does not eat the start of
+    a longer one. Matches are whole words and keep the written casing, so
+    CLU inside CLUE is left alone. The transcript is not changed; callers
+    use this only on the way into Kokoro.
+    """
+    pairs = [(name, spoken) for name, spoken in names if name and spoken and name != spoken]
+    pairs.sort(key=lambda item: len(item[0]), reverse=True)
+    for name, spoken in pairs:
+        pattern = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
+        text = pattern.sub(spoken, text)
+    return text
+
+
 def text_for_speech(text: str, *, limit: int = MAX_SPOKEN_CHARS) -> str:
     """Drop hidden reasoning and fenced code, then keep a spoken-length prefix."""
     cleaned = clean_spoken(text)
@@ -68,8 +84,13 @@ class SpokenSentenceBuffer:
     through to the end.
     """
 
-    def __init__(self, limit: int | None = None) -> None:
+    def __init__(
+        self,
+        limit: int | None = None,
+        pronunciations: tuple[tuple[str, str], ...] = (),
+    ) -> None:
         self._limit = limit
+        self._pronunciations = pronunciations
         self._spoken = 0
         self._held = ""
         self._pending = ""
@@ -162,7 +183,7 @@ class SpokenSentenceBuffer:
     def _accept(self, raw: str) -> list[str]:
         if self._capped():
             return []
-        cleaned = clean_spoken(raw)
+        cleaned = apply_pronunciations(clean_spoken(raw), self._pronunciations)
         if not cleaned:
             return []
         room = None if self._limit is None else self._limit - self._spoken

@@ -50,6 +50,7 @@ def iter_turn_events(
     stored_user: Message | None = None,
     attachment_catalog=None,
     attachment_cache=None,
+    pronunciations: tuple[tuple[str, str], ...] = (),
 ) -> Iterator[str]:
     """Run one agent turn and yield NDJSON events.
 
@@ -81,6 +82,7 @@ def iter_turn_events(
                 stored_user=stored_user,
                 attachment_catalog=attachment_catalog,
                 attachment_cache=attachment_cache,
+                pronunciations=pronunciations,
             )
         except AgentCancelled:
             emit({"type": "done", "message": "", "error": "cancelled"})
@@ -127,6 +129,7 @@ def _run_turn(
     stored_user: Message | None = None,
     attachment_catalog=None,
     attachment_cache=None,
+    pronunciations: tuple[tuple[str, str], ...] = (),
 ) -> None:
     session = sessions.setdefault(user_id, ApprovalSession())
     prompter = RemoteApprovalPrompter(
@@ -164,6 +167,7 @@ def _run_turn(
             stored_user=stored_user,
             attachment_catalog=attachment_catalog,
             attachment_cache=attachment_cache,
+            pronunciations=pronunciations,
         )
     finally:
         llm = getattr(agent, "llm", None)
@@ -189,13 +193,16 @@ def _drive_agent(
     stored_user: Message | None = None,
     attachment_catalog=None,
     attachment_cache=None,
+    pronunciations: tuple[tuple[str, str], ...] = (),
 ) -> None:
     reply_speaker = None
     if speak:
         if speaker is None:
             emit({"type": "audio", "error": SPEECH_NOT_CONFIGURED})
         else:
-            reply_speaker = ReplySpeaker(speaker, emit, cancel)
+            reply_speaker = ReplySpeaker(
+                speaker, emit, cancel, pronunciations=pronunciations
+            )
 
     sent_stored_user = False
 

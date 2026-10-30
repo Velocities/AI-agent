@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
+from ai_agent.conversations.user_settings import UserSettingsStore
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.execution_targets.repository import UserExecutionTargetRepository
@@ -10,6 +11,7 @@ from ai_agent.execution_targets.repository import UserExecutionTargetRepository
 def build_api_agent_factory(
     access_store: DeploymentAccessStore | None,
     target_repo: UserExecutionTargetRepository | None,
+    user_settings: UserSettingsStore | None = None,
 ):
     """Agent factory for API turns: local commands run as the approved Linux user."""
 
@@ -25,6 +27,9 @@ def build_api_agent_factory(
         if linux_username:
             scratch = scratch / linux_username
         settings = settings.model_copy(update={"agent_scratch_dir": scratch})
+        personalization = None
+        if user_settings is not None:
+            personalization = user_settings.get_preferences(audit_user)
         return build_agent(
             prompter=prompter,
             session=session,
@@ -34,6 +39,7 @@ def build_api_agent_factory(
             user_id=audit_user,
             target_repo=target_repo,
             access_store=access_store,
+            personalization=personalization,
         )
 
     return factory

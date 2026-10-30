@@ -101,7 +101,9 @@ def main() -> int:
         attachment_catalog=catalog,
         attachment_cache=attachment_cache,
     )
-    app.state.agent_factory = build_api_agent_factory(access_store, target_repo)
+    app.state.agent_factory = build_api_agent_factory(
+        access_store, target_repo, user_settings
+    )
     uvicorn.run(
         app,
         host=host,

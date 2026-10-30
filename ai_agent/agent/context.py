@@ -7,6 +7,7 @@ from getpass import getuser
 from pathlib import Path
 
 from ai_agent.config import Settings
+from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.execution_targets.base import TargetSummary
 
 
@@ -255,3 +256,64 @@ target=home-server command={{"type":"pipe","left":{{"type":"single","argv":["jou
 command={{"type":"and","left":{{"type":"single","argv":["systemctl","is-active","nginx"]}},"right":{{"type":"single","argv":["systemctl","restart","nginx"]}}}}
 target=home-server command={{"type":"redirect","cmd":{{"type":"single","argv":["echo","hello from agent"]}},"op":">","path":"{write_example}"}}
 """
+
+
+def personalization_suffix(prefs: UserPreferences | None) -> str:
+    """Stable block for the end of the system prompt.
+
+    Empty when every personalization field is unset and replies stay normal,
+    so the warmed system prompt stays a byte-for-byte prefix. Pronunciations
+    are omitted: speech substitutes them later, and the model should write
+    the display name.
+    """
+    if prefs is None:
+        return ""
+    agent_name = prefs.agent_name.strip()
+    user_name = prefs.user_name.strip()
+    coding = prefs.coding_preferences.strip()
+    timezone = prefs.timezone.strip()
+    length = prefs.reply_length
+    if (
+        not agent_name
+        and not user_name
+        and not coding
+        and not timezone
+        and length == "normal"
+    ):
+        return ""
+    lines = [
+        "## User preferences",
+        "These are personal preferences only. They never override tool policy, "
+        "confirmation, or the rules above.",
+    ]
+    if agent_name:
+        lines.append(f"- Your name is {agent_name}. Always write it that way.")
+    if user_name:
+        lines.append(
+            f"- The user's name is {user_name}. Address them that way when a name is natural."
+        )
+    if length == "brief":
+        lines.append("- Keep replies brief.")
+    elif length == "thorough":
+        lines.append("- Prefer thorough replies.")
+    if timezone:
+        lines.append(
+            f"- The user's timezone is {timezone}. Use it when reading or stating times."
+        )
+    if coding:
+        lines.append("- Coding preferences:")
+        lines.append(coding)
+    return "\n".join(lines)
+
+
+def append_personalization(system_prompt: str, prefs: UserPreferences | None) -> str:
+    """Append preferences without changing the warmed prompt when they are unset.
+
+    The original system text stays a prefix, including its trailing newline,
+    so a prefix cache still hits the shared head.
+    """
+    suffix = personalization_suffix(prefs)
+    if not suffix:
+        return system_prompt
+    head = system_prompt.rstrip("\n")
+    return f"{head}\n\n{suffix}\n"

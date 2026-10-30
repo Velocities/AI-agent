@@ -62,6 +62,7 @@ fun ChatDrawerContent(
     onSignOut: () -> Unit,
     onChangeServer: () -> Unit,
     onShowAuthDebug: () -> Unit,
+    onOpenPersonalization: () -> Unit,
     onOpenMonitoring: (() -> Unit)? = null,
     onOpenApkBuilds: (() -> Unit)? = null,
 ) {
@@ -75,6 +76,15 @@ fun ChatDrawerContent(
             Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text("New chat")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onOpenPersonalization,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(48.dp),
+        ) {
+            Icon(AppIcons.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Personalization")
         }
         if (onOpenMonitoring != null) {
             Spacer(Modifier.height(8.dp))

@@ -16,6 +16,7 @@ from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.run_as import build_command_executor
 from ai_agent.config import Settings
+from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.execution_targets.build_router import build_router_for_user
@@ -78,6 +79,7 @@ def build_agent(
     target_repo: UserExecutionTargetRepository | None = None,
     access_store: DeploymentAccessStore | None = None,
     key_store: SecureKeyStore | None = None,
+    personalization: UserPreferences | None = None,
 ) -> AgentLoop:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
@@ -120,6 +122,7 @@ def build_agent(
         session=session,
         router=router,
         runtime_context=runtime,
+        personalization=personalization,
     )
 
 

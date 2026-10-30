@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from ai_agent.api.settings import UserSettingsBody
 from ai_agent.images import validate_image_bytes
 from tests.test_images import ALICE, _api
 
@@ -139,7 +140,7 @@ def test_turn_strips_metadata_before_store_and_model(tmp_path: Path, filename, m
         image, stored = _stored_and_sent(client, holder)
         transcript = _transcript(store, conversation_id)
     assert settings.status_code == 200
-    assert settings.json() == {"strip_image_metadata": True}
+    assert settings.json() == UserSettingsBody().model_dump()
     assert response.status_code == 200
     # Disk and the model see the same stripped bytes, not the upload.
     assert stored == image.data
@@ -181,7 +182,7 @@ def test_turn_keeps_metadata_when_stripping_is_off(tmp_path: Path, filename, med
         image, stored = _stored_and_sent(client, holder)
         transcript = _transcript(store, conversation_id)
     assert updated.status_code == 200
-    assert updated.json() == {"strip_image_metadata": False}
+    assert updated.json() == UserSettingsBody(strip_image_metadata=False).model_dump()
     assert response.status_code == 200
     assert stored == image.data
     _assert_retained(stored, raw, media_type)
