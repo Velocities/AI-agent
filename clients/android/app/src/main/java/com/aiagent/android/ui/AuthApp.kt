@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -23,8 +24,6 @@ import androidx.navigation.compose.rememberNavController
 import com.aiagent.android.ui.apk.ApkBuildsScreen
 import com.aiagent.android.ui.chat.ChatScreen
 import com.aiagent.android.ui.monitoring.MonitoringScreen
-import com.aiagent.android.ui.settings.PERSONALIZATION_SAVED_BANNER_MS
-import com.aiagent.android.ui.settings.PersonalizationSavedBanner
 import com.aiagent.android.ui.settings.PersonalizationScreen
 import kotlinx.coroutines.delay
 
@@ -66,11 +65,13 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
         return
     }
     val navController = rememberNavController()
-    var savedNotice by remember { mutableIntStateOf(0) }
-    LaunchedEffect(savedNotice) {
-        if (savedNotice == 0) return@LaunchedEffect
-        delay(PERSONALIZATION_SAVED_BANNER_MS)
-        savedNotice = 0
+    var noticeIcon by remember { mutableStateOf(NoticeIcon.Success) }
+    var noticeText by remember { mutableStateOf("") }
+    var noticeToken by remember { mutableIntStateOf(0) }
+    LaunchedEffect(noticeToken) {
+        if (noticeToken == 0) return@LaunchedEffect
+        delay(NOTICE_BANNER_MS)
+        noticeToken = 0
     }
 
     LaunchedEffect(state.signedIn) {
@@ -109,7 +110,11 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
         composable(ROUTE_PERSONALIZATION) {
             PersonalizationScreen(
                 onBack = { navController.popBackStack() },
-                onSaved = { savedNotice += 1 },
+                onNotice = { icon, text ->
+                    noticeIcon = icon
+                    noticeText = text
+                    noticeToken += 1
+                },
             )
         }
         composable(ROUTE_MONITORING) {
@@ -119,8 +124,10 @@ fun AuthApp(viewModel: AuthViewModel = viewModel()) {
             ApkBuildsScreen(onBack = { navController.popBackStack() })
         }
     }
-        PersonalizationSavedBanner(
-            visible = savedNotice != 0,
+        NoticeBanner(
+            icon = noticeIcon,
+            text = noticeText,
+            visible = noticeToken != 0,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .windowInsetsPadding(WindowInsets.statusBars)

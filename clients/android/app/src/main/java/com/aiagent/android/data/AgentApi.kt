@@ -253,7 +253,9 @@ class AgentApi(private val baseUrl: String) {
             "PATCH",
             ApiEndpoints.SETTINGS,
             accessToken,
-            json.encodeToString(settings),
+            // Defaults must be sent. An omitted empty name or "normal" reply length
+            // is a partial PATCH, and the server keeps the stored value.
+            settingsJson.encodeToString(settings),
         )
         return json.decodeFromString(body)
     }
@@ -314,6 +316,7 @@ class AgentApi(private val baseUrl: String) {
 
     companion object {
         internal val json = Json { ignoreUnknownKeys = true }
+        private val settingsJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
         /** FastAPI puts either a string or `{code, message}` under `detail`. */
         internal fun errorFrom(status: Int, body: String): AgentApiException {

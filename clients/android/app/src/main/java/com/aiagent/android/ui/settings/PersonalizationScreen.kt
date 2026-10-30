@@ -1,11 +1,6 @@
 package com.aiagent.android.ui.settings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,18 +8,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -78,6 +69,7 @@ import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.UserSettings
 import com.aiagent.android.ui.AppIcons
+import com.aiagent.android.ui.NoticeIcon
 import com.aiagent.android.ui.PronounceButton
 import com.aiagent.android.ui.PronouncePhase
 import com.aiagent.android.ui.markdown.MarkdownText
@@ -90,8 +82,6 @@ import java.time.ZoneId
 private const val NAME_MAX = 40
 private const val PRONUNCIATION_MAX = 80
 private const val CODING_MAX = 2000
-internal const val PERSONALIZATION_SAVED_BANNER_MS = 4_000L
-private val savedCheckGreen = Color(0xFF1E8E3E)
 
 private val replyLengths = listOf(
     "brief" to "Brief",
@@ -126,7 +116,7 @@ private enum class HearTarget { Agent, User }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
+fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> Unit = { _, _ -> }) {
     val context = LocalContext.current
     val api = remember {
         AgentApi(AiAgentApp.instance.serverConfig.load()?.serverUrl.orEmpty())
@@ -288,17 +278,14 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
             return
         }
         val agent = agentName.trim()
-        val agentSpoken = if (agent.isEmpty()) "" else agentPronunciation.trim()
+        val agentSpoken = agentPronunciation.trim()
         val person = userName.trim()
-        val personSpoken = if (person.isEmpty()) "" else userPronunciation.trim()
-        if (agent.isNotEmpty() && agentSpoken.isEmpty()) {
-            error = "Add a sounds-like respelling for the agent name."
+        val personSpoken = userPronunciation.trim()
+        val incomplete = incompleteNameSets(agent, agentSpoken, person, personSpoken)
+        if (incomplete != null) {
             confirmExit = false
-            return
-        }
-        if (person.isNotEmpty() && personSpoken.isEmpty()) {
-            error = "Add a sounds-like respelling for your name."
-            confirmExit = false
+            error = null
+            onNotice(NoticeIcon.Error, incomplete)
             return
         }
         confirmExit = false
@@ -324,12 +311,12 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
                 val draft = stored.toDraft(phoneZone)
                 savedForm = draft
                 applyDraft(draft, moveCursor = true)
-                onSaved()
+                onNotice(NoticeIcon.Success, "Personalization settings saved successfully")
                 if (exitAfter) onBack()
             } catch (exception: AgentApiException) {
-                error = exception.message
+                onNotice(NoticeIcon.Error, exception.message)
             } catch (exception: Exception) {
-                error = exception.message ?: "Couldn't save personalization."
+                onNotice(NoticeIcon.Error, exception.message ?: "Couldn't save personalization.")
             } finally {
                 saving = false
             }
@@ -384,10 +371,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
             )
             OutlinedTextField(
                 value = agentName,
-                onValueChange = {
-                    agentName = it.take(NAME_MAX).replace("\n", "")
-                    if (agentName.isBlank()) agentPronunciation = ""
-                },
+                onValueChange = { agentName = it.take(NAME_MAX).replace("\n", "") },
                 label = { Text("Agent name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -395,16 +379,13 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
             PronunciationField(
                 value = agentPronunciation,
                 onValueChange = { agentPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
-                enabled = agentName.isNotBlank(),
+                enabled = agentName.isNotBlank() || agentPronunciation.isNotBlank(),
                 phase = if (hearTarget == HearTarget.Agent) hearPhase else PronouncePhase.Idle,
                 onHear = { hear(HearTarget.Agent, agentPronunciation) },
             )
             OutlinedTextField(
                 value = userName,
-                onValueChange = {
-                    userName = it.take(NAME_MAX).replace("\n", "")
-                    if (userName.isBlank()) userPronunciation = ""
-                },
+                onValueChange = { userName = it.take(NAME_MAX).replace("\n", "") },
                 label = { Text("What to call you") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -412,7 +393,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
             PronunciationField(
                 value = userPronunciation,
                 onValueChange = { userPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
-                enabled = userName.isNotBlank(),
+                enabled = userName.isNotBlank() || userPronunciation.isNotBlank(),
                 phase = if (hearTarget == HearTarget.User) hearPhase else PronouncePhase.Idle,
                 onHear = { hear(HearTarget.User, userPronunciation) },
             )
@@ -504,47 +485,25 @@ fun PersonalizationScreen(onBack: () -> Unit, onSaved: () -> Unit = {}) {
     }
 }
 
-@Composable
-fun PersonalizationSavedBanner(visible: Boolean, modifier: Modifier = Modifier) {
-    AnimatedVisibility(
-        visible = visible,
-        modifier = modifier,
-        enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { -it / 2 },
-        exit = fadeOut(tween(180)),
-    ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shadowElevation = 6.dp,
-            tonalElevation = 3.dp,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(savedCheckGreen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        AppIcons.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    "Personalization settings saved successfully",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-    }
+/**
+ * A name and its sounds-like field are one set. Either both are filled, or both are empty.
+ */
+internal fun incompleteNameSets(
+    agent: String,
+    agentSpoken: String,
+    person: String,
+    personSpoken: String,
+): String? {
+    val messages = listOfNotNull(
+        incompletePair("The agent name", agent, agentSpoken),
+        incompletePair("Your name", person, personSpoken),
+    )
+    return messages.joinToString(" ").ifBlank { null }
+}
+
+private fun incompletePair(label: String, written: String, spoken: String): String? {
+    if (written.isNotEmpty() == spoken.isNotEmpty()) return null
+    return "$label and its sounds-like field must both be filled, or both be empty."
 }
 
 @Composable
