@@ -1,12 +1,16 @@
 package com.aiagent.android.ui.monitoring
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -160,11 +165,10 @@ private fun CpuCard(cpu: CpuReading) {
             )
             LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
             if (cpu.perCoreUsagePercent.isNotEmpty()) {
-                Text(
-                    cpu.perCoreUsagePercent.joinToString("  ") { formatNumber(it, "%") },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MetricRow("Per core", formatPerCoreSummary(cpu.perCoreUsagePercent))
+                    PerCoreBars(cpu.perCoreUsagePercent)
+                }
             }
             MetricRow("Frequency", formatFrequency(cpu.frequencyMhz))
             MetricRow("Temperature", cpu.temperatureCelsius?.let(::formatTemperature) ?: "Unavailable")
@@ -268,11 +272,49 @@ private fun GpuCard(gpu: GpuReading) {
 }
 
 @Composable
+private fun PerCoreBars(perCoreUsagePercent: List<Double>) {
+    val barColor = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier.fillMaxWidth().height(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        perCoreUsagePercent.forEach { usage ->
+            val fraction = (usage / 100.0).toFloat().coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(barColor.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(fraction)
+                        .background(barColor),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetricRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
+}
+
+/** A logical core below this percent counts as idle in the per-core summary. */
+internal const val PER_CORE_IDLE_BELOW_PERCENT = 1.0
+
+internal fun formatPerCoreSummary(perCoreUsagePercent: List<Double>): String {
+    val busiest = perCoreUsagePercent.maxOrNull() ?: return "Unavailable"
+    val idle = perCoreUsagePercent.count { it < PER_CORE_IDLE_BELOW_PERCENT }
+    return "busiest ${formatNumber(busiest, "%")} · $idle idle"
 }
 
 private fun formatCoreCounts(logical: Int?, physical: Int?): String {
