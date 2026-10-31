@@ -1,6 +1,7 @@
 package com.aiagent.android
 
 import android.app.Application
+import com.aiagent.android.conversation.BackgroundConversationHub
 import com.aiagent.android.data.SavedServer
 import com.aiagent.android.data.ServerConfigStore
 import com.aiagent.android.data.SupabaseModule
@@ -14,9 +15,13 @@ class AiAgentApp : Application() {
     var supabase: SupabaseClient? = null
         private set
 
+    lateinit var conversation: BackgroundConversationHub
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
+        conversation = BackgroundConversationHub(this)
         serverConfig = ServerConfigStore(this)
         val saved = serverConfig.load()
         if (saved != null) {

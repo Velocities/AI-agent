@@ -1,0 +1,9 @@
+name: sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01
+version: 2024-01-01
+license: Apache-2.0
+source: https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2
+
+English zipformer keyword spotter, about 3.3M parameters, trained on GigaSpeech XL.
+The int8 encoder, int8 decoder, and int8 joiner are the ones bundled here.
+tokens.txt and bpe.model (sentencepiece unigram, 500 pieces) encode a wake phrase
+into the keyword line this model scores. The model is not downloaded at runtime.

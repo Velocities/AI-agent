@@ -236,6 +236,7 @@ class AuthViewModel : ViewModel() {
         sessionJob?.cancel()
         sessionJob?.join()
         store.select(server.serverUrl)
+        AiAgentApp.instance.conversation.stop()
         AiAgentApp.instance.open(server)
         val client = AiAgentApp.instance.supabase
         if (client != null) {
@@ -293,6 +294,7 @@ class AuthViewModel : ViewModel() {
     }
 
     fun signOut() {
+        AiAgentApp.instance.conversation.stop()
         val client = AiAgentApp.instance.supabase ?: return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, lastError = null) }
@@ -319,6 +321,9 @@ class AuthViewModel : ViewModel() {
         when (status) {
             is SessionStatus.Authenticated -> {
                 val session = status.session
+                if (AiAgentApp.instance.conversation.listeningEnabled) {
+                    AiAgentApp.instance.conversation.start()
+                }
                 val user = session.user
                 val profile = user?.id?.let { loadProfile(it) }
                 val admin = loadIsAdmin()
@@ -350,6 +355,7 @@ class AuthViewModel : ViewModel() {
                 }
             }
             is SessionStatus.NotAuthenticated -> {
+                if (status.isSignOut) AiAgentApp.instance.conversation.stop()
                 _state.update {
                     it.copy(
                         sessionStatusLabel = if (status.isSignOut) "Signed out" else "Not authenticated",

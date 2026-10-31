@@ -38,12 +38,19 @@ class SpeechPlayer(private val cacheDir: File) {
     }
 
     fun stop() {
+        val callback = onClipFinished
+        val dropped = pending.size + if (playingClip != 0) 1 else 0
         generation += 1
         pending.clear()
         playingClip = 0
         endWatch?.let { mainHandler.removeCallbacks(it) }
         endWatch = null
         releaseCurrent()
+        // playReply may be waiting on these clips from another coroutine. Tell it they are done.
+        if (callback != null && dropped > 0) {
+            val token = generation
+            mainHandler.post { repeat(dropped) { callback.invoke(token) } }
+        }
     }
 
     private fun playNext() {

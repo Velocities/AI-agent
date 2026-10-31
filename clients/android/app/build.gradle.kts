@@ -62,6 +62,10 @@ android {
         compose = true
         buildConfig = true
     }
+
+    androidResources {
+        noCompress += listOf("onnx", "model")
+    }
 }
 
 dependencies {
@@ -80,6 +84,7 @@ dependencies {
     implementation(libs.supabase.postgrest)
     implementation(libs.ktor.client.android)
     implementation(libs.paho.mqtt.v3)
+    implementation(libs.sherpa.onnx)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

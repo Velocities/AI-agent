@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -18,63 +20,141 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class GoogleSpeechSession(
     private val context: Context,
     private val onDevice: Boolean,
+    private val completeSilenceMs: Int = 8_000,
+    private val possibleSilenceMs: Int = 6_000,
+    private val minimumLengthMs: Int? = null,
 ) : SpeechToTextConverter {
+    private val main = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
     private var onPartial: ((String) -> Unit)? = null
     private var onFinished: ((Result<String>) -> Unit)? = null
     private var sessionToken: Any = Any()
+    private var pendingStart: Runnable? = null
     private var lastPartial = ""
+    private var armed = false
     private val delivered = AtomicBoolean(false)
 
     override fun start(onPartial: (String) -> Unit, onFinished: (Result<String>) -> Unit) {
-        cancel()
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "Speech recognition has to start on the main thread."
+        }
+        cancelPendingStart()
         val token = Any()
         sessionToken = token
         this.onPartial = onPartial
         this.onFinished = onFinished
         lastPartial = ""
         delivered.set(false)
-        val session = createRecognizer()
-        recognizer = session
-        session.setRecognitionListener(listener(token))
-        session.startListening(listenIntent())
+        armed = false
+        val existing = recognizer
+        if (existing == null) {
+            openFresh(token)
+            return
+        }
+        // Reuse this instance. Destroying it on every pause makes the next
+        // start fail with "Google transcription failed" or the on-device equivalent.
+        // cancel() can report that failure immediately, so the next listen waits
+        // until this callback has returned and that error has been ignored.
+        val restart = Runnable {
+            pendingStart = null
+            if (sessionToken !== token || delivered.get()) return@Runnable
+            existing.setRecognitionListener(listener(token))
+            arm(existing, token)
+        }
+        main.post {
+            if (sessionToken !== token || delivered.get()) return@post
+            existing.cancel()
+            pendingStart = restart
+            main.postDelayed(restart, RESTART_GAP_MS)
+        }
     }
 
     override fun stop() {
-        if (delivered.get()) return
-        // stopListening often reports "no match" and drops the partial text
-        // already shown. Send that text and ignore the follow-up error.
-        val heard = lastPartial.trim()
-        if (heard.isNotEmpty()) {
-            deliver(Result.success(heard))
-            closeRecognizer()
-            return
+        onMain {
+            cancelPendingStart()
+            if (delivered.get()) return@onMain
+            // stopListening often reports "no match" and drops the partial text
+            // already shown. Send that text and ignore the follow-up error.
+            val heard = lastPartial.trim()
+            if (heard.isNotEmpty()) {
+                deliver(Result.success(heard))
+                armed = false
+                recognizer?.cancel()
+                return@onMain
+            }
+            if (!armed) {
+                deliver(Result.success(""))
+                return@onMain
+            }
+            onPartial = null
+            recognizer?.stopListening()
         }
-        onPartial = null
-        recognizer?.stopListening()
     }
 
     override fun cancel() {
-        sessionToken = Any()
-        delivered.set(true)
-        onPartial = null
-        onFinished = null
-        val session = recognizer
-        recognizer = null
-        session?.cancel()
-        session?.destroy()
+        onMain {
+            cancelPendingStart()
+            sessionToken = Any()
+            delivered.set(true)
+            armed = false
+            onPartial = null
+            onFinished = null
+            recognizer?.cancel()
+        }
     }
 
     override fun release() {
-        cancel()
+        onMain {
+            cancelPendingStart()
+            sessionToken = Any()
+            delivered.set(true)
+            armed = false
+            onPartial = null
+            onFinished = null
+            val session = recognizer
+            recognizer = null
+            session?.cancel()
+            session?.destroy()
+        }
     }
 
-    private fun closeRecognizer() {
-        sessionToken = Any()
-        val session = recognizer
-        recognizer = null
-        session?.cancel()
-        session?.destroy()
+    private fun cancelPendingStart() {
+        pendingStart?.let { main.removeCallbacks(it) }
+        pendingStart = null
+    }
+
+    private fun openFresh(token: Any) {
+        if (sessionToken !== token || delivered.get()) return
+        try {
+            val session = createRecognizer()
+            recognizer = session
+            session.setRecognitionListener(listener(token))
+            arm(session, token)
+        } catch (error: Exception) {
+            deliver(
+                Result.failure(
+                    error as? SpeechFailed ?: SpeechFailed(error.message ?: "Couldn't start listening."),
+                ),
+            )
+        }
+    }
+
+    private fun arm(session: SpeechRecognizer, token: Any) {
+        if (sessionToken !== token || delivered.get()) return
+        armed = true
+        try {
+            session.startListening(listenIntent())
+        } catch (error: RuntimeException) {
+            deliver(
+                Result.failure(
+                    SpeechFailed(error.message ?: "Couldn't start listening."),
+                ),
+            )
+        }
+    }
+
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
     }
 
     private fun createRecognizer(): SpeechRecognizer {
@@ -105,9 +185,13 @@ internal class GoogleSpeechSession(
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, onDevice)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8_000)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilenceMs)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possibleSilenceMs)
+            if (minimumLengthMs != null) {
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, minimumLengthMs)
+            }
         }
 
     private fun deliver(result: Result<String>) {
@@ -127,17 +211,17 @@ internal class GoogleSpeechSession(
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onError(error: Int) {
-            if (sessionToken !== token) return
+            if (sessionToken !== token || !armed) return
             val heard = lastPartial.trim()
             if (heard.isNotEmpty() && recognizerDroppedPartial(error)) {
                 deliver(Result.success(heard))
                 return
             }
-            deliver(Result.failure(SpeechFailed(speechErrorMessage(error, onDevice))))
+            deliver(Result.failure(SpeechFailed(speechErrorMessage(error, onDevice), error)))
         }
 
         override fun onResults(results: Bundle?) {
-            if (sessionToken !== token) return
+            if (sessionToken !== token || !armed) return
             val text = results
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
@@ -148,7 +232,7 @@ internal class GoogleSpeechSession(
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
-            if (sessionToken !== token) return
+            if (sessionToken !== token || !armed) return
             val text = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
@@ -160,6 +244,8 @@ internal class GoogleSpeechSession(
     }
 
     private companion object {
+        /** Lets the recognizer finish shutting down before the next one is created. */
+        const val RESTART_GAP_MS = 400L
         const val LOCAL_UNAVAILABLE =
             "On-device transcription isn't available. Download a language pack in your phone's speech settings, or pick another option."
     }

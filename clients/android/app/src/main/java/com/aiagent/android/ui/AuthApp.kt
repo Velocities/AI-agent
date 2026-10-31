@@ -21,8 +21,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.aiagent.android.AiAgentApp
 import com.aiagent.android.ui.apk.ApkBuildsScreen
 import com.aiagent.android.ui.chat.ChatScreen
+import com.aiagent.android.ui.conversation.BackgroundConversationScreen
 import com.aiagent.android.ui.monitoring.MonitoringScreen
 import com.aiagent.android.ui.settings.PersonalizationScreen
 import kotlinx.coroutines.delay
@@ -36,6 +38,16 @@ private const val ROUTE_PERSONALIZATION = "personalization"
 @Composable
 fun AuthApp(viewModel: AuthViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val background by AiAgentApp.instance.conversation.state.collectAsStateWithLifecycle()
+    // In-app lock only. The activity is not pinned, so Home and other apps still work.
+    if (background.live.active) {
+        BackgroundConversationScreen(
+            state = background,
+            onEnd = AiAgentApp.instance.conversation::requestEnd,
+            onDecision = AiAgentApp.instance.conversation::decide,
+        )
+        return
+    }
     if (state.promptForServer || state.addingServer) {
         ServerUrlScreen(
             initialUrl = if (state.promptForServer) state.serverUrl.orEmpty() else "",

@@ -11,6 +11,21 @@ internal fun recognizerDroppedPartial(code: Int): Boolean = code == SpeechRecogn
     code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
     code == SpeechRecognizer.ERROR_CLIENT
 
+/** Nobody spoke, or the recognizer's listen window ended. Not a broken setup. */
+internal fun speechErrorIsSilence(code: Int): Boolean =
+    code == SpeechRecognizer.ERROR_NO_MATCH || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+
+/**
+ * The recognizer was busy, lost audio focus, or had just been restarted.
+ * Worth another try before telling the user transcription is broken.
+ */
+internal fun speechErrorIsTransient(code: Int): Boolean =
+    code == SpeechRecognizer.ERROR_CLIENT ||
+        code == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+        code == SpeechRecognizer.ERROR_AUDIO ||
+        code == SpeechRecognizer.ERROR_SERVER ||
+        code == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
+
 /** Maps a [SpeechRecognizer] error code to a sentence the user can act on. */
 internal fun speechErrorMessage(code: Int, onDevice: Boolean): String = when (code) {
     SpeechRecognizer.ERROR_NO_MATCH,

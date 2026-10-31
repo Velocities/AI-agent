@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ai_agent.conversations.models import UserSettingRow
-from ai_agent.conversations.personalization import UserPreferences, normalize_preferences
+from ai_agent.conversations.personalization import (
+    DEFAULT_STT_PROVIDER,
+    STT_PROVIDERS,
+    UserPreferences,
+    normalize_preferences,
+)
 
 
 class UserSettingsStore:
@@ -23,19 +29,8 @@ class UserSettingsStore:
     def set_strip_image_metadata(self, user_id: str, value: bool) -> bool:
         """Upsert the image flag without changing personalization."""
         current = self.get_preferences(user_id)
-        stored = self.save_preferences(
-            user_id,
-            UserPreferences(
-                strip_image_metadata=value,
-                agent_name=current.agent_name,
-                agent_name_pronunciation=current.agent_name_pronunciation,
-                user_name=current.user_name,
-                user_name_pronunciation=current.user_name_pronunciation,
-                coding_preferences=current.coding_preferences,
-                reply_length=current.reply_length,
-                timezone=current.timezone,
-            ),
-        )
+        # replace() changes the image flag and leaves speech settings alone.
+        stored = self.save_preferences(user_id, replace(current, strip_image_metadata=value))
         return stored.strip_image_metadata
 
     def get_preferences(self, user_id: str) -> UserPreferences:
@@ -46,6 +41,7 @@ class UserSettingsStore:
             if row is None:
                 return UserPreferences()
             length = row.reply_length if row.reply_length in {"brief", "normal", "thorough"} else "normal"
+            stt = row.stt_provider if row.stt_provider in STT_PROVIDERS else DEFAULT_STT_PROVIDER
             return UserPreferences(
                 strip_image_metadata=bool(row.strip_image_metadata),
                 agent_name=row.agent_name or "",
@@ -55,6 +51,10 @@ class UserSettingsStore:
                 coding_preferences=row.coding_preferences or "",
                 reply_length=length,
                 timezone=row.timezone or "",
+                stt_provider=stt,
+                wake_phrase=row.wake_phrase or "",
+                close_phrase=row.close_phrase or "",
+                voice_command_approval=bool(row.voice_command_approval),
             )
 
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
@@ -84,6 +84,11 @@ def _write_row(row: UserSettingRow, prefs: UserPreferences, now: datetime) -> No
     row.coding_preferences = prefs.coding_preferences or None
     row.reply_length = None if prefs.reply_length == "normal" else prefs.reply_length
     row.timezone = prefs.timezone or None
+    # Null keeps the "unset means default" shape the other personalization columns use.
+    row.stt_provider = None if prefs.stt_provider == DEFAULT_STT_PROVIDER else prefs.stt_provider
+    row.wake_phrase = prefs.wake_phrase or None
+    row.close_phrase = prefs.close_phrase or None
+    row.voice_command_approval = 1 if prefs.voice_command_approval else None
     row.updated_at = now
 
 
