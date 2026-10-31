@@ -83,9 +83,11 @@ def normalize_preferences(prefs: UserPreferences) -> UserPreferences:
     stt_provider = _stt_provider(prefs.stt_provider)
     wake_phrase = _phrase(prefs.wake_phrase, "The wake phrase")
     close_phrase = _phrase(prefs.close_phrase, "The closing phrase")
-    wake = effective_wake_phrase(agent_name, wake_phrase)
-    close = effective_close_phrase(agent_name, close_phrase)
-    if normalize_spoken(wake) == normalize_spoken(close):
+    if (
+        wake_phrase
+        and close_phrase
+        and normalize_spoken(wake_phrase) == normalize_spoken(close_phrase)
+    ):
         raise PersonalizationError("The wake phrase and the closing phrase need to be different.")
     return UserPreferences(
         strip_image_metadata=bool(prefs.strip_image_metadata),
@@ -144,28 +146,6 @@ def _coding_preferences(value: str) -> str:
             f"Coding preferences must be at most {CODING_PREFERENCES_MAX} characters."
         )
     return text
-
-
-def default_wake_phrase(agent_name: str) -> str:
-    """Spoken start of a background conversation when the user left the field blank."""
-    name = (agent_name or "").strip()
-    return f"Hey {name}" if name else "Hey"
-
-
-def default_close_phrase(agent_name: str) -> str:
-    """Spoken end of that conversation when the user left the field blank."""
-    name = (agent_name or "").strip()
-    return f"Bye {name}" if name else "Bye"
-
-
-def effective_wake_phrase(agent_name: str, wake_phrase: str) -> str:
-    written = (wake_phrase or "").strip()
-    return written or default_wake_phrase(agent_name)
-
-
-def effective_close_phrase(agent_name: str, close_phrase: str) -> str:
-    written = (close_phrase or "").strip()
-    return written or default_close_phrase(agent_name)
 
 
 def normalize_spoken(text: str) -> str:

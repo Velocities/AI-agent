@@ -210,6 +210,11 @@ def test_speech_settings_round_trip_and_reject_a_bad_gate(tmp_path: Path) -> Non
             headers=headers,
             json={"wake_phrase": "Bye CLU"},
         )
+        blank = client.patch(
+            "/api/me/settings",
+            headers=headers,
+            json={"wake_phrase": "", "close_phrase": ""},
+        )
         defaults = client.get("/api/me/settings", headers=headers)
     assert saved.status_code == 200
     assert saved.json()["stt_provider"] == "vosk"
@@ -223,7 +228,11 @@ def test_speech_settings_round_trip_and_reject_a_bad_gate(tmp_path: Path) -> Non
     assert unknown.status_code == 422
     assert same.status_code == 422
     assert "different" in same.json()["detail"]
+    assert blank.status_code == 200
+    assert blank.json()["wake_phrase"] == ""
+    assert blank.json()["close_phrase"] == ""
     assert defaults.json()["stt_provider"] == "vosk"
+    assert defaults.json()["wake_phrase"] == ""
     assert normalize_spoken("Hey, CLU!") == "hey clu"
 
 

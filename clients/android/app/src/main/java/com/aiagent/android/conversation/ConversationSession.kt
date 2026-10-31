@@ -68,8 +68,19 @@ interface TurnRunner {
 interface ConversationCues {
     /** The microphone just opened and is waiting for the user. */
     fun listening()
+
+    /** The wake phrase was accepted and the conversation is opening. */
+    fun conversationStarted()
+
+    /** A real user message was accepted. Not played for the wake or closing phrase. */
     fun sttFinished()
+
+    /** The agent finished a spoken reply. */
     fun ttsFinished()
+
+    /** The closing phrase or the End button left the conversation. */
+    fun conversationEnded()
+
     fun commandAccepted()
     fun commandRejected()
 }
@@ -209,7 +220,7 @@ class BackgroundConversationLoop(
                                     if (exit != null) return exit
                                     return LoopExit.Reload
                                 }
-                                // They said something else. Open the mic again so they can retry the phrase.
+                                // Not the wake phrase, so this is not the opening cue.
                                 announce = true
                             }
                         }
@@ -247,11 +258,16 @@ class BackgroundConversationLoop(
             )
         }
         show("Listening")
-        say(config, "I'm listening.")
+        // The opening cue is the rising pair. The canned line does not add a second one.
+        cues.conversationStarted()
+        say(config, "I'm listening.", afterSpeech = false)
         while (coroutineContext.isActive) {
             when (val heard = awaitUser(ear, decisions = false)) {
                 Hearing.Stop -> return LoopExit.Stop
-                Hearing.EndConversation -> break
+                Hearing.EndConversation -> {
+                    cues.conversationEnded()
+                    break
+                }
                 is Hearing.Decision -> Unit
                 is Hearing.Speech -> {
                     val text = when (val taken = take(heard.result)) {
@@ -269,9 +285,13 @@ class BackgroundConversationLoop(
                             taken.text
                         }
                     }
-                    if (samePhrase(text, config.closePhrase)) break
+                    if (samePhrase(text, config.closePhrase)) {
+                        cues.conversationEnded()
+                        break
+                    }
                     // Saying the wake phrase again is not a second chat and not a message.
                     if (samePhrase(text, config.wakePhrase)) continue
+                    cues.sttFinished()
                     lines += TranscriptLine(fromUser = true, text = text)
                     show("Thinking…")
                     if (conversationId == null) {
@@ -296,7 +316,10 @@ class BackgroundConversationLoop(
                         lines += TranscriptLine(fromUser = false, text = outcome.assistantText)
                     }
                     // End wins even when the stream died from the disconnect rather than the phrase.
-                    if (outcome.ended || signals.pollEnd()) break
+                    if (outcome.ended || signals.pollEnd()) {
+                        cues.conversationEnded()
+                        break
+                    }
                     show("Listening", fault = outcome.error)
                 }
             }
@@ -389,11 +412,11 @@ class BackgroundConversationLoop(
         }
     }
 
-    private suspend fun say(config: ConversationConfig, text: String) {
+    private suspend fun say(config: ConversationConfig, text: String, afterSpeech: Boolean = true) {
         if (!config.ttsConfigured || text.isBlank()) return
         try {
             speaker.speak(text)
-            cues.ttsFinished()
+            if (afterSpeech) cues.ttsFinished()
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -401,16 +424,11 @@ class BackgroundConversationLoop(
         }
     }
 
-    /** Play the transcription cue only after a real transcript, never on silence. */
+    /** Silence is not a phrase. The caller chooses which cue a real phrase gets. */
     private fun take(result: ListenResult): Accepted = when (result) {
         is ListenResult.Transcript -> {
             val text = result.text.trim()
-            if (text.isEmpty()) {
-                Accepted.Silence
-            } else {
-                cues.sttFinished()
-                Accepted.Text(text)
-            }
+            if (text.isEmpty()) Accepted.Silence else Accepted.Text(text)
         }
         is ListenResult.Unavailable -> Accepted.Failed(result.message, result.transient)
     }

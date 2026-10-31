@@ -73,7 +73,7 @@ import com.aiagent.android.AiAgentApp
 import com.aiagent.android.audio.RECORD_AUDIO_PERMISSION
 import com.aiagent.android.audio.SpeechPlayer
 import com.aiagent.android.audio.hasMicrophonePermission
-import com.aiagent.android.conversation.phraseConflict
+import com.aiagent.android.conversation.listenPhraseError
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.UserSettings
@@ -131,7 +131,7 @@ private fun UserSettings.toDraft(phoneZone: String) = PersonalizationDraft(
     voiceCommandApproval = voiceCommandApproval,
 )
 
-private enum class HearTarget { Agent, User }
+private enum class HearTarget { Agent, User, Wake, Close }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -324,6 +324,11 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
     }
 
     fun turnListeningOn() {
+        val phrases = listenPhraseError(wakePhrase, closePhrase, required = true)
+        if (phrases != null) {
+            onNotice(NoticeIcon.Error, phrases)
+            return
+        }
         if (dirty) {
             onNotice(NoticeIcon.Error, "Save personalization first so listening uses these phrases.")
             return
@@ -353,7 +358,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
             onNotice(NoticeIcon.Error, incomplete)
             return
         }
-        val phrases = phraseConflict(agent, wakePhrase, closePhrase)
+        val phrases = listenPhraseError(wakePhrase, closePhrase, required = listening)
         if (phrases != null) {
             confirmExit = false
             error = null
@@ -532,7 +537,10 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
                 onWake = { wakePhrase = it },
                 close = closePhrase,
                 onClose = { closePhrase = it },
-                agentName = agentName,
+                wakePhase = if (hearTarget == HearTarget.Wake) hearPhase else PronouncePhase.Idle,
+                onHearWake = { hear(HearTarget.Wake, wakePhrase) },
+                closePhase = if (hearTarget == HearTarget.Close) hearPhase else PronouncePhase.Idle,
+                onHearClose = { hear(HearTarget.Close, closePhrase) },
                 voiceCommands = voiceCommands,
                 onVoiceCommands = { voiceCommands = it },
                 listening = listening,

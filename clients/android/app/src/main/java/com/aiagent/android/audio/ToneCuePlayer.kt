@@ -15,9 +15,13 @@ class ToneCuePlayer : ConversationCues {
 
     override fun listening() = play(CueTones.listeningStarted())
 
+    override fun conversationStarted() = play(CueTones.conversationStarted())
+
     override fun sttFinished() = play(CueTones.sttFinished())
 
     override fun ttsFinished() = play(CueTones.ttsFinished())
+
+    override fun conversationEnded() = play(CueTones.conversationEnded())
 
     override fun commandAccepted() = play(CueTones.commandAccepted())
 

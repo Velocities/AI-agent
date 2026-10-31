@@ -162,6 +162,11 @@ class BackgroundConversationHub(private val app: Application) {
                     delay(3_000)
                     continue
                 }
+                if (loaded.config.wakePhrase.isBlank() || loaded.config.closePhrase.isBlank()) {
+                    publishFault("Set a wake phrase and a closing phrase in Personalization.")
+                    delay(4_000)
+                    continue
+                }
                 if (loaded.provider == SttProvider.VOSK && !loaded.serverSttConfigured) {
                     publishFault(
                         "This server has no Vosk model. Pick another transcription option in Personalization.",

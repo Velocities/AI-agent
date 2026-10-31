@@ -32,14 +32,21 @@ class SpokenGateTest {
     }
 
     @Test
-    fun blankPhrasesUseTheAgentNameAndMustDiffer() {
-        assertEquals("Hey CLU", effectiveWakePhrase("", "CLU"))
-        assertEquals("Bye CLU", effectiveClosePhrase("", "CLU"))
-        assertEquals("Hey", defaultWakePhrase("  "))
-        assertNull(phraseConflict("CLU", "", ""))
+    fun listeningRequiresBothPhrasesAndTheyMustDiffer() {
+        assertNull(listenPhraseError("", "", required = false))
+        assertNull(listenPhraseError("Hey CLU", "", required = false))
+        assertEquals(
+            "Enter a wake phrase and a closing phrase before listening.",
+            listenPhraseError("", "Bye CLU", required = true),
+        )
+        assertEquals(
+            "Enter a wake phrase and a closing phrase before listening.",
+            listenPhraseError("  ", "Bye CLU", required = true),
+        )
+        assertNull(listenPhraseError("Hey CLU", "Bye CLU", required = true))
         assertEquals(
             "The wake phrase and the closing phrase need to be different.",
-            phraseConflict("CLU", "Bye CLU", ""),
+            listenPhraseError("Bye CLU", "bye, clu", required = false),
         )
     }
 

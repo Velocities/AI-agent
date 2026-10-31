@@ -73,6 +73,8 @@ class BackgroundConversationLoopTest {
         val speaker = drive(listOf("Hey, CLU!", "Bye CLU"), turns)
         assertFalse(turns.created)
         assertTrue(speaker.spoken.contains("I'm listening."))
+        assertEquals(1, speaker.cues.started)
+        assertEquals(1, speaker.cues.ended)
         assertEquals(emptyList<String>(), turns.sent)
     }
 
@@ -223,9 +225,13 @@ private class CountingCues : ConversationCues {
     var accepted = 0
     var rejected = 0
     var listening = 0
+    var started = 0
+    var ended = 0
     override fun listening() { listening += 1 }
+    override fun conversationStarted() { started += 1 }
     override fun sttFinished() = Unit
     override fun ttsFinished() = Unit
+    override fun conversationEnded() { ended += 1 }
     override fun commandAccepted() { accepted += 1 }
     override fun commandRejected() { rejected += 1 }
 }

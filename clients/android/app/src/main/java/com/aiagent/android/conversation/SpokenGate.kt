@@ -15,22 +15,6 @@ enum class ApprovalWord {
     ReadAll,
 }
 
-fun defaultWakePhrase(agentName: String): String {
-    val name = agentName.trim()
-    return if (name.isEmpty()) "Hey" else "Hey $name"
-}
-
-fun defaultClosePhrase(agentName: String): String {
-    val name = agentName.trim()
-    return if (name.isEmpty()) "Bye" else "Bye $name"
-}
-
-fun effectiveWakePhrase(stored: String, agentName: String): String =
-    stored.trim().ifEmpty { defaultWakePhrase(agentName) }
-
-fun effectiveClosePhrase(stored: String, agentName: String): String =
-    stored.trim().ifEmpty { defaultClosePhrase(agentName) }
-
 /**
  * Same folding as the server's normalize_spoken: letters and digits stay,
  * other characters become spaces, then the space runs collapse.
@@ -56,15 +40,20 @@ fun approvalWord(heard: String): ApprovalWord? = when (normalizeSpoken(heard)) {
     else -> null
 }
 
-/** Blank phrases fall back to Hey/Bye, so those two defaults still have to differ. */
-fun phraseConflict(agentName: String, wake: String, close: String): String? {
-    val start = effectiveWakePhrase(wake, agentName)
-    val end = effectiveClosePhrase(close, agentName)
-    return if (samePhrase(start, end)) {
-        "The wake phrase and the closing phrase need to be different."
-    } else {
-        null
+/**
+ * Blank phrases are allowed until listening is turned on.
+ * Then both are required, and they still have to be different from each other.
+ */
+fun listenPhraseError(wake: String, close: String, required: Boolean): String? {
+    val start = wake.trim()
+    val end = close.trim()
+    if (required && (start.isEmpty() || end.isEmpty())) {
+        return "Enter a wake phrase and a closing phrase before listening."
     }
+    if (start.isNotEmpty() && end.isNotEmpty() && samePhrase(start, end)) {
+        return "The wake phrase and the closing phrase need to be different."
+    }
+    return null
 }
 
 /**

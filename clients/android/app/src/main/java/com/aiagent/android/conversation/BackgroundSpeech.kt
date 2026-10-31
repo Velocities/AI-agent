@@ -207,8 +207,8 @@ class ServerConversationClient(
 }
 
 fun UserSettings.toConfig(ttsConfigured: Boolean) = ConversationConfig(
-    wakePhrase = effectiveWakePhrase(wakePhrase, agentName),
-    closePhrase = effectiveClosePhrase(closePhrase, agentName),
+    wakePhrase = wakePhrase.trim(),
+    closePhrase = closePhrase.trim(),
     voiceCommandsPermitted = voiceCommandApproval,
     ttsConfigured = ttsConfigured,
     agentName = agentName,
