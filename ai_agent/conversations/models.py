@@ -100,6 +100,12 @@ class UserSettingRow(Base):
     coding_preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
     reply_length: Mapped[str | None] = mapped_column(String(16), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Null transcription means the client's default (Google remote).
+    stt_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    wake_phrase: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    close_phrase: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Null means voice confirmation of commands is off for this server.
+    voice_command_approval: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

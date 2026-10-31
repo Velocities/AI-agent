@@ -14,6 +14,12 @@ data class UserSettings(
     @SerialName("coding_preferences") val codingPreferences: String = "",
     @SerialName("reply_length") val replyLength: String = "normal",
     val timezone: String = "",
+    /** google_remote, google_local, or vosk. The chat mic and background listen both use this. */
+    @SerialName("stt_provider") val sttProvider: String = "google_remote",
+    @SerialName("wake_phrase") val wakePhrase: String = "",
+    @SerialName("close_phrase") val closePhrase: String = "",
+    /** When true, a background conversation on this server may run commands after an exact yes or no. */
+    @SerialName("voice_command_approval") val voiceCommandApproval: Boolean = false,
 )
 
 /** IANA zones from GET /api/timezones. */

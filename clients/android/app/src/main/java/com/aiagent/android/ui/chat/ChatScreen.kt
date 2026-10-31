@@ -62,6 +62,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -94,6 +95,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aiagent.android.AiAgentApp
 import com.aiagent.android.BuildConfig
 import com.aiagent.android.audio.RECORD_AUDIO_PERMISSION
 import com.aiagent.android.audio.SpeechPlayer
@@ -102,6 +104,7 @@ import com.aiagent.android.speech.SpeechHandled
 import com.aiagent.android.speech.SpeechProviderStore
 import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.speech.speechToTextConverter
+import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.CommandOutcome
@@ -112,8 +115,11 @@ import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
 import com.aiagent.android.ui.markdown.MarkdownText
+import io.github.jan.supabase.auth.auth
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,10 +161,28 @@ fun ChatScreen(
     val context = LocalContext.current
     val player = remember { SpeechPlayer(context.cacheDir) }
     val providerStore = remember { SpeechProviderStore(context) }
+    // Last saved choice, until personalization's server copy arrives. The picker no longer lives here.
     var providerId by rememberSaveable { mutableStateOf(providerStore.load().id) }
     val provider = SttProvider.fromId(providerId)
-    var showSttInfo by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(auth.serverUrl) {
+        val job = scope.launch {
+            val resume = AiAgentApp.instance.conversation.consumeResumeChat()
+            if (resume != null) viewModel.openConversation(resume)
+            val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull()
+            val url = AiAgentApp.instance.serverConfig.load()?.serverUrl.orEmpty()
+            if (token.isNullOrBlank() || url.isBlank()) return@launch
+            val settings = runCatching {
+                withContext(Dispatchers.IO) { AgentApi(url).userSettings(token) }
+            }.getOrNull() ?: return@launch
+            if (!listening) {
+                val chosen = SttProvider.fromId(settings.sttProvider)
+                providerId = chosen.id
+                providerStore.save(chosen)
+            }
+        }
+        onPauseOrDispose { job.cancel() }
+    }
     var heard by remember { mutableStateOf("") }
     var listenSession by remember { mutableIntStateOf(0) }
     val converter = remember(provider) {
@@ -360,11 +384,6 @@ fun ChatScreen(
                         voiceBusy = voiceBusy,
                         visionEnabled = state.visionEnabled,
                         provider = provider,
-                        onProvider = { chosen ->
-                            providerId = chosen.id
-                            providerStore.save(chosen)
-                        },
-                        onProviderInfo = { showSttInfo = true },
                         onSend = { text, images ->
                             cancelListening()
                             viewModel.send(text, images)
@@ -415,10 +434,6 @@ fun ChatScreen(
             },
             dismissButton = { TextButton(onClick = { confirmDeleteCurrent = false }) { Text("Cancel") } },
         )
-    }
-
-    if (showSttInfo) {
-        SttPrivacyDialog(onDismiss = { showSttInfo = false })
     }
 
     if (BuildConfig.AUTH_DEBUG && showAuthDebug) {
@@ -773,8 +788,6 @@ private fun Composer(
     voiceBusy: Boolean,
     visionEnabled: Boolean,
     provider: SttProvider,
-    onProvider: (SttProvider) -> Unit,
-    onProviderInfo: () -> Unit,
     onSend: (String, List<ImageUpload>) -> Unit,
     onError: (String) -> Unit,
     onStop: () -> Unit,
@@ -876,12 +889,6 @@ private fun Composer(
                 ) { Icon(AppIcons.Send, contentDescription = "Send") }
             }
         }
-            SttProviderPicker(
-                selected = provider,
-                enabled = enabled && !running && !listening && !voiceBusy,
-                onSelect = onProvider,
-                onInfo = onProviderInfo,
-            )
         }
     }
 }

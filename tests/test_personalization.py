@@ -18,7 +18,11 @@ from ai_agent.config import Settings
 from ai_agent.conversations.db import open_store_at
 from zoneinfo import ZoneInfo
 
-from ai_agent.conversations.personalization import UserPreferences, selectable_timezones
+from ai_agent.conversations.personalization import (
+    UserPreferences,
+    normalize_spoken,
+    selectable_timezones,
+)
 from ai_agent.policy.engine import PolicyEngine
 from ai_agent.speech.text import SpokenSentenceBuffer, apply_pronunciations
 
@@ -157,6 +161,70 @@ def test_defaults_do_not_change_the_system_prompt(tmp_path: Path) -> None:
     assert "clue" not in tail
     assert "samm" not in tail
     assert "never override tool policy" in tail
+    # Speech settings stay out of the prompt. The model must not learn the wake phrase
+    # or treat a spoken "yes" as something it can interpret.
+    spoken = make(
+        UserPreferences(
+            agent_name="CLU",
+            agent_name_pronunciation="clue",
+            stt_provider="vosk",
+            wake_phrase="Hey CLU",
+            close_phrase="Bye CLU",
+            voice_command_approval=True,
+        )
+    )
+    spoken_tail = spoken[len(plain.rstrip("\n")) :]
+    assert "Hey CLU" not in spoken_tail
+    assert "Bye CLU" not in spoken_tail
+    assert "vosk" not in spoken_tail
+    assert "voice" not in spoken_tail.lower()
+
+
+def test_speech_settings_round_trip_and_reject_a_bad_gate(tmp_path: Path) -> None:
+    headers = {"Authorization": "Bearer alice"}
+    with _client(tmp_path) as client:
+        saved = client.patch(
+            "/api/me/settings",
+            headers=headers,
+            json={
+                "agent_name": "CLU",
+                "agent_name_pronunciation": "clue",
+                "stt_provider": "vosk",
+                "wake_phrase": "Hey, CLU",
+                "close_phrase": "Bye CLU",
+                "voice_command_approval": True,
+            },
+        )
+        kept = client.patch(
+            "/api/me/settings",
+            headers=headers,
+            json={"strip_image_metadata": False},
+        )
+        unknown = client.patch(
+            "/api/me/settings",
+            headers=headers,
+            json={"stt_provider": "whisper"},
+        )
+        same = client.patch(
+            "/api/me/settings",
+            headers=headers,
+            json={"wake_phrase": "Bye CLU"},
+        )
+        defaults = client.get("/api/me/settings", headers=headers)
+    assert saved.status_code == 200
+    assert saved.json()["stt_provider"] == "vosk"
+    assert saved.json()["wake_phrase"] == "Hey, CLU"
+    assert saved.json()["voice_command_approval"] is True
+    assert kept.status_code == 200
+    assert kept.json()["stt_provider"] == "vosk"
+    assert kept.json()["wake_phrase"] == "Hey, CLU"
+    assert kept.json()["voice_command_approval"] is True
+    assert kept.json()["strip_image_metadata"] is False
+    assert unknown.status_code == 422
+    assert same.status_code == 422
+    assert "different" in same.json()["detail"]
+    assert defaults.json()["stt_provider"] == "vosk"
+    assert normalize_spoken("Hey, CLU!") == "hey clu"
 
 
 def test_speech_respells_whole_names_longest_first() -> None:

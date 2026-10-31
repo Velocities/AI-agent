@@ -69,6 +69,18 @@ class SpeechErrorMessageTest {
     }
 
     @Test
+    fun silenceIsNotABrokenRecognizer() {
+        assertTrue(speechErrorIsSilence(SpeechRecognizer.ERROR_NO_MATCH))
+        assertTrue(speechErrorIsSilence(SpeechRecognizer.ERROR_SPEECH_TIMEOUT))
+        assertFalse(speechErrorIsSilence(SpeechRecognizer.ERROR_NETWORK))
+        assertFalse(speechErrorIsSilence(SpeechRecognizer.ERROR_CLIENT))
+        assertTrue(speechErrorIsTransient(SpeechRecognizer.ERROR_CLIENT))
+        assertTrue(speechErrorIsTransient(SpeechRecognizer.ERROR_RECOGNIZER_BUSY))
+        assertFalse(speechErrorIsTransient(SpeechRecognizer.ERROR_NETWORK))
+        assertFalse(speechErrorIsTransient(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS))
+    }
+
+    @Test
     fun stopCanDropAPartialWithoutLosingTheWords() {
         assertEquals(true, recognizerDroppedPartial(SpeechRecognizer.ERROR_NO_MATCH))
         assertEquals(true, recognizerDroppedPartial(SpeechRecognizer.ERROR_SPEECH_TIMEOUT))

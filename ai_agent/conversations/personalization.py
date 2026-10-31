@@ -1,4 +1,9 @@
-"""Per-user personalization. Pronunciations are for speech, not the model prompt."""
+"""Per-user personalization. Pronunciations are for speech, not the model prompt.
+
+Speech choices (transcription engine, wake phrase, closing phrase, and whether
+voice may approve commands) are stored here too. They never enter the model
+prompt. Voice approval is an exact client-side gate, not a model judgment.
+"""
 
 from __future__ import annotations
 
@@ -11,12 +16,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 NAME_MAX = 40
 PRONUNCIATION_MAX = 80
+PHRASE_MAX = 80
 CODING_PREFERENCES_MAX = 2000
 TIMEZONE_MAX = 64
 REPLY_LENGTHS = ("brief", "normal", "thorough")
+# Ids shared with the Android client's SttProvider. google_remote is the default.
+STT_PROVIDERS = ("google_remote", "google_local", "vosk")
+DEFAULT_STT_PROVIDER = "google_remote"
 
 _NAME = re.compile(r"^[\w][\w .'\-]*$", re.UNICODE)
 _SPOKEN = re.compile(r"^[A-Za-z][A-Za-z .'\-]*$")
+_PHRASE = re.compile(r"^[\w][\w .',\-]*$", re.UNICODE)
 
 
 class PersonalizationError(ValueError):
@@ -35,6 +45,14 @@ class UserPreferences:
     coding_preferences: str = ""
     reply_length: str = "normal"
     timezone: str = ""
+    # Which phone-side transcriber the user picked. Not a model name on the server.
+    stt_provider: str = DEFAULT_STT_PROVIDER
+    # Empty means "Hey {agent name}" (or "Hey" when the agent is unnamed).
+    wake_phrase: str = ""
+    # Empty means "Bye {agent name}" (or "Bye" when the agent is unnamed).
+    close_phrase: str = ""
+    # Off until this user turns it on for this server. Voice yes/no stays refused.
+    voice_command_approval: bool = False
 
     def speech_pairs(self) -> tuple[tuple[str, str], ...]:
         """Written name, then the respelling Kokoro should say. Longer names first."""
@@ -62,6 +80,13 @@ def normalize_preferences(prefs: UserPreferences) -> UserPreferences:
     coding = _coding_preferences(prefs.coding_preferences)
     reply_length = _reply_length(prefs.reply_length)
     timezone = _timezone(prefs.timezone)
+    stt_provider = _stt_provider(prefs.stt_provider)
+    wake_phrase = _phrase(prefs.wake_phrase, "The wake phrase")
+    close_phrase = _phrase(prefs.close_phrase, "The closing phrase")
+    wake = effective_wake_phrase(agent_name, wake_phrase)
+    close = effective_close_phrase(agent_name, close_phrase)
+    if normalize_spoken(wake) == normalize_spoken(close):
+        raise PersonalizationError("The wake phrase and the closing phrase need to be different.")
     return UserPreferences(
         strip_image_metadata=bool(prefs.strip_image_metadata),
         agent_name=agent_name,
@@ -71,6 +96,10 @@ def normalize_preferences(prefs: UserPreferences) -> UserPreferences:
         coding_preferences=coding,
         reply_length=reply_length,
         timezone=timezone,
+        stt_provider=stt_provider,
+        wake_phrase=wake_phrase,
+        close_phrase=close_phrase,
+        voice_command_approval=bool(prefs.voice_command_approval),
     )
 
 
@@ -113,6 +142,64 @@ def _coding_preferences(value: str) -> str:
     if len(text) > CODING_PREFERENCES_MAX:
         raise PersonalizationError(
             f"Coding preferences must be at most {CODING_PREFERENCES_MAX} characters."
+        )
+    return text
+
+
+def default_wake_phrase(agent_name: str) -> str:
+    """Spoken start of a background conversation when the user left the field blank."""
+    name = (agent_name or "").strip()
+    return f"Hey {name}" if name else "Hey"
+
+
+def default_close_phrase(agent_name: str) -> str:
+    """Spoken end of that conversation when the user left the field blank."""
+    name = (agent_name or "").strip()
+    return f"Bye {name}" if name else "Bye"
+
+
+def effective_wake_phrase(agent_name: str, wake_phrase: str) -> str:
+    written = (wake_phrase or "").strip()
+    return written or default_wake_phrase(agent_name)
+
+
+def effective_close_phrase(agent_name: str, close_phrase: str) -> str:
+    written = (close_phrase or "").strip()
+    return written or default_close_phrase(agent_name)
+
+
+def normalize_spoken(text: str) -> str:
+    """Fold a phrase the way the Android gate compares it: case and punctuation aside.
+
+    Letters and digits stay. Everything else becomes a space, then whitespace collapses.
+    The client uses the same rule so "Hey, CLU!" matches a stored "Hey CLU".
+    """
+    chars = []
+    for char in (text or "").lower():
+        chars.append(char if char.isalnum() or char.isspace() else " ")
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+def _stt_provider(value: str) -> str:
+    provider = (value or DEFAULT_STT_PROVIDER).strip().lower()
+    if provider not in STT_PROVIDERS:
+        raise PersonalizationError(
+            "Transcription must be google_remote, google_local, or vosk."
+        )
+    return provider
+
+
+def _phrase(value: str, label: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if any(unicodedata.category(char).startswith("C") for char in text):
+        raise PersonalizationError(f"{label} must be a single line.")
+    if len(text) > PHRASE_MAX:
+        raise PersonalizationError(f"{label} must be at most {PHRASE_MAX} characters.")
+    if not _PHRASE.fullmatch(text):
+        raise PersonalizationError(
+            f"{label} can use letters, numbers, spaces, apostrophes, periods, commas, and hyphens."
         )
     return text
 

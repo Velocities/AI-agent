@@ -19,8 +19,16 @@ interface SpeechToTextConverter {
     fun release()
 }
 
-/** A transcription failure the UI should show. */
-class SpeechFailed(message: String) : Exception(message)
+/**
+ * A transcription failure the UI should show.
+ * [code] is a [android.speech.SpeechRecognizer] error, or [NO_CODE] when this
+ * did not come from that recognizer.
+ */
+class SpeechFailed(message: String, val code: Int = NO_CODE) : Exception(message) {
+    companion object {
+        const val NO_CODE = -1
+    }
+}
 
 /** The caller already reported this failure. */
 class SpeechHandled : Exception()

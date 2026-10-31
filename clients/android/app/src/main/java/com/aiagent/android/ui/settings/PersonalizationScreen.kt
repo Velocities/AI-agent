@@ -63,11 +63,22 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import com.aiagent.android.AiAgentApp
+import com.aiagent.android.audio.RECORD_AUDIO_PERMISSION
 import com.aiagent.android.audio.SpeechPlayer
+import com.aiagent.android.audio.hasMicrophonePermission
+import com.aiagent.android.conversation.phraseConflict
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.UserSettings
+import com.aiagent.android.speech.SpeechProviderStore
+import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.NoticeIcon
 import com.aiagent.android.ui.PronounceButton
@@ -99,6 +110,10 @@ private data class PersonalizationDraft(
     val replyLength: String = "normal",
     val timezone: String = "",
     val codingPreferences: String = "",
+    val sttProvider: String = "google_remote",
+    val wakePhrase: String = "",
+    val closePhrase: String = "",
+    val voiceCommandApproval: Boolean = false,
 )
 
 private fun UserSettings.toDraft(phoneZone: String) = PersonalizationDraft(
@@ -110,6 +125,10 @@ private fun UserSettings.toDraft(phoneZone: String) = PersonalizationDraft(
     replyLength = replyLength.ifBlank { "normal" },
     timezone = timezone.ifBlank { phoneZone },
     codingPreferences = codingPreferences,
+    sttProvider = sttProvider.ifBlank { "google_remote" },
+    wakePhrase = wakePhrase,
+    closePhrase = closePhrase,
+    voiceCommandApproval = voiceCommandApproval,
 )
 
 private enum class HearTarget { Agent, User }
@@ -141,6 +160,11 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
     var zoneCatalog by remember { mutableStateOf<List<String>>(emptyList()) }
     var coding by remember { mutableStateOf(TextFieldValue("")) }
     var editingCoding by remember { mutableStateOf(true) }
+    var sttProvider by remember { mutableStateOf(SttProvider.GOOGLE_REMOTE) }
+    var wakePhrase by remember { mutableStateOf("") }
+    var closePhrase by remember { mutableStateOf("") }
+    var voiceCommands by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(AiAgentApp.instance.conversation.listeningEnabled) }
     var hearTarget by remember { mutableStateOf<HearTarget?>(null) }
     var hearPhase by remember { mutableStateOf(PronouncePhase.Idle) }
     var hearToken by remember { mutableIntStateOf(0) }
@@ -154,6 +178,10 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         replyLength = replyLength,
         timezone = timezone,
         codingPreferences = coding.text,
+        sttProvider = sttProvider.id,
+        wakePhrase = wakePhrase,
+        closePhrase = closePhrase,
+        voiceCommandApproval = voiceCommands,
     )
 
     val dirty = !loading && currentDraft() != savedForm
@@ -166,6 +194,10 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         userPronunciation = draft.userPronunciation
         replyLength = draft.replyLength
         timezone = draft.timezone
+        sttProvider = SttProvider.fromId(draft.sttProvider)
+        wakePhrase = draft.wakePhrase
+        closePhrase = draft.closePhrase
+        voiceCommands = draft.voiceCommandApproval
         coding = if (moveCursor) TextFieldValue(draft.codingPreferences) else coding.copy(text = draft.codingPreferences)
     }
 
@@ -270,6 +302,39 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         }
     }
 
+    fun startBackgroundListening() {
+        AiAgentApp.instance.conversation.setListeningEnabled(true)
+        listening = true
+    }
+
+    val listenPermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        val micOk = context.hasMicrophonePermission() || granted[RECORD_AUDIO_PERMISSION] == true
+        val notificationsOk = !needsNotificationPermission(context) ||
+            granted[Manifest.permission.POST_NOTIFICATIONS] == true
+        when {
+            !micOk -> onNotice(NoticeIcon.Error, "Allow microphone access to listen for the wake phrase.")
+            !notificationsOk -> onNotice(
+                NoticeIcon.Error,
+                "Allow notifications so you can see that the microphone is in use.",
+            )
+            else -> startBackgroundListening()
+        }
+    }
+
+    fun turnListeningOn() {
+        if (dirty) {
+            onNotice(NoticeIcon.Error, "Save personalization first so listening uses these phrases.")
+            return
+        }
+        val missing = buildList {
+            if (!context.hasMicrophonePermission()) add(RECORD_AUDIO_PERMISSION)
+            if (needsNotificationPermission(context)) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (missing.isEmpty()) startBackgroundListening() else listenPermissions.launch(missing.toTypedArray())
+    }
+
     fun save(exitAfter: Boolean) {
         val access = token()
         if (access == null) {
@@ -286,6 +351,13 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
             confirmExit = false
             error = null
             onNotice(NoticeIcon.Error, incomplete)
+            return
+        }
+        val phrases = phraseConflict(agent, wakePhrase, closePhrase)
+        if (phrases != null) {
+            confirmExit = false
+            error = null
+            onNotice(NoticeIcon.Error, phrases)
             return
         }
         confirmExit = false
@@ -305,9 +377,15 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
                             codingPreferences = coding.text.trim(),
                             replyLength = replyLength,
                             timezone = timezone.trim(),
+                            sttProvider = sttProvider.id,
+                            wakePhrase = wakePhrase.trim(),
+                            closePhrase = closePhrase.trim(),
+                            voiceCommandApproval = voiceCommands,
                         ),
                     )
                 }
+                SpeechProviderStore(context).save(SttProvider.fromId(stored.sttProvider))
+                AiAgentApp.instance.conversation.noteSettingsChanged()
                 val draft = stored.toDraft(phoneZone)
                 savedForm = draft
                 applyDraft(draft, moveCursor = true)
@@ -447,6 +525,27 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
                     }
                 }
             }
+            SpeechSettingsSection(
+                provider = sttProvider,
+                onProvider = { sttProvider = it },
+                wake = wakePhrase,
+                onWake = { wakePhrase = it },
+                close = closePhrase,
+                onClose = { closePhrase = it },
+                agentName = agentName,
+                voiceCommands = voiceCommands,
+                onVoiceCommands = { voiceCommands = it },
+                listening = listening,
+                onListening = { turnOn ->
+                    if (turnOn) {
+                        turnListeningOn()
+                    } else {
+                        AiAgentApp.instance.conversation.setListeningEnabled(false)
+                        listening = false
+                    }
+                },
+                enabled = !saving,
+            )
             Button(
                 onClick = { save(exitAfter = false) },
                 enabled = !saving,
@@ -499,6 +598,12 @@ internal fun incompleteNameSets(
         incompletePair("Your name", person, personSpoken),
     )
     return messages.joinToString(" ").ifBlank { null }
+}
+
+private fun needsNotificationPermission(context: android.content.Context): Boolean {
+    if (Build.VERSION.SDK_INT < 33) return false
+    return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED
 }
 
 private fun incompletePair(label: String, written: String, spoken: String): String? {
