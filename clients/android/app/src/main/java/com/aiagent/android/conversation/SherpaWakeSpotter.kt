@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import com.aiagent.android.logging.ClientLog
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
@@ -82,6 +83,7 @@ class SherpaWakeSpotter(private val context: Context) : WakeSpotter {
                     return@suspendCancellableCoroutine
                 }
                 synchronized(nativeLock) { recorder = record }
+                ClientLog.event("wake", "wake microphone open")
                 val thread = Thread {
                     var releasedStream = false
                     try {
@@ -93,7 +95,9 @@ class SherpaWakeSpotter(private val context: Context) : WakeSpotter {
                             val samples = FloatArray(read) { index -> frame[index] / 32768.0f }
                             stream.acceptWaveform(samples, SAMPLE_RATE)
                             while (spotter.isReady(stream)) spotter.decode(stream)
-                            if (spotter.getResult(stream).keyword.isNotBlank()) {
+                            val keyword = spotter.getResult(stream).keyword
+                            if (keyword.isNotBlank()) {
+                                ClientLog.event("wake", "keyword spotter matched \"$keyword\"")
                                 // The transcriber needs this microphone before it is opened.
                                 releaseRecorder(record)
                                 stream.release()

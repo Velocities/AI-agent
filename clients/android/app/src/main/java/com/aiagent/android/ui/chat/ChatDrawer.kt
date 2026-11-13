@@ -84,7 +84,7 @@ fun ChatDrawerContent(
         ) {
             Icon(AppIcons.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Personalization")
+            Text("Settings")
         }
         if (onOpenMonitoring != null) {
             Spacer(Modifier.height(8.dp))

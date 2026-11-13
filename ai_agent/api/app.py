@@ -6,6 +6,7 @@ from ai_agent.api.apk import router as apk_router
 from ai_agent.api.approvals import ApprovalBroker
 from ai_agent.api.auth import AuthenticatedUser, TokenVerifier, build_verifier
 from ai_agent.api.client_config import CLIENT_CONFIG_PATH, ClientConfigBody, client_config_for
+from ai_agent.api.client_logs import router as client_logs_router
 from ai_agent.api.conversations import router as conversation_router
 from ai_agent.api.monitoring import router as monitoring_router
 from ai_agent.api.speech import router as speech_router
@@ -14,6 +15,7 @@ from ai_agent.api.model import router as model_router
 from ai_agent.api.settings import router as settings_router
 from ai_agent.config import Settings
 from ai_agent.conversations.attachments import AttachmentCatalog
+from ai_agent.conversations.client_logs import ClientLogWriter
 from ai_agent.conversations.store import ConversationStore
 from ai_agent.conversations.user_settings import UserSettingsStore
 from ai_agent.deployment.access_store import DeploymentAccessStore
@@ -73,6 +75,9 @@ def create_app(
     )
     app.state.attachment_store = attachment_store
     app.state.attachment_cache = attachment_cache
+    app.state.client_logs = (
+        ClientLogWriter(settings.resolved_client_log_root()) if store is not None else None
+    )
     note_speech_configuration(settings)
 
     @app.get("/health")
@@ -104,4 +109,5 @@ def create_app(
     app.include_router(speech_router)
     app.include_router(model_router)
     app.include_router(settings_router)
+    app.include_router(client_logs_router)
     return app

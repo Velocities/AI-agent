@@ -1,6 +1,7 @@
 package com.aiagent.android.conversation
 
 import android.content.Context
+import android.os.Build
 import com.aiagent.android.AiAgentApp
 import com.aiagent.android.audio.EndpointedCapture
 import com.aiagent.android.audio.SpeechPlayer
@@ -10,7 +11,9 @@ import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ApprovalRequest
 import com.aiagent.android.data.TurnEvent
 import com.aiagent.android.data.UserSettings
+import com.aiagent.android.logging.ClientLog
 import com.aiagent.android.speech.GoogleSpeechSession
+import com.aiagent.android.speech.RecognizerEarcons
 import com.aiagent.android.speech.SpeechFailed
 import com.aiagent.android.speech.SpeechToTextConverter
 import com.aiagent.android.speech.SttProvider
@@ -32,27 +35,28 @@ class EarFactory(
     private val transcribe: suspend (ByteArray) -> String,
 ) {
     fun open(provider: SttProvider): UtteranceSource = when (provider) {
-        // A pause ends the utterance. The chat mic still waits for the stop button.
-        // These windows are long enough to hear a wake phrase; a short one ends as "no match".
-        SttProvider.GOOGLE_REMOTE -> RecognizerUtteranceSource(
-            GoogleSpeechSession(
-                context,
-                onDevice = false,
-                completeSilenceMs = 3_200,
-                possibleSilenceMs = 1_800,
-                minimumLengthMs = 1_500,
-            ),
-        )
-        SttProvider.GOOGLE_LOCAL -> RecognizerUtteranceSource(
-            GoogleSpeechSession(
-                context,
-                onDevice = true,
-                completeSilenceMs = 3_200,
-                possibleSilenceMs = 1_800,
-                minimumLengthMs = 1_500,
-            ),
-        )
+        SttProvider.GOOGLE_REMOTE -> google(onDevice = false)
+        SttProvider.GOOGLE_LOCAL -> google(onDevice = true)
         SttProvider.VOSK -> VoskUtteranceSource(transcribe)
+    }
+
+    /**
+     * A pause ends the utterance. The chat mic still waits for the stop button.
+     * Android 13+ waits for a voice before Google starts; older phones restart Google on silence.
+     */
+    private fun google(onDevice: Boolean): UtteranceSource {
+        val session = GoogleSpeechSession(
+            context,
+            onDevice = onDevice,
+            completeSilenceMs = 3_200,
+            possibleSilenceMs = 1_800,
+            minimumLengthMs = 1_500,
+        )
+        return if (Build.VERSION.SDK_INT >= 33) {
+            GatedRecognizerSource(context, session)
+        } else {
+            RecognizerUtteranceSource(session)
+        }
     }
 }
 
@@ -61,39 +65,53 @@ class RecognizerUtteranceSource(
 ) : UtteranceSource {
     override suspend fun listen(): ListenResult = withContext(Dispatchers.Main.immediate) {
         suspendCancellableCoroutine { cont ->
+            // Muted across quiet restarts, so silence is silent and only our cue marks a new listen.
+            RecognizerEarcons.mute()
+            ClientLog.event("listen", "now listening")
             try {
                 converter.start(
                     onPartial = {},
                     onFinished = { result ->
                         if (!cont.isActive) return@start
-                        cont.resume(
-                            result.fold(
-                                onSuccess = { ListenResult.Transcript(it.trim()) },
-                                onFailure = { error -> error.toListenResult() },
-                            ),
+                        val heard = result.fold(
+                            onSuccess = { ListenResult.Transcript(it.trim()) },
+                            onFailure = { error -> error.toListenResult() },
                         )
+                        if (heard != ListenResult.Transcript("")) RecognizerEarcons.unmuteSoon()
+                        cont.resume(heard)
                     },
                 )
             } catch (error: Exception) {
+                RecognizerEarcons.unmuteNow()
+                ClientLog.event("listen", "recognizer failed to start: ${error.message}")
                 if (cont.isActive) {
                     cont.resume(ListenResult.Unavailable(error.message ?: "Couldn't use the microphone."))
                 }
             }
-            cont.invokeOnCancellation { converter.cancel() }
+            cont.invokeOnCancellation {
+                ClientLog.event("listen", "canceling listening")
+                converter.cancel()
+                RecognizerEarcons.unmuteNow()
+            }
         }
     }
 
     override suspend fun releaseMicrophone() {
-        withContext(Dispatchers.Main.immediate) { converter.cancel() }
+        withContext(Dispatchers.Main.immediate) {
+            ClientLog.event("listen", "releasing the microphone")
+            converter.cancel()
+            RecognizerEarcons.unmuteNow()
+        }
     }
 
     override fun release() {
         converter.release()
+        RecognizerEarcons.unmuteNow()
     }
 }
 
 /** A quiet timeout is an empty transcript. A busy recognizer is retried before it is shown. */
-private fun Throwable.toListenResult(): ListenResult {
+internal fun Throwable.toListenResult(): ListenResult {
     val failed = this as? SpeechFailed
     val code = failed?.code ?: SpeechFailed.NO_CODE
     val message = message ?: "Couldn't transcribe that."
@@ -129,11 +147,11 @@ class VoskUtteranceSource(
     }
 
     override suspend fun releaseMicrophone() {
-        capture.stop()
+        capture.release()
     }
 
     override fun release() {
-        capture.stop()
+        capture.release()
     }
 
     private companion object {
@@ -155,6 +173,7 @@ class KokoroSpeaker(
 
     override suspend fun playReply(wavs: List<ByteArray>) {
         if (wavs.isEmpty()) return
+        RecognizerEarcons.unmuteNow()
         withContext(Dispatchers.Main.immediate) {
             suspendCancellableCoroutine { cont ->
                 val left = AtomicInteger(wavs.size)
@@ -197,6 +216,7 @@ class ServerConversationClient(
     suspend fun load(): LoadedConversation = withContext(Dispatchers.IO) {
         val access = token() ?: throw AgentApiException(401, "Sign in to use background conversation.")
         val settings = api.userSettings(access)
+        ClientLog.setEnabled(settings.clientDebugLogging)
         val speech = api.speechStatus(access)
         LoadedConversation(
             config = settings.toConfig(speech.ttsConfigured),
@@ -205,8 +225,8 @@ class ServerConversationClient(
         )
     }
 
-    fun turns(speaker: KokoroSpeaker, cues: ConversationCues): TurnRunner =
-        LiveTurnRunner(api, { token() }, speaker, cues)
+    fun turns(speaker: KokoroSpeaker): TurnRunner =
+        LiveTurnRunner(api, { token() }, speaker)
 
     fun transcribe(): suspend (ByteArray) -> String = { wav ->
         val access = token() ?: throw AgentApiException(401, "Sign in to use background conversation.")
@@ -231,7 +251,6 @@ class LiveTurnRunner(
     private val api: AgentApi,
     private val token: () -> String?,
     private val speaker: KokoroSpeaker,
-    private val cues: ConversationCues,
 ) : TurnRunner {
     @Volatile private var connection: HttpURLConnection? = null
 
@@ -255,10 +274,7 @@ class LiveTurnRunner(
             if (wavs.isEmpty()) return
             val pending = wavs.toList()
             wavs.clear()
-            kotlinx.coroutines.runBlocking {
-                speaker.playReply(pending)
-                cues.ttsFinished()
-            }
+            kotlinx.coroutines.runBlocking { speaker.playReply(pending) }
         }
         try {
             api.streamTurn(

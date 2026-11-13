@@ -2,13 +2,16 @@ package com.aiagent.android.speech
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.aiagent.android.logging.ClientLog
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -34,7 +37,29 @@ internal class GoogleSpeechSession(
     private var armed = false
     private val delivered = AtomicBoolean(false)
 
+    /** The recognizer ended the last listen itself (a result or silence), so it needs no cancel. */
+    private var finishedOnItsOwn = false
+
+    /** 16 kHz mono PCM the caller writes, instead of the recognizer opening the microphone. */
+    private var audio: ParcelFileDescriptor? = null
+
     override fun start(onPartial: (String) -> Unit, onFinished: (Result<String>) -> Unit) {
+        startListening(null, onPartial, onFinished)
+    }
+
+    /**
+     * Recognize [source] (16 kHz mono 16-bit PCM, Android 13+). The caller keeps
+     * writing until this finishes and closes the pipe afterwards.
+     */
+    fun start(source: ParcelFileDescriptor, onPartial: (String) -> Unit, onFinished: (Result<String>) -> Unit) {
+        startListening(source, onPartial, onFinished)
+    }
+
+    private fun startListening(
+        source: ParcelFileDescriptor?,
+        onPartial: (String) -> Unit,
+        onFinished: (Result<String>) -> Unit,
+    ) {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "Speech recognition has to start on the main thread."
         }
@@ -43,18 +68,32 @@ internal class GoogleSpeechSession(
         sessionToken = token
         this.onPartial = onPartial
         this.onFinished = onFinished
+        audio = source
         lastPartial = ""
         delivered.set(false)
         armed = false
         val existing = recognizer
         if (existing == null) {
+            ClientLog.event(AREA, "start: new recognizer (onDevice=$onDevice, suppliedAudio=${source != null})")
             openFresh(token)
             return
         }
         // Reuse this instance. Destroying it on every pause makes the next
         // start fail with "Google transcription failed" or the on-device equivalent.
+        if (finishedOnItsOwn) {
+            // The last listen already delivered. Nothing to cancel; post so that callback has returned.
+            finishedOnItsOwn = false
+            ClientLog.event(AREA, "start: quick restart on the same recognizer")
+            main.post {
+                if (sessionToken !== token || delivered.get()) return@post
+                existing.setRecognitionListener(listener(token))
+                arm(existing, token)
+            }
+            return
+        }
         // cancel() can report that failure immediately, so the next listen waits
         // until this callback has returned and that error has been ignored.
+        ClientLog.event(AREA, "start: cancel the running listen, restart after ${RESTART_GAP_MS}ms")
         val restart = Runnable {
             pendingStart = null
             if (sessionToken !== token || delivered.get()) return@Runnable
@@ -79,6 +118,7 @@ internal class GoogleSpeechSession(
             if (heard.isNotEmpty()) {
                 deliver(Result.success(heard))
                 armed = false
+                finishedOnItsOwn = false
                 recognizer?.cancel()
                 return@onMain
             }
@@ -95,11 +135,16 @@ internal class GoogleSpeechSession(
         onMain {
             cancelPendingStart()
             sessionToken = Any()
+            val wasListening = armed && !delivered.get()
             delivered.set(true)
             armed = false
             onPartial = null
             onFinished = null
-            recognizer?.cancel()
+            if (wasListening) {
+                ClientLog.event(AREA, "cancel: stopping an active listen")
+                finishedOnItsOwn = false
+                recognizer?.cancel()
+            }
         }
     }
 
@@ -109,6 +154,7 @@ internal class GoogleSpeechSession(
             sessionToken = Any()
             delivered.set(true)
             armed = false
+            finishedOnItsOwn = false
             onPartial = null
             onFinished = null
             val session = recognizer
@@ -192,6 +238,13 @@ internal class GoogleSpeechSession(
             if (minimumLengthMs != null) {
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, minimumLengthMs)
             }
+            val source = audio
+            if (source != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, source)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, SUPPLIED_RATE)
+            }
         }
 
     private fun deliver(result: Result<String>) {
@@ -203,15 +256,30 @@ internal class GoogleSpeechSession(
     }
 
     private fun listener(token: Any) = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) = Unit
-        override fun onBeginningOfSpeech() = Unit
+        override fun onReadyForSpeech(params: Bundle?) {
+            if (sessionToken === token) ClientLog.event(AREA, "ready for speech")
+        }
+
+        override fun onBeginningOfSpeech() {
+            if (sessionToken === token) ClientLog.event(AREA, "speech began")
+        }
+
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit
-        override fun onEndOfSpeech() = Unit
+
+        override fun onEndOfSpeech() {
+            if (sessionToken === token) ClientLog.event(AREA, "speech ended")
+        }
+
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onError(error: Int) {
-            if (sessionToken !== token || !armed) return
+            if (sessionToken !== token || !armed) {
+                ClientLog.event(AREA, "error $error from an old listen; ignored")
+                return
+            }
+            ClientLog.event(AREA, "error $error (${speechErrorMessage(error, onDevice)})")
+            finishedOnItsOwn = true
             val heard = lastPartial.trim()
             if (heard.isNotEmpty() && recognizerDroppedPartial(error)) {
                 deliver(Result.success(heard))
@@ -222,12 +290,14 @@ internal class GoogleSpeechSession(
 
         override fun onResults(results: Bundle?) {
             if (sessionToken !== token || !armed) return
+            finishedOnItsOwn = true
             val text = results
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 .orEmpty()
                 .ifBlank { lastPartial }
                 .trim()
+            ClientLog.event(AREA, "results: \"$text\"")
             deliver(Result.success(text))
         }
 
@@ -246,6 +316,8 @@ internal class GoogleSpeechSession(
     private companion object {
         /** Lets the recognizer finish shutting down before the next one is created. */
         const val RESTART_GAP_MS = 400L
+        const val SUPPLIED_RATE = 16_000
+        const val AREA = "google-stt"
         const val LOCAL_UNAVAILABLE =
             "On-device transcription isn't available. Download a language pack in your phone's speech settings, or pick another option."
     }

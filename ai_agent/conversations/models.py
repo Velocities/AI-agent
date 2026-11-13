@@ -106,6 +106,8 @@ class UserSettingRow(Base):
     close_phrase: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Null means voice confirmation of commands is off for this server.
     voice_command_approval: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Null means the client keeps debug logs to itself.
+    client_debug_logging: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

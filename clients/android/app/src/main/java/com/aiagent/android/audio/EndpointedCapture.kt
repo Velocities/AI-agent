@@ -10,14 +10,35 @@ import kotlin.math.sqrt
 /**
  * Records until the speaker pauses. Background Vosk has no stop button, so the
  * clip ends on trailing silence instead. Push-to-talk still uses [MicrophoneCapture].
+ *
+ * One [AudioRecord] serves every utterance of a conversation. Between captures it
+ * is stopped, not released, so the reply playing in between is not buffered.
+ * [release] frees it when the spotter takes the microphone back or listening ends.
  */
 class EndpointedCapture {
     private val stopRequested = AtomicBoolean(false)
     private val lock = Any()
     private var recorder: AudioRecord? = null
+    private var capturing = false
+    private var releaseRequested = false
 
+    /** End the capture in progress. The recorder is kept for the next utterance. */
     fun stop() {
         stopRequested.set(true)
+    }
+
+    /** End any capture and free the recorder. The next [capture] opens a new one. */
+    fun release() {
+        stopRequested.set(true)
+        val idle = synchronized(lock) {
+            if (capturing) {
+                releaseRequested = true
+                null
+            } else {
+                recorder.also { recorder = null }
+            }
+        }
+        idle?.let { runCatching { it.release() } }
     }
 
     /**
@@ -32,18 +53,12 @@ class EndpointedCapture {
         stopRequested.set(false)
         val min = AudioRecord.getMinBufferSize(WavPcm.SAMPLE_RATE, CHANNEL, ENCODING)
         if (min <= 0) throw IllegalStateException("This device cannot record 16 kHz mono audio.")
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            WavPcm.SAMPLE_RATE,
-            CHANNEL,
-            ENCODING,
-            min * 2,
-        )
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            record.release()
-            throw IllegalStateException("Couldn't open the microphone.")
+        val record = synchronized(lock) {
+            val record = recorder ?: openRecorder(min).also { recorder = it }
+            capturing = true
+            releaseRequested = false
+            record
         }
-        synchronized(lock) { recorder = record }
         val pcm = ByteArrayOutputStream()
         try {
             record.startRecording()
@@ -76,12 +91,36 @@ class EndpointedCapture {
             if (!heardSpeech) return WavPcm.wrap(ByteArray(0))
             return WavPcm.wrap(pcm.toByteArray())
         } finally {
-            synchronized(lock) { recorder = null }
             runCatching {
                 if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) record.stop()
             }
-            record.release()
+            val free = synchronized(lock) {
+                capturing = false
+                if (releaseRequested && recorder === record) {
+                    releaseRequested = false
+                    recorder = null
+                    true
+                } else {
+                    false
+                }
+            }
+            if (free) runCatching { record.release() }
         }
+    }
+
+    private fun openRecorder(min: Int): AudioRecord {
+        val record = AudioRecord(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            WavPcm.SAMPLE_RATE,
+            CHANNEL,
+            ENCODING,
+            min * 2,
+        )
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            throw IllegalStateException("Couldn't open the microphone.")
+        }
+        return record
     }
 
     private fun rms(buffer: ByteArray, length: Int): Double {

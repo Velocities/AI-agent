@@ -1,0 +1,4 @@
+silero_vad.onnx (Silero VAD, MIT license)
+Source: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+sha256: 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+Used by GatedRecognizerSource to start Google transcription only once someone is speaking.

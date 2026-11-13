@@ -2,6 +2,7 @@ package com.aiagent.android.conversation
 
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 class CueTonesTest {
     @Test
@@ -29,6 +30,14 @@ class CueTonesTest {
         ).forEach { samples ->
             assertTrue(samples.size > CueTones.SAMPLE_RATE / 10)
             assertTrue(samples.any { it != 0.toShort() })
+            // Soft edges: no click at the start or the end.
+            assertTrue(abs(samples.first().toInt()) < 200)
+            assertTrue(abs(samples.last().toInt()) < 200)
         }
+    }
+
+    @Test
+    fun listeningGlidesUpToItsPitch() {
+        assertTrue(CueTones.LISTEN_HZ > CueTones.LISTEN_FROM_HZ)
     }
 }

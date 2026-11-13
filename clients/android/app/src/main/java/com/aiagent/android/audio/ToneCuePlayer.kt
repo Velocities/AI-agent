@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import com.aiagent.android.conversation.ConversationCues
 import com.aiagent.android.conversation.CueTones
+import com.aiagent.android.speech.RecognizerEarcons
 
 /**
  * Plays the conversation cues on the media stream, same volume as the spoken reply.
@@ -28,6 +29,7 @@ class ToneCuePlayer : ConversationCues {
     override fun commandRejected() = play(CueTones.commandRejected())
 
     private fun play(samples: ShortArray) {
+        RecognizerEarcons.unmuteNow()
         synchronized(lock) {
             val track = AudioTrack.Builder()
                 .setAudioAttributes(

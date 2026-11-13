@@ -140,7 +140,7 @@ private fun PhraseField(
 }
 
 @Composable
-private fun SettingSwitch(
+internal fun SettingSwitch(
     title: String,
     body: String,
     checked: Boolean,

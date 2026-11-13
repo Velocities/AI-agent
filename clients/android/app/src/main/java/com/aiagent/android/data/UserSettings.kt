@@ -20,6 +20,21 @@ data class UserSettings(
     @SerialName("close_phrase") val closePhrase: String = "",
     /** When true, a background conversation on this server may run commands after an exact yes or no. */
     @SerialName("voice_command_approval") val voiceCommandApproval: Boolean = false,
+    /** Developer setting. The client sends timestamped event logs to this server. */
+    @SerialName("client_debug_logging") val clientDebugLogging: Boolean = false,
+)
+
+@Serializable
+internal data class ClientLogUpload(
+    val stream: String,
+    val device: String,
+    @SerialName("first_seq") val firstSeq: Long,
+    val lines: List<String>,
+)
+
+@Serializable
+internal data class ClientLogAck(
+    @SerialName("next_seq") val nextSeq: Long,
 )
 
 /** IANA zones from GET /api/timezones. */

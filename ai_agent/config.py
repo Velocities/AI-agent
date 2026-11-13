@@ -196,6 +196,14 @@ class Settings(BaseSettings):
             "conversation database, or ~/.local/share/ai-agent/attachments."
         ),
     )
+    client_log_root: str = Field(
+        default="",
+        alias="CLIENT_LOG_ROOT",
+        description=(
+            "Directory for client debug logs, one folder per user. Empty uses a sibling "
+            "of the SQLite conversation database, or ~/.local/share/ai-agent/client-logs."
+        ),
+    )
     attachment_quota_bytes: int = Field(
         default=512 * 1024 * 1024,
         alias="ATTACHMENT_QUOTA_BYTES",
@@ -346,7 +354,14 @@ class Settings(BaseSettings):
 
     def resolved_attachment_root(self) -> Path:
         """Directory for attachment bytes. Created by the API process, not here."""
-        configured = self.attachment_root.strip()
+        return self._data_dir(self.attachment_root, "attachments")
+
+    def resolved_client_log_root(self) -> Path:
+        """Directory for client debug logs. Created on the first write."""
+        return self._data_dir(self.client_log_root, "client-logs")
+
+    def _data_dir(self, configured_value: str, name: str) -> Path:
+        configured = configured_value.strip()
         if configured:
             return Path(configured)
         from sqlalchemy.engine import make_url
@@ -355,5 +370,5 @@ class Settings(BaseSettings):
 
         made = make_url(database_url(self))
         if made.drivername.startswith("sqlite") and made.database and made.database != ":memory:":
-            return Path(made.database).resolve().parent / "attachments"
-        return Path.home() / ".local" / "share" / "ai-agent" / "attachments"
+            return Path(made.database).resolve().parent / name
+        return Path.home() / ".local" / "share" / "ai-agent" / name

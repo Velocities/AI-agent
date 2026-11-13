@@ -55,6 +55,7 @@ class UserSettingsStore:
                 wake_phrase=row.wake_phrase or "",
                 close_phrase=row.close_phrase or "",
                 voice_command_approval=bool(row.voice_command_approval),
+                client_debug_logging=bool(row.client_debug_logging),
             )
 
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
@@ -89,6 +90,7 @@ def _write_row(row: UserSettingRow, prefs: UserPreferences, now: datetime) -> No
     row.wake_phrase = prefs.wake_phrase or None
     row.close_phrase = prefs.close_phrase or None
     row.voice_command_approval = 1 if prefs.voice_command_approval else None
+    row.client_debug_logging = 1 if prefs.client_debug_logging else None
     row.updated_at = now
 
 

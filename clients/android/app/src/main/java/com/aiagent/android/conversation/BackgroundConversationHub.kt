@@ -136,7 +136,7 @@ class BackgroundConversationHub(private val app: Application) {
         }
         val cues = ToneCuePlayer()
         val ears = EarFactory(listenContext, client.transcribe())
-        val turns = client.turns(speaker, cues)
+        val turns = client.turns(speaker)
         val session = ConversationDevices(
             openSpotter = { SherpaWakeSpotter(listenContext) },
             openEar = { provider -> ears.open(provider) },

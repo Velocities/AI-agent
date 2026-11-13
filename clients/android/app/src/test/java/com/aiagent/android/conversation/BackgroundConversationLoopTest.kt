@@ -75,12 +75,40 @@ class BackgroundConversationLoopTest {
             settingsEpoch = { 0 },
         ).run(config(voiceCommands = true), spotter, ScriptEar(signals, listOf("Hey, CLU!", "Bye CLU")))
         assertFalse(turns.created)
-        assertTrue(speaker.spoken.contains("I'm listening."))
+        assertTrue(speaker.spoken.isEmpty())
+        assertEquals(0, speaker.cues.listening)
         assertEquals(1, speaker.cues.started)
         assertEquals(1, speaker.cues.ended)
         assertEquals(emptyList<String>(), turns.sent)
         assertEquals(2, spotter.awaits)
         assertEquals(1, spotter.models)
+    }
+
+    @Test
+    fun oneBeepWhenTheMicrophoneReopensAfterAReplyAndNoneAfterSilence() = runBlocking {
+        val turns = FakeTurns()
+        val speaker = drive(listOf("", "", "what time is it", "", "", "", "Bye CLU"), turns)
+        assertEquals(listOf("what time is it"), turns.sent)
+        assertEquals(1, speaker.cues.listening)
+        assertEquals(0, speaker.cues.sttFinished)
+        assertEquals(0, speaker.cues.ttsFinished)
+    }
+
+    @Test
+    fun eachAgentTurnGetsItsOwnBeep() = runBlocking {
+        val turns = FakeTurns()
+        val speaker = drive(listOf("first", "", "second", "Bye CLU"), turns)
+        assertEquals(listOf("first", "second"), turns.sent)
+        assertEquals(2, speaker.cues.listening)
+    }
+
+    @Test
+    fun theApprovalPromptBeepsOnceBeforeListeningForYes() = runBlocking {
+        val turns = FakeTurns(pending = sampleRequest())
+        val speaker = drive(listOf("check the disk", "", "", "yes", "Bye CLU"), turns)
+        // Once after the approval prompt, once after the turn finishes.
+        assertEquals(2, speaker.cues.listening)
+        assertEquals(1, speaker.cues.accepted)
     }
 
     @Test
@@ -383,10 +411,12 @@ private class CountingCues : ConversationCues {
     var listening = 0
     var started = 0
     var ended = 0
+    var sttFinished = 0
+    var ttsFinished = 0
     override fun listening() { listening += 1 }
     override fun conversationStarted() { started += 1 }
-    override fun sttFinished() = Unit
-    override fun ttsFinished() = Unit
+    override fun sttFinished() { sttFinished += 1 }
+    override fun ttsFinished() { ttsFinished += 1 }
     override fun conversationEnded() { ended += 1 }
     override fun commandAccepted() { accepted += 1 }
     override fun commandRejected() { rejected += 1 }

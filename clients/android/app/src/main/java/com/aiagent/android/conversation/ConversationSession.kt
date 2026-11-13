@@ -2,6 +2,7 @@ package com.aiagent.android.conversation
 
 import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ApprovalRequest
+import com.aiagent.android.logging.ClientLog
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -80,7 +81,7 @@ interface TurnRunner {
 
 /** Cues for a spoken conversation. Implementations play them; tests just count. */
 interface ConversationCues {
-    /** The microphone just opened and is waiting for the user. */
+    /** The agent's turn is over and the microphone is open for the user again. Once per turn. */
     fun listening()
 
     /** The wake phrase was accepted and the conversation is opening. */
@@ -220,6 +221,7 @@ class BackgroundConversationLoop(
     private val settingsEpoch: () -> Int,
 ) {
     private var transientFailures = 0
+    private var cueNextListen = false
 
     suspend fun run(config: ConversationConfig, spotter: WakeSpotter, ear: UtteranceSource): LoopExit {
         val startedAt = settingsEpoch()
@@ -231,14 +233,17 @@ class BackgroundConversationLoop(
                 if (settingsEpoch() != startedAt) return LoopExit.Reload
                 val fault = spotter.prepare(config.wakePhrase)
                 if (fault != null) {
+                    ClientLog.event(AREA, "wake detector unavailable: $fault")
                     publish(armed(config, fault).copy(fault = fault))
                     return waitOut(startedAt)
                 }
                 publish(armed(config, "Listening for ${config.wakePhrase}"))
+                ClientLog.event(AREA, "waiting for wake phrase \"${config.wakePhrase}\"")
                 when (awaitWake(spotter, startedAt)) {
                     WakeWait.Stop -> return LoopExit.Stop
                     WakeWait.Reload -> return LoopExit.Reload
                     WakeWait.Hit -> {
+                        ClientLog.event(AREA, "wake phrase heard")
                         spotter.releaseCapture()
                         when (val exit = conversation(config, ear)) {
                             LoopExit.Stop -> return LoopExit.Stop
@@ -282,9 +287,11 @@ class BackgroundConversationLoop(
             )
         }
         show("Listening")
-        // The microphone was just released by the spotter. This rising pair is the listening signal.
+        ClientLog.event(AREA, "conversation started")
+        // The rising pair is the only signal for the first utterance. The first listen gets no beep.
         cues.conversationStarted()
-        say(config, "I'm listening.", afterSpeech = false)
+        delay(LISTEN_SETTLE_MS)
+        cueNextListen = false
         var close = Close.Stop
         while (coroutineContext.isActive) {
             // A tap during speech should not open the microphone for another utterance.
@@ -323,12 +330,15 @@ class BackgroundConversationLoop(
                         }
                     }
                     if (samePhrase(text, config.closePhrase)) {
+                        ClientLog.event(AREA, "closing phrase heard")
                         close = Close.End
                         break
                     }
                     // Saying the wake phrase again is not a second chat and not a message.
-                    if (samePhrase(text, config.wakePhrase)) continue
-                    cues.sttFinished()
+                    if (samePhrase(text, config.wakePhrase)) {
+                        ClientLog.event(AREA, "wake phrase repeated mid-conversation; ignored")
+                        continue
+                    }
                     lines += TranscriptLine(fromUser = true, text = text)
                     show("Thinking…")
                     if (conversationId == null) {
@@ -338,9 +348,11 @@ class BackgroundConversationLoop(
                             if (error is kotlinx.coroutines.CancellationException) throw error
                             lines.removeAt(lines.lastIndex)
                             show("Listening", fault = error.message ?: "Couldn't start the chat.")
+                            cueNextListen = true
                             continue
                         }
                     }
+                    ClientLog.event(AREA, "sending turn to conversation $conversationId")
                     val outcome = try {
                         turns.userTurn(conversationId, text) { request ->
                             gate(config, ear, request, ::show)
@@ -352,6 +364,13 @@ class BackgroundConversationLoop(
                     if (outcome.assistantText.isNotBlank()) {
                         lines += TranscriptLine(fromUser = false, text = outcome.assistantText)
                     }
+                    ClientLog.event(
+                        AREA,
+                        "turn finished: ${outcome.assistantText.length} reply chars" +
+                            (outcome.error?.let { ", error: $it" } ?: "") +
+                            (if (outcome.ended) ", ended" else "") +
+                            (if (outcome.stopped) ", stopped" else ""),
+                    )
                     // Stop wins over End when the stream died because listening was turned off.
                     if (outcome.stopped || signals.pollStop()) {
                         close = Close.Stop
@@ -362,6 +381,7 @@ class BackgroundConversationLoop(
                         break
                     }
                     show("Listening", fault = outcome.error)
+                    cueNextListen = true
                 }
             }
         }
@@ -378,6 +398,7 @@ class BackgroundConversationLoop(
         conversationId: String?,
         end: Boolean,
     ): LoopExit? {
+        ClientLog.event(AREA, if (end) "conversation ended; arming wake phrase" else "listening stopped")
         speaker.stop()
         turns.abandon()
         ear.releaseMicrophone()
@@ -402,6 +423,7 @@ class BackgroundConversationLoop(
         show: (String, ApprovalRequest?, Boolean, String?) -> Unit,
     ): GateResult {
         signals.clearDecisions()
+        ClientLog.event(AREA, "waiting for command approval ${request.approvalId}")
         val waiting = if (config.voiceCommandsPermitted) "Say yes, no, or read all" else "Approve on screen"
         show(waiting, request, false, null)
         say(config, approvalPrompt(request, config.voiceCommandsPermitted, config.closePhrase))
@@ -450,6 +472,7 @@ class BackgroundConversationLoop(
                         )
                         continue
                     }
+                    ClientLog.event(AREA, "approval answer heard: ${approvalWord(text) ?: "not an answer"}")
                     when (approvalWord(text)) {
                         ApprovalWord.Yes -> {
                             if (commit(request, ApprovalAnswer.Whole(approved = true, grantScope = null), show)) {
@@ -466,6 +489,7 @@ class BackgroundConversationLoop(
                     }
                 }
                 is Hearing.Decision -> {
+                    ClientLog.event(AREA, "approval decided on screen")
                     if (commit(request, heard.answer, show)) return GateResult.Resolved
                 }
             }
@@ -486,17 +510,20 @@ class BackgroundConversationLoop(
             true
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            ClientLog.event(AREA, "approval decision failed to send: ${error.message}")
             show("Say yes, no, or read all", request, false, "That decision didn't reach the server.")
+            cueNextListen = true
             false
         }
     }
 
-    private suspend fun say(config: ConversationConfig, text: String, afterSpeech: Boolean = true) {
+    /** A fixed prompt is the agent's turn, so the next listen beeps even when the server cannot speak. */
+    private suspend fun say(config: ConversationConfig, text: String) {
+        cueNextListen = true
         if (!config.ttsConfigured || text.isBlank()) return
         try {
             speaker.speak(text)
-            if (afterSpeech && !signals.stopPending() && !signals.endPending()) cues.ttsFinished()
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -508,9 +535,18 @@ class BackgroundConversationLoop(
     private fun take(result: ListenResult): Accepted = when (result) {
         is ListenResult.Transcript -> {
             val text = result.text.trim()
-            if (text.isEmpty()) Accepted.Silence else Accepted.Text(text)
+            if (text.isEmpty()) {
+                ClientLog.event(AREA, "silence; listening again without a cue")
+                Accepted.Silence
+            } else {
+                ClientLog.event(AREA, "user finished talking: \"$text\"")
+                Accepted.Text(text)
+            }
         }
-        is ListenResult.Unavailable -> Accepted.Failed(result.message, result.transient)
+        is ListenResult.Unavailable -> {
+            ClientLog.event(AREA, "listen failed (${if (result.transient) "transient" else "fatal"}): ${result.message}")
+            Accepted.Failed(result.message, result.transient)
+        }
     }
 
     /**
@@ -561,10 +597,17 @@ class BackgroundConversationLoop(
         }
     }
 
-    /** Cue, let that tone release the speaker, then open the microphone. */
+    /**
+     * One beep when the microphone reopens after the agent's turn, then the settle gap so
+     * the transcriber does not hear it. Silence and a busy recognizer reopen without a cue.
+     */
     private suspend fun awaitUser(ear: UtteranceSource, decisions: Boolean): Hearing {
-        cues.listening()
-        delay(LISTEN_SETTLE_MS)
+        if (cueNextListen) {
+            cueNextListen = false
+            ClientLog.event(AREA, "playing the listening cue")
+            cues.listening()
+            delay(LISTEN_SETTLE_MS)
+        }
         return hear(ear, decisions)
     }
 
@@ -577,8 +620,14 @@ class BackgroundConversationLoop(
         val job = launch { spoken.send(ear.listen()) }
         try {
             while (isActive) {
-                if (signals.pollStop()) return@coroutineScope Hearing.Stop
-                if (signals.pollEnd()) return@coroutineScope Hearing.EndConversation
+                if (signals.pollStop()) {
+                    ClientLog.event(AREA, "stop requested while listening")
+                    return@coroutineScope Hearing.Stop
+                }
+                if (signals.pollEnd()) {
+                    ClientLog.event(AREA, "end requested while listening")
+                    return@coroutineScope Hearing.EndConversation
+                }
                 if (decisions) {
                     signals.pollDecision()?.let { return@coroutineScope Hearing.Decision(it) }
                 }
@@ -602,6 +651,7 @@ class BackgroundConversationLoop(
     private companion object {
         /** Long enough for a cue to let go of the speaker before the microphone opens. */
         const val LISTEN_SETTLE_MS = 180L
+        const val AREA = "conversation"
     }
 
     private fun armed(config: ConversationConfig, status: String) = ConversationSnapshot(

@@ -45,6 +45,7 @@ class UserSettingsBody(BaseModel):
     wake_phrase: str = ""
     close_phrase: str = ""
     voice_command_approval: bool = False
+    client_debug_logging: bool = False
 
     @classmethod
     def from_preferences(cls, prefs: UserPreferences) -> UserSettingsBody:
@@ -61,6 +62,7 @@ class UserSettingsBody(BaseModel):
             wake_phrase=prefs.wake_phrase,
             close_phrase=prefs.close_phrase,
             voice_command_approval=prefs.voice_command_approval,
+            client_debug_logging=prefs.client_debug_logging,
         )
 
 
@@ -87,6 +89,7 @@ class UserSettingsPatch(BaseModel):
     wake_phrase: str | None = None
     close_phrase: str | None = None
     voice_command_approval: bool | None = None
+    client_debug_logging: bool | None = None
 
 
 def get_user_settings(request: Request) -> UserSettingsStore:
@@ -148,6 +151,9 @@ def _merge(current: UserPreferences, body: UserSettingsPatch) -> UserPreferences
     voice = current.voice_command_approval
     if "voice_command_approval" in provided and body.voice_command_approval is not None:
         voice = body.voice_command_approval
+    debug = current.client_debug_logging
+    if "client_debug_logging" in provided and body.client_debug_logging is not None:
+        debug = body.client_debug_logging
     return UserPreferences(
         strip_image_metadata=strip,
         agent_name=text("agent_name", current.agent_name),
@@ -161,4 +167,5 @@ def _merge(current: UserPreferences, body: UserSettingsPatch) -> UserPreferences
         wake_phrase=text("wake_phrase", current.wake_phrase),
         close_phrase=text("close_phrase", current.close_phrase),
         voice_command_approval=voice,
+        client_debug_logging=debug,
     )

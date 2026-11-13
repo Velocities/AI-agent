@@ -260,6 +260,23 @@ class AgentApi(private val baseUrl: String) {
         return json.decodeFromString(body)
     }
 
+    /** Append debug log lines. Returns the server's next expected line number for [stream]. */
+    fun sendClientLogs(
+        accessToken: String,
+        stream: String,
+        device: String,
+        firstSeq: Long,
+        lines: List<String>,
+    ): Long {
+        val body = request(
+            "POST",
+            ApiEndpoints.CLIENT_LOGS,
+            accessToken,
+            json.encodeToString(ClientLogUpload(stream, device, firstSeq, lines)),
+        )
+        return json.decodeFromString<ClientLogAck>(body).nextSeq
+    }
+
     /** Synthesize [text] with Kokoro-82M and return a WAV file. */
     fun synthesize(accessToken: String, text: String): ByteArray {
         val connection = open("POST", ApiEndpoints.SPEECH_SYNTHESIZE, accessToken).apply {

@@ -53,6 +53,8 @@ class UserPreferences:
     close_phrase: str = ""
     # Off until this user turns it on for this server. Voice yes/no stays refused.
     voice_command_approval: bool = False
+    # Developer setting. The client sends timestamped event logs to this server.
+    client_debug_logging: bool = False
 
     def speech_pairs(self) -> tuple[tuple[str, str], ...]:
         """Written name, then the respelling Kokoro should say. Longer names first."""
@@ -102,6 +104,7 @@ def normalize_preferences(prefs: UserPreferences) -> UserPreferences:
         wake_phrase=wake_phrase,
         close_phrase=close_phrase,
         voice_command_approval=bool(prefs.voice_command_approval),
+        client_debug_logging=bool(prefs.client_debug_logging),
     )
 
 

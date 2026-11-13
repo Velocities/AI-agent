@@ -30,6 +30,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -77,6 +79,7 @@ import com.aiagent.android.conversation.listenPhraseError
 import com.aiagent.android.data.AgentApi
 import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.UserSettings
+import com.aiagent.android.logging.ClientLog
 import com.aiagent.android.speech.SpeechProviderStore
 import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.ui.AppIcons
@@ -114,6 +117,7 @@ private data class PersonalizationDraft(
     val wakePhrase: String = "",
     val closePhrase: String = "",
     val voiceCommandApproval: Boolean = false,
+    val debugLogging: Boolean = false,
 )
 
 private fun UserSettings.toDraft(phoneZone: String) = PersonalizationDraft(
@@ -129,9 +133,15 @@ private fun UserSettings.toDraft(phoneZone: String) = PersonalizationDraft(
     wakePhrase = wakePhrase,
     closePhrase = closePhrase,
     voiceCommandApproval = voiceCommandApproval,
+    debugLogging = clientDebugLogging,
 )
 
 private enum class HearTarget { Agent, User, Wake, Close }
+
+private enum class SettingsTab(val label: String) {
+    Personalization("Personalization"),
+    Developer("Developer Settings"),
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -164,6 +174,8 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
     var wakePhrase by remember { mutableStateOf("") }
     var closePhrase by remember { mutableStateOf("") }
     var voiceCommands by remember { mutableStateOf(false) }
+    var debugLogging by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf(SettingsTab.Personalization) }
     var listening by remember { mutableStateOf(AiAgentApp.instance.conversation.listeningEnabled) }
     var hearTarget by remember { mutableStateOf<HearTarget?>(null) }
     var hearPhase by remember { mutableStateOf(PronouncePhase.Idle) }
@@ -182,6 +194,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         wakePhrase = wakePhrase,
         closePhrase = closePhrase,
         voiceCommandApproval = voiceCommands,
+        debugLogging = debugLogging,
     )
 
     val dirty = !loading && currentDraft() != savedForm
@@ -198,6 +211,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         wakePhrase = draft.wakePhrase
         closePhrase = draft.closePhrase
         voiceCommands = draft.voiceCommandApproval
+        debugLogging = draft.debugLogging
         coding = if (moveCursor) TextFieldValue(draft.codingPreferences) else coding.copy(text = draft.codingPreferences)
     }
 
@@ -206,12 +220,13 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
     LaunchedEffect(api) {
         val access = token()
         if (access == null) {
-            error = "Sign in again to load personalization."
+            error = "Sign in again to load settings."
             loading = false
             return@LaunchedEffect
         }
         try {
             val draft = withContext(Dispatchers.IO) { api.userSettings(access) }.toDraft(phoneZone)
+            ClientLog.setEnabled(draft.debugLogging)
             savedForm = draft
             applyDraft(draft, moveCursor = true)
             editingCoding = draft.codingPreferences.isBlank()
@@ -224,7 +239,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
         } catch (exception: AgentApiException) {
             error = exception.message
         } catch (exception: Exception) {
-            error = exception.message ?: "Couldn't load personalization."
+            error = exception.message ?: "Couldn't load settings."
         } finally {
             loading = false
         }
@@ -343,7 +358,7 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
     fun save(exitAfter: Boolean) {
         val access = token()
         if (access == null) {
-            error = "Sign in again to save personalization."
+            error = "Sign in again to save settings."
             confirmExit = false
             return
         }
@@ -386,20 +401,22 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
                             wakePhrase = wakePhrase.trim(),
                             closePhrase = closePhrase.trim(),
                             voiceCommandApproval = voiceCommands,
+                            clientDebugLogging = debugLogging,
                         ),
                     )
                 }
                 SpeechProviderStore(context).save(SttProvider.fromId(stored.sttProvider))
+                ClientLog.setEnabled(stored.clientDebugLogging)
                 AiAgentApp.instance.conversation.noteSettingsChanged()
                 val draft = stored.toDraft(phoneZone)
                 savedForm = draft
                 applyDraft(draft, moveCursor = true)
-                onNotice(NoticeIcon.Success, "Personalization settings saved successfully")
+                onNotice(NoticeIcon.Success, "Settings saved successfully")
                 if (exitAfter) onBack()
             } catch (exception: AgentApiException) {
                 onNotice(NoticeIcon.Error, exception.message)
             } catch (exception: Exception) {
-                onNotice(NoticeIcon.Error, exception.message ?: "Couldn't save personalization.")
+                onNotice(NoticeIcon.Error, exception.message ?: "Couldn't save settings.")
             } finally {
                 saving = false
             }
@@ -416,14 +433,25 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Personalization") },
-                navigationIcon = {
-                    IconButton(onClick = ::leave) {
-                        Icon(AppIcons.ArrowBack, contentDescription = "Back")
+            Column {
+                TopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = ::leave) {
+                            Icon(AppIcons.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                )
+                TabRow(selectedTabIndex = tab.ordinal) {
+                    SettingsTab.entries.forEach { entry ->
+                        Tab(
+                            selected = tab == entry,
+                            onClick = { tab = entry },
+                            text = { Text(entry.label) },
+                        )
                     }
-                },
-            )
+                }
+            }
         },
     ) { padding ->
         if (loading) {
@@ -447,113 +475,121 @@ fun PersonalizationScreen(onBack: () -> Unit, onNotice: (NoticeIcon, String) -> 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
-            Text(
-                "Names are written as you type them. The sounds-like field is what speech says, and it is required when a name is set.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = agentName,
-                onValueChange = { agentName = it.take(NAME_MAX).replace("\n", "") },
-                label = { Text("Agent name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            PronunciationField(
-                value = agentPronunciation,
-                onValueChange = { agentPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
-                enabled = agentName.isNotBlank() || agentPronunciation.isNotBlank(),
-                phase = if (hearTarget == HearTarget.Agent) hearPhase else PronouncePhase.Idle,
-                onHear = { hear(HearTarget.Agent, agentPronunciation) },
-            )
-            OutlinedTextField(
-                value = userName,
-                onValueChange = { userName = it.take(NAME_MAX).replace("\n", "") },
-                label = { Text("What to call you") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            PronunciationField(
-                value = userPronunciation,
-                onValueChange = { userPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
-                enabled = userName.isNotBlank() || userPronunciation.isNotBlank(),
-                phase = if (hearTarget == HearTarget.User) hearPhase else PronouncePhase.Idle,
-                onHear = { hear(HearTarget.User, userPronunciation) },
-            )
-            Text("Reply length", style = MaterialTheme.typography.labelLarge)
-            SegmentedChoice(
-                options = replyLengths,
-                selected = replyLength,
-                onSelect = { replyLength = it },
-            )
-            TimezoneField(
-                selected = timezone,
-                catalog = zoneCatalog,
-                phoneZone = phoneZone,
-                onSelect = { timezone = it },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text("Coding preferences", style = MaterialTheme.typography.labelLarge)
-            SegmentedChoice(
-                options = listOf("preview" to "Preview", "edit" to "Edit"),
-                selected = if (editingCoding) "edit" else "preview",
-                onSelect = { editingCoding = it == "edit" },
-            )
-            if (editingCoding) {
-                CodingEditor(
-                    value = coding,
-                    onValueChange = { next ->
-                        if (next.text.length <= CODING_MAX) coding = next
-                    },
-                    highlight = highlight,
-                )
-                Text(
-                    "${coding.text.length} / $CODING_MAX",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (tab == SettingsTab.Developer) {
+                DeveloperSettingsSection(
+                    debugLogging = debugLogging,
+                    onDebugLogging = { debugLogging = it },
+                    enabled = !saving,
                 )
             } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                        .padding(12.dp),
-                ) {
-                    if (coding.text.isBlank()) {
-                        Text(
-                            "Nothing to preview yet.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        MarkdownText(coding.text)
+                Text(
+                    "Names are written as you type them. The sounds-like field is what speech says, and it is required when a name is set.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = agentName,
+                    onValueChange = { agentName = it.take(NAME_MAX).replace("\n", "") },
+                    label = { Text("Agent name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                PronunciationField(
+                    value = agentPronunciation,
+                    onValueChange = { agentPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
+                    enabled = agentName.isNotBlank() || agentPronunciation.isNotBlank(),
+                    phase = if (hearTarget == HearTarget.Agent) hearPhase else PronouncePhase.Idle,
+                    onHear = { hear(HearTarget.Agent, agentPronunciation) },
+                )
+                OutlinedTextField(
+                    value = userName,
+                    onValueChange = { userName = it.take(NAME_MAX).replace("\n", "") },
+                    label = { Text("What to call you") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                PronunciationField(
+                    value = userPronunciation,
+                    onValueChange = { userPronunciation = it.take(PRONUNCIATION_MAX).replace("\n", "") },
+                    enabled = userName.isNotBlank() || userPronunciation.isNotBlank(),
+                    phase = if (hearTarget == HearTarget.User) hearPhase else PronouncePhase.Idle,
+                    onHear = { hear(HearTarget.User, userPronunciation) },
+                )
+                Text("Reply length", style = MaterialTheme.typography.labelLarge)
+                SegmentedChoice(
+                    options = replyLengths,
+                    selected = replyLength,
+                    onSelect = { replyLength = it },
+                )
+                TimezoneField(
+                    selected = timezone,
+                    catalog = zoneCatalog,
+                    phoneZone = phoneZone,
+                    onSelect = { timezone = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Coding preferences", style = MaterialTheme.typography.labelLarge)
+                SegmentedChoice(
+                    options = listOf("preview" to "Preview", "edit" to "Edit"),
+                    selected = if (editingCoding) "edit" else "preview",
+                    onSelect = { editingCoding = it == "edit" },
+                )
+                if (editingCoding) {
+                    CodingEditor(
+                        value = coding,
+                        onValueChange = { next ->
+                            if (next.text.length <= CODING_MAX) coding = next
+                        },
+                        highlight = highlight,
+                    )
+                    Text(
+                        "${coding.text.length} / $CODING_MAX",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                            .padding(12.dp),
+                    ) {
+                        if (coding.text.isBlank()) {
+                            Text(
+                                "Nothing to preview yet.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            MarkdownText(coding.text)
+                        }
                     }
                 }
+                SpeechSettingsSection(
+                    provider = sttProvider,
+                    onProvider = { sttProvider = it },
+                    wake = wakePhrase,
+                    onWake = { wakePhrase = it },
+                    close = closePhrase,
+                    onClose = { closePhrase = it },
+                    wakePhase = if (hearTarget == HearTarget.Wake) hearPhase else PronouncePhase.Idle,
+                    onHearWake = { hear(HearTarget.Wake, wakePhrase) },
+                    closePhase = if (hearTarget == HearTarget.Close) hearPhase else PronouncePhase.Idle,
+                    onHearClose = { hear(HearTarget.Close, closePhrase) },
+                    voiceCommands = voiceCommands,
+                    onVoiceCommands = { voiceCommands = it },
+                    listening = listening,
+                    onListening = { turnOn ->
+                        if (turnOn) {
+                            turnListeningOn()
+                        } else {
+                            AiAgentApp.instance.conversation.setListeningEnabled(false)
+                            listening = false
+                        }
+                    },
+                    enabled = !saving,
+                )
             }
-            SpeechSettingsSection(
-                provider = sttProvider,
-                onProvider = { sttProvider = it },
-                wake = wakePhrase,
-                onWake = { wakePhrase = it },
-                close = closePhrase,
-                onClose = { closePhrase = it },
-                wakePhase = if (hearTarget == HearTarget.Wake) hearPhase else PronouncePhase.Idle,
-                onHearWake = { hear(HearTarget.Wake, wakePhrase) },
-                closePhase = if (hearTarget == HearTarget.Close) hearPhase else PronouncePhase.Idle,
-                onHearClose = { hear(HearTarget.Close, closePhrase) },
-                voiceCommands = voiceCommands,
-                onVoiceCommands = { voiceCommands = it },
-                listening = listening,
-                onListening = { turnOn ->
-                    if (turnOn) {
-                        turnListeningOn()
-                    } else {
-                        AiAgentApp.instance.conversation.setListeningEnabled(false)
-                        listening = false
-                    }
-                },
-                enabled = !saving,
-            )
             Button(
                 onClick = { save(exitAfter = false) },
                 enabled = !saving,
