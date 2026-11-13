@@ -7,10 +7,10 @@ import com.aiagent.android.data.AgentApiException
 import com.aiagent.android.data.SavedServer
 import com.aiagent.android.data.ServerConfigStore
 import com.aiagent.android.data.SupabaseModule
+import com.aiagent.android.data.freshAccessToken
 import com.aiagent.android.logging.ClientLog
 import com.aiagent.android.speech.RecognizerEarcons
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -45,7 +45,7 @@ class AiAgentApp : Application() {
         lines: List<String>,
     ): ClientLog.Transport.Result {
         val url = serverConfig.load()?.serverUrl
-        val token = supabase?.auth?.currentAccessTokenOrNull()
+        val token = supabase?.freshAccessToken()
         if (url.isNullOrBlank() || token == null) {
             return ClientLog.Transport.Result.Failed("Not signed in to a server.")
         }

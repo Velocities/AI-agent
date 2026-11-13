@@ -11,6 +11,7 @@ import com.aiagent.android.data.ApprovalAnswer
 import com.aiagent.android.data.ApprovalRequest
 import com.aiagent.android.data.TurnEvent
 import com.aiagent.android.data.UserSettings
+import com.aiagent.android.data.freshAccessToken
 import com.aiagent.android.logging.ClientLog
 import com.aiagent.android.speech.GoogleSpeechSession
 import com.aiagent.android.speech.RecognizerEarcons
@@ -19,7 +20,6 @@ import com.aiagent.android.speech.SpeechToTextConverter
 import com.aiagent.android.speech.SttProvider
 import com.aiagent.android.speech.speechErrorIsSilence
 import com.aiagent.android.speech.speechErrorIsTransient
-import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -211,7 +211,14 @@ data class LoadedConversation(
 class ServerConversationClient(
     private val api: AgentApi,
 ) {
-    fun token(): String? = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull()
+    suspend fun token(): String? {
+        val client = AiAgentApp.instance.supabase
+        val access = client?.freshAccessToken()
+        if (access == null) {
+            ClientLog.event("auth", if (client == null) "no server client; not signed in" else "no session; signed out")
+        }
+        return access
+    }
 
     suspend fun load(): LoadedConversation = withContext(Dispatchers.IO) {
         val access = token() ?: throw AgentApiException(401, "Sign in to use background conversation.")
@@ -249,7 +256,7 @@ fun UserSettings.toConfig(ttsConfigured: Boolean) = ConversationConfig(
  */
 class LiveTurnRunner(
     private val api: AgentApi,
-    private val token: () -> String?,
+    private val token: suspend () -> String?,
     private val speaker: KokoroSpeaker,
 ) : TurnRunner {
     @Volatile private var connection: HttpURLConnection? = null

@@ -346,6 +346,7 @@ class BackgroundConversationLoop(
                             turns.createConversation()
                         } catch (error: Exception) {
                             if (error is kotlinx.coroutines.CancellationException) throw error
+                            ClientLog.event(AREA, "couldn't create the chat: ${error.message}")
                             lines.removeAt(lines.lastIndex)
                             show("Listening", fault = error.message ?: "Couldn't start the chat.")
                             cueNextListen = true
