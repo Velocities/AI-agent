@@ -11,6 +11,7 @@ import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.ChatMessage
 import com.aiagent.android.data.ConversationSummary
 import com.aiagent.android.data.ImageUpload
+import com.aiagent.android.data.ModelInfo
 import com.aiagent.android.data.Transcript
 import com.aiagent.android.data.TurnEvent
 import com.aiagent.android.speech.SpeechFailed
@@ -59,11 +60,17 @@ data class ChatUiState(
     val speaking: Boolean = false,
     /** Bumped when playback should stop. Clips from an older generation are ignored. */
     val speechGeneration: Int = 0,
-    /** False until GET /api/model says this process accepts images. */
-    val visionEnabled: Boolean = false,
+    /** Snapshot from GET /api/model. Null until that call returns a model. */
+    val model: ModelInfo? = null,
+    /** True when this process could not report a model. Image attach stays off. */
+    val modelUnavailable: Boolean = false,
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
+
+    /** False until GET /api/model says this process accepts images. */
+    val visionEnabled: Boolean
+        get() = model?.vision == true
 }
 
 class ChatViewModel : ViewModel() {
@@ -251,19 +258,28 @@ class ChatViewModel : ViewModel() {
             val token = AiAgentApp.instance.supabase?.auth?.currentAccessTokenOrNull()
             if (token.isNullOrBlank()) return@launch
             modelInfoFetched = true
-            val enabled = try {
-                withContext(Dispatchers.IO) { api().modelInfo(token).vision }
+            val info = try {
+                withContext(Dispatchers.IO) { api().modelInfo(token) }
             } catch (error: AgentApiException) {
-                if (error.status == 503) {
-                    _state.update {
-                        it.copy(notice = "Model information is unavailable. Image attach is off.")
-                    }
+                _state.update { state ->
+                    state.copy(
+                        model = null,
+                        modelUnavailable = true,
+                        notice = if (error.status == 503) {
+                            "Model information is unavailable. Image attach is off."
+                        } else {
+                            state.notice
+                        },
+                    )
                 }
-                false
+                null
             } catch (_: IOException) {
-                false
+                _state.update { it.copy(model = null, modelUnavailable = true) }
+                null
             }
-            _state.update { it.copy(visionEnabled = enabled) }
+            if (info != null) {
+                _state.update { it.copy(model = info, modelUnavailable = false) }
+            }
         }
     }
 

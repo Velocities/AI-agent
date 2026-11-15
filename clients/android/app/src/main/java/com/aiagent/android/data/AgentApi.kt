@@ -57,6 +57,15 @@ data class ModelInfo(
     val model: String = "",
     val vision: Boolean = false,
     val tools: Boolean = false,
+    @SerialName("vision_source") val visionSource: String = "",
+    @SerialName("tools_source") val toolsSource: String = "",
+    @SerialName("vision_verified") val visionVerified: Boolean = false,
+    @SerialName("tools_verified") val toolsVerified: Boolean = false,
+    val capabilities: List<String> = emptyList(),
+    val family: String? = null,
+    @SerialName("parameter_size") val parameterSize: String? = null,
+    val quantization: String? = null,
+    @SerialName("context_length") val contextLength: Int? = null,
 )
 
 /** An HTTP error from ai-agent-serve. [code] is set for whitelist refusals (see ACCESS_* codes). */

@@ -39,6 +39,7 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 | `/server` | Lists saved servers. `*` is the one this chat is using. |
 | `/server URL` | Adds that server or switches to it. A server you have not signed in to ends the chat so you can run `ai-agent login`. |
 | `/server remove URL` | Forgets that server and its sign-in. |
+| `/model-info` | Prints the model this server is running, and whether it accepts images and tools. |
 | `exit` or `quit` | Leaves the chat. |
 
 ---

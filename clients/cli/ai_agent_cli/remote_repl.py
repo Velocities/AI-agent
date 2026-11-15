@@ -47,7 +47,8 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
     client = AgentApiClient(config.server_url, token)
     try:
         conversation_id = _current_conversation(client, console)
-        vision = _model_vision(client, console)
+        model = _load_model(client, console)
+        vision = bool(model and model.get("vision"))
     except AgentApiError as exc:
         _print_access_error(console, exc)
         client.close()
@@ -64,7 +65,7 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
     console.print(f"API: {config.server_url}")
     if hint := public_api_base_url_hint(config.server_url):
         console.print(f"[yellow]{hint}[/yellow]")
-    console.print("Type /new, /list, /server, /attach, or exit.\n")
+    console.print("Type /new, /list, /server, /attach, /model-info, or exit.\n")
     stage = ImageStage(vision=vision)
 
     try:
@@ -104,6 +105,9 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
                 save_conversation_id(conversation_id)
                 console.print("[dim]Started a new chat.[/dim]")
                 continue
+            if user_input == "/model-info":
+                _print_model_info(console, model)
+                continue
             try:
                 command = stage.handle(user_input)
             except ImageRejected as exc:
@@ -123,15 +127,76 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
         client.close()
 
 
-def _model_vision(client: AgentApiClient, console: Console) -> bool:
+def _load_model(client: AgentApiClient, console: Console) -> dict | None:
     try:
         document = client.get_model()
     except AgentApiError as exc:
         if exc.status == 503:
             console.print("[dim]Model information is unavailable.[/dim]")
-            return False
+            return None
         raise
-    return bool(document.get("vision"))
+    return document if isinstance(document, dict) else None
+
+
+def model_info_lines(document: dict | None) -> list[str]:
+    """Plain lines for `/model-info`. The first line is the model id."""
+    if not document:
+        return ["Model information is unavailable."]
+    lines = [str(document.get("model") or "Unknown model")]
+    engine = _engine_label(document.get("engine"))
+    if engine:
+        lines.append(f"Engine: {engine}")
+    lines.append(
+        _support_line("Image uploads", document.get("vision"), document.get("vision_source"))
+    )
+    lines.append(_support_line("Tools", document.get("tools"), document.get("tools_source")))
+    for label, key in (
+        ("Family", "family"),
+        ("Size", "parameter_size"),
+        ("Quantization", "quantization"),
+    ):
+        value = document.get(key)
+        if isinstance(value, str) and value.strip():
+            lines.append(f"{label}: {value.strip()}")
+    context = document.get("context_length")
+    if isinstance(context, int) and not isinstance(context, bool) and context > 0:
+        lines.append(f"Context length: {context}")
+    capabilities = document.get("capabilities")
+    if isinstance(capabilities, list):
+        names = [
+            item.strip() for item in capabilities if isinstance(item, str) and item.strip()
+        ]
+        if names:
+            lines.append("Capabilities: " + ", ".join(names))
+    return lines
+
+
+def _engine_label(engine: object) -> str:
+    if not isinstance(engine, str) or not engine.strip():
+        return ""
+    return {"ollama": "Ollama", "vllm": "vLLM"}.get(engine.strip(), engine.strip())
+
+
+def _support_line(label: str, enabled: object, source: object) -> str:
+    state = "yes" if enabled is True else "no"
+    note = {
+        "probed": "reported by the engine",
+        "configured": "set by the server operator",
+        "warmup": "checked when the server started",
+    }.get(source if isinstance(source, str) else "", "")
+    if note:
+        return f"{label}: {state} ({note})"
+    return f"{label}: {state}"
+
+
+def _print_model_info(console: Console, document: dict | None) -> None:
+    lines = model_info_lines(document)
+    if not document:
+        console.print(f"[dim]{lines[0]}[/dim]")
+        return
+    console.print(f"[bold]{lines[0]}[/bold]")
+    for line in lines[1:]:
+        console.print(line)
 
 
 def _print_stage(console: Console, command: StageCommand) -> None:

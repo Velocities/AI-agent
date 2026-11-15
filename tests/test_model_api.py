@@ -10,7 +10,7 @@ from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.cli.llm_serve import prepare_upstream
 from ai_agent.config import LlmEngineKind, Settings
 from ai_agent.conversations.db import open_store_at
-from ai_agent.llm.capabilities import probe_model_info
+from ai_agent.llm.capabilities import ModelInfo, probe_model_info
 from ai_agent.llm.server.engine.base import EngineHealth
 from tests.test_images import _api, png_bytes
 
@@ -43,6 +43,59 @@ def test_ollama_probe_maps_capabilities() -> None:
     assert info.vision_verified is True
     assert info.tools_verified is True
     assert info.capabilities == frozenset({"completion", "vision", "tools", "thinking"})
+    assert info.family is None
+    assert info.parameter_size is None
+    assert info.quantization is None
+    assert info.context_length is None
+
+
+def test_ollama_probe_reads_show_details() -> None:
+    engine = MagicMock()
+    engine.model = "qwen2.5vl:7b"
+    engine.upstream_url = "http://127.0.0.1:11434"
+    engine.show_model.return_value = {
+        "capabilities": ["completion", "vision"],
+        "details": {
+            "family": "qwen2",
+            "parameter_size": "7.6B",
+            "quantization_level": "Q4_K_M",
+        },
+        "model_info": {
+            "general.architecture": "qwen2",
+            "qwen2.context_length": 32768,
+            "qwen2.embedding_length": 3584,
+        },
+    }
+    info = probe_model_info(
+        engine,
+        Settings(llm_engine=LlmEngineKind.OLLAMA, llm_model="qwen2.5vl:7b"),
+        warmup_ok=True,
+    )
+    assert info.vision is True
+    assert info.family == "qwen2"
+    assert info.parameter_size == "7.6B"
+    assert info.quantization == "Q4_K_M"
+    assert info.context_length == 32768
+
+
+def test_ollama_probe_ignores_blank_or_non_numeric_details() -> None:
+    engine = MagicMock()
+    engine.model = "plain"
+    engine.upstream_url = "http://127.0.0.1:11434"
+    engine.show_model.return_value = {
+        "capabilities": ["completion"],
+        "details": {"family": "  ", "parameter_size": "", "quantization_level": 4},
+        "model_info": {"llama.context_length": True, "llama.other": "32768"},
+    }
+    info = probe_model_info(
+        engine,
+        Settings(llm_engine=LlmEngineKind.OLLAMA, llm_model="plain"),
+        warmup_ok=True,
+    )
+    assert info.family is None
+    assert info.parameter_size is None
+    assert info.quantization is None
+    assert info.context_length is None
 
 
 def test_ollama_without_tools_fails_before_warmup() -> None:
@@ -86,6 +139,9 @@ def test_vllm_vision_comes_from_configuration_not_the_model_name() -> None:
     assert disabled.vision is False
     assert "vision" not in disabled.capabilities
     assert "vl" not in enabled.vision_source
+    assert enabled.family is None
+    assert enabled.parameter_size is None
+    assert enabled.context_length is None
 
 
 def test_model_route_requires_a_token_and_a_snapshot(tmp_path: Path) -> None:
@@ -110,6 +166,42 @@ def test_model_route_returns_the_snapshot(tmp_path: Path) -> None:
     assert body["vision_source"] == "probed"
     assert body["tools_verified"] is True
     assert body["capabilities"] == ["completion", "tools", "vision"]
+    assert body["family"] is None
+    assert body["parameter_size"] is None
+    assert body["quantization"] is None
+    assert body["context_length"] is None
+
+
+def test_model_route_returns_descriptive_fields(tmp_path: Path) -> None:
+    store = open_store_at(f"sqlite:///{tmp_path / 'conversations.db'}")
+    info = ModelInfo(
+        engine="ollama",
+        model="qwen2.5vl:7b",
+        upstream="http://127.0.0.1:11434",
+        capabilities=frozenset({"completion", "vision"}),
+        vision=True,
+        tools=False,
+        vision_source="probed",
+        tools_source="probed",
+        vision_verified=True,
+        tools_verified=False,
+        family="qwen2",
+        parameter_size="7.6B",
+        quantization="Q4_K_M",
+        context_length=32768,
+    )
+    app = create_app(Settings(), _Tokens(), store=store, model_info=info)
+    with TestClient(app) as client:
+        response = client.get("/api/model", headers={"Authorization": "Bearer good"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "qwen2.5vl:7b"
+    assert body["family"] == "qwen2"
+    assert body["parameter_size"] == "7.6B"
+    assert body["quantization"] == "Q4_K_M"
+    assert body["context_length"] == 32768
+    assert body["vision"] is True
+    assert body["tools"] is False
 
 
 def test_images_are_refused_when_vision_is_false_but_text_turns_work(tmp_path: Path) -> None:

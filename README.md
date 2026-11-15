@@ -435,7 +435,7 @@ ai-agent login
 ai-agent
 ```
 
-`/new` starts a chat, `/list` shows chats, `/server` shows or changes the saved server URL. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app asks for the same server URL on first launch and can open the same chats.
+`/new` starts a chat, `/list` shows chats, `/server` shows or changes the saved server URL, and `/model-info` prints the model that server is running. A command that needs approval pauses the stream; answer `y`, `n`, or `a` in the terminal. The Android app asks for the same server URL on first launch and can open the same chats.
 
 **6. Open the tunnel** from the same machine:
 

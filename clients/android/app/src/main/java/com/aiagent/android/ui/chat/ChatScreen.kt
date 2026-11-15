@@ -44,6 +44,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -114,6 +115,8 @@ import com.aiagent.android.data.ImageUpload
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
+import com.aiagent.android.ui.model.ModelInfoScreen
+import com.aiagent.android.ui.model.ModelSummaryBar
 import com.aiagent.android.ui.markdown.MarkdownText
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
@@ -145,6 +148,7 @@ fun ChatScreen(
     val snackbar = remember { SnackbarHostState() }
     var showAuthDebug by remember { mutableStateOf(false) }
     var confirmDeleteCurrent by remember { mutableStateOf(false) }
+    var showModelInfo by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -287,7 +291,18 @@ fun ChatScreen(
             )
         }
     }
-    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
+    BackHandler(enabled = drawerState.isOpen && !showModelInfo) {
+        scope.launch { drawerState.close() }
+    }
+    if (showModelInfo) {
+        ModelInfoScreen(
+            model = state.model,
+            unavailable = state.modelUnavailable,
+            onBack = { showModelInfo = false },
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
 
     fun closeDrawerThen(action: () -> Unit) {
         action()
@@ -404,6 +419,13 @@ fun ChatScreen(
                                     }
                                 }
                             }
+                        },
+                        modelSummary = {
+                            ModelSummaryBar(
+                                model = state.model,
+                                unavailable = state.modelUnavailable,
+                                onSeeMore = { showModelInfo = true },
+                            )
                         },
                     )
                 },
@@ -792,6 +814,7 @@ private fun Composer(
     onError: (String) -> Unit,
     onStop: () -> Unit,
     onMic: () -> Unit,
+    modelSummary: @Composable () -> Unit,
 ) {
     var draft by rememberSaveable(chatId) { mutableStateOf("") }
     var attachments by remember(chatId) { mutableStateOf(listOf<ImageUpload>()) }
@@ -889,6 +912,9 @@ private fun Composer(
                 ) { Icon(AppIcons.Send, contentDescription = "Send") }
             }
         }
+        Spacer(Modifier.height(4.dp))
+        HorizontalDivider()
+        modelSummary()
         }
     }
 }

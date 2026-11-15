@@ -26,13 +26,20 @@ class ModelInfo:
     tools_source: str  # "probed" | "warmup"
     vision_verified: bool
     tools_verified: bool
+    # Descriptive fields from the engine show document. Never inferred from the name.
+    family: str | None = None
+    parameter_size: str | None = None
+    quantization: str | None = None
+    context_length: int | None = None
 
 
 def probe_model_info(engine, settings: Settings, *, warmup_ok: bool) -> ModelInfo:
     model = getattr(engine, "model", None) or settings.llm_model
     upstream = getattr(engine, "upstream_url", None) or settings.llm_upstream
     if settings.llm_engine == LlmEngineKind.OLLAMA:
-        capabilities = _ollama_capabilities(engine)
+        show = _ollama_show(engine)
+        capabilities = _capabilities_from_show(show)
+        family, parameter_size, quantization, context_length = _description_from_show(show)
         vision = "vision" in capabilities
         tools = "tools" in capabilities
         return ModelInfo(
@@ -46,6 +53,10 @@ def probe_model_info(engine, settings: Settings, *, warmup_ok: bool) -> ModelInf
             tools_source="probed",
             vision_verified=vision,
             tools_verified=tools,
+            family=family,
+            parameter_size=parameter_size,
+            quantization=quantization,
+            context_length=context_length,
         )
     capabilities = {"completion", "tools"}
     if settings.llm_vision:
@@ -64,18 +75,53 @@ def probe_model_info(engine, settings: Settings, *, warmup_ok: bool) -> ModelInf
     )
 
 
-def _ollama_capabilities(engine) -> frozenset[str]:
+def _ollama_show(engine) -> dict:
     show = getattr(engine, "show_model", None)
     if not callable(show):
-        return frozenset()
+        return {}
     try:
         payload = show()
     except Exception:
         logger.warning("Ollama capability probe failed", exc_info=True)
-        return frozenset()
-    if not isinstance(payload, dict):
-        return frozenset()
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _capabilities_from_show(payload: dict) -> frozenset[str]:
     raw = payload.get("capabilities")
     if not isinstance(raw, list):
         return frozenset()
     return frozenset(item for item in raw if isinstance(item, str))
+
+
+def _description_from_show(payload: dict) -> tuple[str | None, str | None, str | None, int | None]:
+    """Family, parameter size, quantization, and context length from `/api/show`."""
+    details = payload.get("details")
+    family = parameter_size = quantization = None
+    if isinstance(details, dict):
+        family = _text(details.get("family"))
+        parameter_size = _text(details.get("parameter_size"))
+        quantization = _text(details.get("quantization_level"))
+    return family, parameter_size, quantization, _context_length(payload.get("model_info"))
+
+
+def _text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _context_length(model_info: object) -> int | None:
+    if not isinstance(model_info, dict):
+        return None
+    lengths = [
+        value
+        for key, value in model_info.items()
+        if isinstance(key, str)
+        and key.endswith(".context_length")
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        and value > 0
+    ]
+    return max(lengths) if lengths else None
