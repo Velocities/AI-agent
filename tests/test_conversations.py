@@ -42,7 +42,7 @@ class _FakeAgent:
         self.should_stop = None
         self.llm = None
 
-    def run(self, content: str, stream_callback=None, **_kwargs) -> AgentRunResult:
+    def answer_user(self, content: str, stream_callback=None, **_kwargs) -> AgentRunResult:
         user = LLMMessage(role="user", content=content)
         self.messages.append(user)
         if self.on_message is not None:

@@ -84,7 +84,7 @@ class _CapturingAgent:
         self.llm = None
         self.images: list[ImageInput] | None = None
 
-    def run(self, content: str, stream_callback=None, images=None, **_kwargs) -> AgentRunResult:
+    def answer_user(self, content: str, stream_callback=None, images=None, **_kwargs) -> AgentRunResult:
         self.images = list(images or [])
         user = LLMMessage(role="user", content=content, images=self.images)
         self.messages.append(user)
@@ -558,7 +558,7 @@ def test_facade_text_only_request_omits_images(monkeypatch) -> None:
     assert message == {"role": "user", "content": "hello"}
 
 
-# The agent loop does not re-encode. Stripping happens before agent.run.
+# The agent loop does not re-encode. Stripping happens before agent.answer_user.
 
 
 def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
@@ -585,7 +585,7 @@ def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
     )
     image = ImageInput(data=png_bytes(), media_type="image/png")
     # The provider should see this exact object, not a re-encoded copy.
-    result = agent.run("What's wrong with this UI?", images=[image])
+    result = agent.answer_user("What's wrong with this UI?", images=[image])
     sent = llm.chat.call_args.args[0]
     user = next(message for message in sent if message.role == "user")
     assert user.content == "What's wrong with this UI?"

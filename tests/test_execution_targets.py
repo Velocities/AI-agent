@@ -308,7 +308,7 @@ def test_agent_omitted_target_runs_local(tmp_path: Path) -> None:
         session=session,
         router=router,
     )
-    result = agent.run("show docker")
+    result = agent.answer_user("show docker")
     assert result.final_message == "done"
     assert captured
     assert captured[0] == ["docker", "ps"]
@@ -359,7 +359,7 @@ def test_agent_rejects_invented_target(tmp_path: Path) -> None:
         session=session,
         router=ExecutionTargetRouter.local_only(executor),
     )
-    result = agent.run("pwn")
+    result = agent.answer_user("pwn")
     assert result.final_message == "blocked"
     assert captured == []
     tool_msg = agent.messages[-2]

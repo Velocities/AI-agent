@@ -69,7 +69,7 @@ This document is the complete specification for implementing [`vision-and-attach
 | `ai_agent/llm/client/types.py` | `ImageInput(data, media_type)`, `LLMMessage.images`. |
 | `ai_agent/llm/vision.py` | Provider-neutral → Ollama `images[]` / vLLM `image_url` data URIs. **Do not change shapes.** |
 | `ai_agent/api/conversations.py` | Multipart turns via `_read_multipart_turn`; `validate_image_bytes`; **no count cap**; ownership via `store.get_conversation(user.user_id, id)` before work. Delete does not clean files. |
-| `ai_agent/api/turns.py` | `_drive_agent` rebuilds `agent.messages` with `message_from_record`, then `agent.run(..., images=images)`. |
+| `ai_agent/api/turns.py` | `_drive_agent` rebuilds `agent.messages` with `message_from_record`, then `agent.answer_user(..., images=images)`. |
 | `ai_agent/api/transcript.py` | `message_metadata` writes `{kind, media_type, byte_size}` **without** `id`. `message_from_record` sets `images=[]`. |
 | `ai_agent/conversations/store.py` | Every method takes `user_id`. `_owned` filters `id` **and** `user_id`. `append_message` commits one message. |
 | `ai_agent/conversations/models.py` | `ConversationRow`, `MessageRow.metadata_json`. No settings/attachment tables. |
@@ -212,7 +212,7 @@ Remove calls from both REPLs. Prefer **deleting** the function and rewriting `te
 
 ### 5.4 Who calls strip
 
-API turn path, after validate and after loading `strip_image_metadata` from `UserSettingsStore`, **before** `AttachmentStore.put` and before `agent.run`. The in-process REPL has no user-settings table; **strip on** (default) for that process.
+API turn path, after validate and after loading `strip_image_metadata` from `UserSettingsStore`, **before** `AttachmentStore.put` and before `agent.answer_user`. The in-process REPL has no user-settings table; **strip on** (default) for that process.
 
 ---
 
@@ -575,7 +575,7 @@ that opens one session, inserts catalog rows, then performs the same insert as `
 
 If `append_message` / catalog commit fails after files exist: `attachment_store.delete` each id; cache invalidate; no user-visible message.
 
-Agent `run` still receives the in-memory `images` for the current user message (already the case). History rebuild happens **before** `run`; current images are **not** in SQLite yet, so they must not be double-applied from history. Keep the current order: rebuild history from SQLite (old turns only), then `agent.run(content, images=current)`.
+`answer_user` still receives the in-memory `images` for the current user message (already the case). History rebuild happens **before** `answer_user`; current images are **not** in SQLite yet, so they must not be double-applied from history. Keep the current order: rebuild history from SQLite (old turns only), then `agent.answer_user(content, images=current)`.
 
 ### 9.2 Replay (`message_from_record`)
 
@@ -780,7 +780,7 @@ Pillow in tests: build fixtures with Pillow or the existing `png_bytes()` / `jpe
 
 ### 14.6 Cache / concurrency / replay
 
-* Two historical image user messages + current: provider `llm.chat` first call includes those images (mocked). Spy on `store.get`: each id once per turn even if `chat` is invoked twice (simulate a tool iteration by calling the rebuild once and then `agent.run` that calls `chat` twice — or call the loader twice and assert memo).
+* Two historical image user messages + current: provider `llm.chat` first call includes those images (mocked). Spy on `store.get`: each id once per turn even if `chat` is invoked twice (simulate a tool iteration by calling the rebuild once and then `agent.answer_user` that calls `chat` twice — or call the loader twice and assert memo).
 * Five image-bearing user messages, `ATTACHMENT_REPLAY_MESSAGES=4`: oldest not in provider payload; its metadata still in `GET .../messages`.
 * Byte budget: three 6 MiB images, `ATTACHMENT_REPLAY_MAX_BYTES=16 MiB` → current + one history (12 MiB) or whichever newest-first fit; the one that does not fit is omitted. Use small fake sizes by stubbing `byte_size` if writing 6 MiB is slow — allowed if the replay function uses metadata `byte_size` for budget and only `get`s included ids.
 * Concurrent `put` (threading) with quota count=1: one succeeds, one 413; only one file.

@@ -49,7 +49,7 @@ def main() -> int:
 
     parts: list[str] = []
     start = time.perf_counter()
-    result = agent.run(prompt, stream_callback=parts.append)
+    result = agent.answer_user(prompt, stream_callback=parts.append)
     total = time.perf_counter() - start
     answer = "".join(parts)
 

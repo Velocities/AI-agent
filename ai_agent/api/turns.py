@@ -269,7 +269,7 @@ def _drive_agent(
             emit({"type": "status", "text": f"Working (step {iteration})"})
 
     try:
-        result = agent.run(
+        result = agent.answer_user(
             content,
             stream_callback=on_token,
             notice_callback=on_notice,

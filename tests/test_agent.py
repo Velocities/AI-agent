@@ -62,7 +62,7 @@ def test_max_iterations(agent_parts) -> None:
             ],
         )
     )
-    result = agent.run("check disk")
+    result = agent.answer_user("check disk")
     assert result.error == "max_iterations"
     assert result.iterations == 3
 
@@ -74,7 +74,7 @@ def test_llm_unavailable_failure(agent_parts) -> None:
         error="LLM endpoint is unavailable.",
         error_kind=LLMErrorKind.UNAVAILABLE,
     )
-    result = agent.run("hello")
+    result = agent.answer_user("hello")
     assert result.error is not None
     assert "unavailable" in result.final_message
 
@@ -112,7 +112,7 @@ def test_audit_log_written(agent_parts) -> None:
             )
         ),
     ]
-    result = agent.run("show docker")
+    result = agent.answer_user("show docker")
     assert result.final_message == "Docker is running."
     lines = audit_log.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
@@ -154,7 +154,7 @@ def test_policy_denial_is_audited(agent_parts) -> None:
             )
         ),
     ]
-    agent.run("delete everything")
+    agent.answer_user("delete everything")
     record = json.loads(audit_log.read_text(encoding="utf-8").strip())
     assert record["allowed"] is False
     assert record["success"] is False
@@ -175,7 +175,7 @@ def test_respond_finished_true_ends_turn(agent_parts) -> None:
             ],
         )
     )
-    result = agent.run("hello")
+    result = agent.answer_user("hello")
     assert result.final_message == "All done."
     assert llm.chat.call_count == 1
 
@@ -211,7 +211,7 @@ def test_respond_finished_false_continues(agent_parts) -> None:
             )
         ),
     ]
-    result = agent.run("explain something")
+    result = agent.answer_user("explain something")
     assert result.final_message == "Complete answer."
     assert llm.chat.call_count == 2
 
@@ -226,7 +226,7 @@ def test_dumped_command_json_is_nudged_to_use_the_tool(agent_parts) -> None:
         LLMResponse(message=LLMMessage(role="assistant", content=dumped)),
         LLMResponse(message=LLMMessage(role="assistant", content="Will use the tool.")),
     ]
-    result = agent.run("write a file on home-server")
+    result = agent.answer_user("write a file on home-server")
     assert result.final_message == "Will use the tool."
     assert llm.chat.call_count == 2
     assert agent.messages[-2].content == COMMAND_DUMP_NUDGE
@@ -237,7 +237,7 @@ def test_plain_text_is_the_final_answer(agent_parts) -> None:
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content="Plain text answer.")
     )
-    result = agent.run("hello")
+    result = agent.answer_user("hello")
     assert result.final_message == "Plain text answer."
     assert result.error is None
     assert llm.chat.call_count == 1
@@ -255,7 +255,7 @@ def test_agent_resumes_after_length_limit(agent_parts) -> None:
         ),
     ]
 
-    result = agent.run("explain something long")
+    result = agent.answer_user("explain something long")
 
     assert result.final_message == "Errors happen when a value is missing."
     assert result.error is None
@@ -274,7 +274,7 @@ def test_agent_resume_prompt_stays_bounded(agent_parts) -> None:
         LLMResponse(message=LLMMessage(role="assistant", content="done.")),
     ]
 
-    agent.run("explain something long")
+    agent.answer_user("explain something long")
 
     resume_messages = llm.chat.call_args_list[1][0][0]
     assert resume_messages[-1].content == CONTINUE_NUDGE
@@ -305,7 +305,7 @@ def test_agent_resume_drops_repeated_text(agent_parts) -> None:
         ),
     ]
 
-    result = agent.run("explain error handling")
+    result = agent.answer_user("explain error handling")
 
     assert result.final_message == (
         "Common mistakes include catching overly broad exceptions."
@@ -325,7 +325,7 @@ def test_agent_resumes_after_recoverable_stream_error(agent_parts) -> None:
         ),
     ]
 
-    result = agent.run("explain something long")
+    result = agent.answer_user("explain something long")
 
     assert result.final_message == "Errors happen when a value is missing."
     assert result.error is None
@@ -346,7 +346,7 @@ def test_agent_keeps_partial_answer_when_resume_fails_hard(agent_parts) -> None:
         ),
     ]
 
-    result = agent.run("explain something long")
+    result = agent.answer_user("explain something long")
 
     assert result.final_message == "Errors happen when a value"
     assert result.error == "LLM endpoint is unavailable."
@@ -363,7 +363,7 @@ def test_agent_reports_truncation_after_repeated_stream_interruptions(
         error_kind=LLMErrorKind.STREAM_INTERRUPTED,
     )
 
-    result = agent.run("explain something endless")
+    result = agent.answer_user("explain something endless")
 
     assert result.error == "truncated"
     assert result.final_message == "chunk chunk"
@@ -377,7 +377,7 @@ def test_agent_stops_after_continuation_budget(agent_parts) -> None:
         stop_reason="length",
     )
 
-    result = agent.run("explain something endless")
+    result = agent.answer_user("explain something endless")
 
     assert result.error == "truncated"
     assert result.final_message == "chunk chunk chunk"
@@ -392,7 +392,7 @@ def test_unrecoverable_llm_error_still_fails(agent_parts) -> None:
         error_kind=LLMErrorKind.UNAVAILABLE,
     )
 
-    result = agent.run("hello")
+    result = agent.answer_user("hello")
 
     assert result.error == "LLM endpoint is unavailable."
     assert result.error_kind == LLMErrorKind.UNAVAILABLE
@@ -405,7 +405,7 @@ def test_empty_response_retries_then_fails(agent_parts) -> None:
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content="   ")
     )
-    result = agent.run("hello")
+    result = agent.answer_user("hello")
     assert result.error == "empty_response"
     assert llm.chat.call_count == 2
 

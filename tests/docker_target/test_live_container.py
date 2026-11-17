@@ -163,7 +163,7 @@ def test_agent_writes_file_on_docker_target(
         ),
     )
 
-    result = agent.run("write a file on the lab container")
+    result = agent.answer_user("write a file on the lab container")
     assert result.final_message == "Wrote the file."
 
     read = docker_target.run(
@@ -222,7 +222,7 @@ def test_agent_sudo_with_container_admin_policy(
         router=ExecutionTargetRouter({"lab": docker_target}, default_name="lab"),
     )
 
-    result = agent.run("are we root in the container with sudo?")
+    result = agent.answer_user("are we root in the container with sudo?")
     assert result.final_message == "root inside lab"
     tool_payload = agent.messages[-2].content
     assert '"success": true' in tool_payload

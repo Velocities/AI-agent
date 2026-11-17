@@ -102,7 +102,7 @@ class Agent:
         if self.on_message is not None:
             self.on_message(message)
 
-    def run(
+    def answer_user(
         self,
         user_input: str,
         *,

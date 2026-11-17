@@ -30,7 +30,7 @@ def main() -> int:
         sys.stdout.write(text)
         sys.stdout.flush()
 
-    result = agent.run(prompt, stream_callback=on_chunk)
+    result = agent.answer_user(prompt, stream_callback=on_chunk)
     total = time.perf_counter() - start
 
     print("\n" + "-" * 60)

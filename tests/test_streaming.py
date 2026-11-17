@@ -381,7 +381,7 @@ def test_agent_streams_plain_text_answer_token_by_token(agent_parts) -> None:
 
     llm.chat_stream = MagicMock(side_effect=fake_chat_stream)
     streamed: list[str] = []
-    result = agent.run("how do I add a table?", stream_callback=streamed.append)
+    result = agent.answer_user("how do I add a table?", stream_callback=streamed.append)
 
     assert streamed == tokens
     assert result.final_message == "Add a Django model first."
@@ -429,7 +429,7 @@ def test_agent_streams_answer_after_tool_call(agent_parts) -> None:
     )
 
     streamed: list[str] = []
-    result = agent.run("is docker up?", stream_callback=streamed.append)
+    result = agent.answer_user("is docker up?", stream_callback=streamed.append)
 
     assert streamed == ["Docker ", "is running."]
     assert result.final_message == "Docker is running."
@@ -465,7 +465,7 @@ def test_agent_streams_resumed_answer_as_one_flow(agent_parts) -> None:
     )
 
     streamed: list[str] = []
-    result = agent.run("explain error handling", stream_callback=streamed.append)
+    result = agent.answer_user("explain error handling", stream_callback=streamed.append)
 
     assert "".join(streamed) == f"{tail} exceptions."
     assert result.final_message == f"{tail} exceptions."
@@ -486,7 +486,7 @@ def test_agent_flushes_plain_content_not_seen_in_deltas(agent_parts) -> None:
 
     llm.chat_stream = MagicMock(side_effect=fake_chat_stream)
     streamed: list[str] = []
-    result = agent.run("hello", stream_callback=streamed.append)
+    result = agent.answer_user("hello", stream_callback=streamed.append)
 
     assert "".join(streamed) == "Hello world"
     assert result.final_message == "Hello world"
@@ -551,7 +551,7 @@ def test_agent_flushes_respond_tail_after_interrupted_json(agent_parts) -> None:
         side_effect=lambda messages, tools=None: next(stream_calls)(messages, tools)
     )
     streamed: list[str] = []
-    result = agent.run("hello", stream_callback=streamed.append)
+    result = agent.answer_user("hello", stream_callback=streamed.append)
 
     assert streamed == ["Hello wo", "rld."]
     assert result.final_message == "rld."
@@ -592,7 +592,7 @@ def test_agent_stream_callback_receives_final_respond_message(agent_parts) -> No
 
     llm.chat_stream = MagicMock(side_effect=fake_chat_stream)
     streamed: list[str] = []
-    result = agent.run("hello", stream_callback=streamed.append)
+    result = agent.answer_user("hello", stream_callback=streamed.append)
 
     assert "".join(streamed) == "Hello world"
     assert result.final_message == "Hello world"
@@ -658,7 +658,7 @@ def test_agent_routes_progress_notes_away_from_answer_text(agent_parts) -> None:
 
     streamed: list[str] = []
     notices: list[str] = []
-    result = agent.run(
+    result = agent.answer_user(
         "hello",
         stream_callback=streamed.append,
         notice_callback=notices.append,
@@ -706,7 +706,7 @@ def test_string_command_argument_returns_tool_error(agent_parts) -> None:
         side_effect=lambda messages, tools=None: next(stream_calls)(messages, tools)
     )
 
-    result = agent.run("show docker", stream_callback=lambda _text: None)
+    result = agent.answer_user("show docker", stream_callback=lambda _text: None)
 
     assert result.final_message == "Recovered."
     tool_messages = [message for message in agent.messages if message.role == "tool"]
@@ -754,7 +754,7 @@ def test_string_command_in_batch_returns_tool_error(agent_parts) -> None:
         side_effect=lambda messages, tools=None: next(stream_calls)(messages, tools)
     )
 
-    result = agent.run("inspect host", stream_callback=lambda _text: None)
+    result = agent.answer_user("inspect host", stream_callback=lambda _text: None)
 
     assert result.final_message == "Done."
     tool_messages = [message for message in agent.messages if message.role == "tool"]
@@ -780,7 +780,7 @@ def test_agent_non_streaming_mode_uses_batch_chat(agent_parts) -> None:
     )
 
     streamed: list[str] = []
-    result = agent.run("hello", stream_callback=streamed.append)
+    result = agent.answer_user("hello", stream_callback=streamed.append)
 
     assert streamed == []
     assert result.final_message == "Batch reply."
