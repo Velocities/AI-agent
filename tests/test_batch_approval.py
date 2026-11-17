@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.loop import Agent
 from ai_agent.agent.tools import build_tool_definitions
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.approval.prompt import ApprovalPrompter, ApprovalResult, PendingCommand
@@ -41,7 +41,7 @@ def agent_parts(tmp_path: Path):
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     llm = MagicMock()
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,

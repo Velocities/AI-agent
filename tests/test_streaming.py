@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.loop import Agent
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -353,7 +353,7 @@ def agent_parts(tmp_path: Path):
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, console)
     prompter.should_auto_run = MagicMock(return_value=True)
     llm = MagicMock()
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,

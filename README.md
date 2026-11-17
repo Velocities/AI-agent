@@ -1073,7 +1073,7 @@ ai_agent/
   speech/         # CPU Vosk transcription and Kokoro-82M synthesis
   conversations/  # SQLite transcript store and Alembic migrations
   cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
-  agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)
+  agent/factory.py # In-process Agent wiring (API turns, smoke tests, local REPL)
   service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router

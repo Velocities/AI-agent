@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from ai_agent.agent.context import gather_runtime_context
-from ai_agent.agent.loop import AgentLoop, AgentRunResult
+from ai_agent.agent.loop import Agent, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -80,7 +80,7 @@ def build_agent(
     access_store: DeploymentAccessStore | None = None,
     key_store: SecureKeyStore | None = None,
     personalization: UserPreferences | None = None,
-) -> AgentLoop:
+) -> Agent:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
     console = console or Console()
@@ -112,7 +112,7 @@ def build_agent(
     llm = create_llm_provider(settings)
     runtime = gather_runtime_context(settings, linux_username=run_as_linux_user)
 
-    return AgentLoop(
+    return Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -155,7 +155,7 @@ def _build_router(
     return ExecutionTargetRouter.local_only(executor)
 
 
-def warmup_agent(agent: AgentLoop, console: Console) -> bool:
+def warmup_agent(agent: Agent, console: Console) -> bool:
     health = agent.llm.healthcheck()
     if not health.ok:
         logger.error("LLM healthcheck failed: %s", health.message)

@@ -100,7 +100,7 @@ class AgentRunResult:
     error_kind: LLMErrorKind | None = None
 
 
-class AgentLoop:
+class Agent:
     def __init__(
         self,
         settings: Settings,
@@ -874,9 +874,9 @@ class AgentLoop:
     def _was_cut_short(response: LLMResponse) -> bool:
         """True when generation stopped for a limit rather than being finished."""
         if response.stop_reason == "length":
-            return AgentLoop._has_generation_output(response.message)
+            return Agent._has_generation_output(response.message)
         if response.error_kind in _RECOVERABLE_TRUNCATION_KINDS:
-            return AgentLoop._has_generation_output(response.message)
+            return Agent._has_generation_output(response.message)
         return False
 
     @staticmethod

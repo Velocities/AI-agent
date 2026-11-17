@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from ai_agent.agent.loop import AgentLoop, AgentRunResult
+from ai_agent.agent.loop import Agent, AgentRunResult
 from ai_agent.api.app import create_app
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.api.transcript import message_from_record, message_metadata
@@ -75,7 +75,7 @@ class _Tokens:
 
 
 class _CapturingAgent:
-    """Stand-in for AgentLoop. Records the images the turn handler handed over."""
+    """Stand-in for Agent. Records the images the turn handler handed over."""
 
     def __init__(self, **_kwargs) -> None:
         self.messages: list[LLMMessage] = []
@@ -574,7 +574,7 @@ def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content="The title is clipped.")
     )
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,

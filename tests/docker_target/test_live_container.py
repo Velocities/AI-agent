@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.loop import Agent
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -111,7 +111,7 @@ def test_sudo_can_write_under_root(docker_target) -> None:
     assert read.success, read.stderr
 
 
-def test_agent_loop_writes_file_on_docker_target(
+def test_agent_writes_file_on_docker_target(
     docker_target, executor, tmp_path: Path
 ) -> None:
     settings = Settings()
@@ -149,7 +149,7 @@ def test_agent_loop_writes_file_on_docker_target(
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -175,7 +175,7 @@ def test_agent_loop_writes_file_on_docker_target(
     assert "via agent loop" in read.stdout
 
 
-def test_agent_loop_sudo_with_container_admin_policy(
+def test_agent_sudo_with_container_admin_policy(
     docker_target, executor, tmp_path: Path
 ) -> None:
     settings = Settings()
@@ -211,7 +211,7 @@ def test_agent_loop_sudo_with_container_admin_policy(
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,

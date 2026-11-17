@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from ai_agent.agent.factory import build_agent
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.loop import Agent
 from ai_agent.agent.tools import build_tool_definitions
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
@@ -298,7 +298,7 @@ def test_agent_omitted_target_runs_local(tmp_path: Path) -> None:
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -349,7 +349,7 @@ def test_agent_rejects_invented_target(tmp_path: Path) -> None:
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
