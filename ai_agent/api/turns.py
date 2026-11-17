@@ -6,7 +6,7 @@ import queue
 import threading
 from collections.abc import Iterator
 
-from ai_agent.agent.loop import AgentCancelled
+from ai_agent.agent.agent import AgentCancelled
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.api.transcript import message_from_record, message_metadata, message_payload
 from ai_agent.approval.session import ApprovalSession

@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from ai_agent.agent.loop import Agent, AgentRunResult
+from ai_agent.agent.agent import Agent, AgentRunResult
 from ai_agent.api.app import create_app
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.api.transcript import message_from_record, message_metadata

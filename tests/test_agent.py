@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.agent.loop import Agent
+from ai_agent.agent.agent import Agent
 from ai_agent.agent.tools import COMMAND_DUMP_NUDGE, CONTINUE_NUDGE
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession

@@ -43,7 +43,7 @@ def main() -> int:
         return 1
 
     counter = ResumeCounter()
-    loop_logger = logging.getLogger("ai_agent.agent.loop")
+    loop_logger = logging.getLogger("ai_agent.agent.assistant")
     loop_logger.setLevel(logging.DEBUG)
     loop_logger.addHandler(counter)
 

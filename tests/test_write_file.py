@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ai_agent.agent.loop import ToolHandler
+from ai_agent.agent.tool_handler import ToolHandler
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.commands.render import render_write_file

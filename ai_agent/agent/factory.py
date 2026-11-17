@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from ai_agent.agent.context import gather_runtime_context
-from ai_agent.agent.loop import Agent, AgentRunResult
+from ai_agent.agent.agent import Agent, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger

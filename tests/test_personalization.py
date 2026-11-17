@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from ai_agent.agent.context import append_personalization, build_system_prompt, gather_runtime_context
-from ai_agent.agent.loop import Agent
+from ai_agent.agent.agent import Agent
 from ai_agent.api.app import create_app
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.api.settings import UserSettingsBody

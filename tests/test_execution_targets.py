@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from ai_agent.agent.factory import build_agent
-from ai_agent.agent.loop import Agent
+from ai_agent.agent.agent import Agent
 from ai_agent.agent.tools import build_tool_definitions
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession

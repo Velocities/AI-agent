@@ -1,4 +1,4 @@
-from ai_agent.agent.loop import ToolHandler
+from ai_agent.agent.tool_handler import ToolHandler
 
 
 def test_parse_command_for_tool_rejects_broken_find_exec() -> None:
