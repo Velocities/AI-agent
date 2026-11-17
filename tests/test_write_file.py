@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ai_agent.agent.loop import Agent
+from ai_agent.agent.loop import ToolHandler
 from ai_agent.commands.ast import parse_command_expr
 from ai_agent.commands.executor import CommandExecutor
 from ai_agent.commands.render import render_write_file
@@ -55,7 +55,7 @@ def test_write_file_policy_is_reversible() -> None:
 
 
 def test_parse_accepts_write_file_with_semicolons_in_content() -> None:
-    expr, err = Agent._parse_command_for_tool(
+    expr, err = ToolHandler._parse_command_for_tool(
         {
             "type": "write_file",
             "path": "/tmp/a.py",

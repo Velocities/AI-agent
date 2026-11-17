@@ -713,7 +713,7 @@ def test_string_command_argument_returns_tool_error(agent_parts) -> None:
     assert tool_messages
     payload = json.loads(tool_messages[-1].content)
     assert payload["success"] is False
-    assert "Invalid command expression" in payload["error"]
+    assert payload["error"] == "command must be a JSON object with a type field"
 
 
 def test_string_command_in_batch_returns_tool_error(agent_parts) -> None:

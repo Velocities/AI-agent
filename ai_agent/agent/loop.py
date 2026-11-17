@@ -139,6 +139,8 @@ class Agent:
         ]
         self.on_message: Callable[[LLMMessage], None] | None = None
         self.should_stop: Callable[[], bool] | None = None
+        self._assistant = AssistantGenerator(llm, settings, self.tool_definitions)
+        self._tools = ToolHandler(policy, prompter, self.router, audit, session)
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""
@@ -179,7 +181,9 @@ class Agent:
             self._raise_if_stopped()
             if iteration_callback is not None:
                 iteration_callback(iteration)
-            response = self._generate_assistant_turn(stream_callback, notice_callback)
+            response = self._assistant._generate_assistant_turn(
+                self.messages, stream_callback, notice_callback
+            )
 
             assistant = response.message
             partial = (assistant.content or "").strip()
@@ -194,7 +198,7 @@ class Agent:
 
             self._append(assistant)
 
-            if self._was_cut_short(response):
+            if self._assistant._was_cut_short(response):
                 return AgentRunResult(
                     final_message=partial,
                     iterations=iteration,
@@ -229,7 +233,9 @@ class Agent:
             if stream_callback is not None and (assistant.content or "").strip():
                 stream_callback("\n\n")
 
-            final_message = self._process_tool_calls(assistant.tool_calls)
+            final_message = self._tools._process_tool_calls(
+                assistant.tool_calls, self._append
+            )
             if final_message is not None:
                 return AgentRunResult(
                     final_message=final_message,
@@ -245,8 +251,23 @@ class Agent:
             error="max_iterations",
         )
 
+
+class AssistantGenerator:
+    """Ask the model for one assistant response, resuming if generation is cut off."""
+
+    def __init__(
+        self,
+        llm: LLMProvider,
+        settings: Settings,
+        tool_definitions: list[dict],
+    ) -> None:
+        self.llm = llm
+        self.settings = settings
+        self.tool_definitions = tool_definitions
+
     def _generate_assistant_turn(
         self,
+        messages: list[LLMMessage],
         stream_callback: Callable[[str], None] | None,
         notice_callback: Callable[[str], None] | None,
     ) -> LLMResponse:
@@ -267,17 +288,17 @@ class Agent:
         for _attempt in range(attempts):
             produced = "".join(fragments)
             resume_tail = produced[-self.settings.agent_continuation_tail :]
-            messages = self._resume_messages(resume_tail) if produced else self.messages
+            prompt = self._resume_messages(messages, resume_tail) if produced else messages
 
             if streaming:
                 response = self._chat_with_stream(
-                    messages,
+                    prompt,
                     stream_callback,
                     notice_callback,
                     resume_tail=resume_tail,
                 )
             else:
-                response = self.llm.chat(messages, tools=self.tool_definitions)
+                response = self.llm.chat(prompt, tools=self.tool_definitions)
 
             content = response.message.content or ""
             if resume_tail:
@@ -307,7 +328,9 @@ class Agent:
             stop_reason="length" if cut_short else response.stop_reason,
         )
 
-    def _resume_messages(self, resume_tail: str) -> list[LLMMessage]:
+    def _resume_messages(
+        self, messages: list[LLMMessage], resume_tail: str
+    ) -> list[LLMMessage]:
         """Prompt for resuming a cut-off answer.
 
         Only the tail of the partial answer is resent so the prompt stays a
@@ -315,7 +338,7 @@ class Agent:
         window and makes the model restart from the beginning.
         """
         return [
-            *self.messages,
+            *messages,
             LLMMessage(role="assistant", content=resume_tail),
             LLMMessage(role="user", content=CONTINUE_NUDGE),
         ]
@@ -406,7 +429,60 @@ class Agent:
             return
         logger.debug("Final content diverged from streamed deltas; skipping flush")
 
-    def _process_tool_calls(self, tool_calls: list[ToolCall]) -> str | None:
+    @staticmethod
+    def _was_cut_short(response: LLMResponse) -> bool:
+        """True when generation stopped for a limit rather than being finished."""
+        if response.stop_reason == "length":
+            return AssistantGenerator._has_generation_output(response.message)
+        if response.error_kind in _RECOVERABLE_TRUNCATION_KINDS:
+            return AssistantGenerator._has_generation_output(response.message)
+        return False
+
+    @staticmethod
+    def _has_generation_output(message: LLMMessage) -> bool:
+        if (message.content or "").strip():
+            return True
+        for call in message.tool_calls:
+            if call.name != "respond":
+                continue
+            if call.arguments.get("message"):
+                return True
+            if call.arguments.get("_malformed"):
+                return True
+        return False
+
+
+@dataclass(frozen=True)
+class PreparedCommand:
+    """One command from a run_commands list, or the reason it did not parse."""
+
+    expr: CommandExpr | None
+    pending: PendingCommand | None
+    error: str | None
+
+
+class ToolHandler:
+    """Turn tool calls into tool messages: commands, respond, and unknown tools."""
+
+    def __init__(
+        self,
+        policy: PolicyEngine,
+        prompter: ApprovalPrompter,
+        router: ExecutionTargetRouter,
+        audit: AuditLogger,
+        session: ApprovalSession,
+    ) -> None:
+        self.policy = policy
+        self.prompter = prompter
+        self.router = router
+        self.audit = audit
+        self.session = session
+
+    def _process_tool_calls(
+        self,
+        tool_calls: list[ToolCall],
+        append: Callable[[LLMMessage], None],
+    ) -> str | None:
         final_message: str | None = None
         command_calls = [
             call for call in tool_calls if call.name in {"run_command", "run_commands"}
@@ -429,7 +505,7 @@ class Agent:
                     tool_messages.append(self._handle_tool_call(call))
 
         for tool_message in tool_messages:
-            self._append(tool_message)
+            append(tool_message)
         return final_message
 
     def _handle_respond(self, call: ToolCall) -> tuple[LLMMessage, str | None]:
@@ -479,6 +555,11 @@ class Agent:
         )
 
     def _handle_batch_tool_calls(self, tool_calls: list[ToolCall]) -> list[LLMMessage]:
+        def abandon_batch() -> list[LLMMessage]:
+            # The combined approval is over. Each call is handled by itself,
+            # which is why this returns one tool message per call.
+            return [self._handle_tool_call(item) for item in tool_calls]
+
         pending: list[PendingCommand] = []
         call_map: list[tuple[ToolCall, object, str, ExecutionTarget | None]] = []
         groups: list[int | None] = []
@@ -490,50 +571,45 @@ class Agent:
                     call.arguments.get("commands", [])
                 )
                 if commands_error or commands is None:
-                    return [self._handle_tool_call(item) for item in tool_calls]
+                    return abandon_batch()
                 call.arguments["commands"] = commands
                 ordering, ordering_error = batch_ordering(call.arguments)
                 if ordering_error:
-                    return [self._handle_tool_call(item) for item in tool_calls]
+                    return abandon_batch()
                 group: int | None = None
                 if ordering == "ordered":
                     group = next_group
                     next_group += 1
-                for command_data in commands:
-                    expr, parse_error = self._parse_command_for_tool(command_data)
-                    if parse_error:
-                        return [self._handle_tool_call(item) for item in tool_calls]
-                    assert expr is not None
+                # An empty list never looks up a target. A bad target, or any
+                # command that does not parse, drops the whole combined batch.
+                target_name = ""
+                target: ExecutionTarget | None = None
+                if commands:
                     target_name, target, target_error = self._resolve_target(
                         call.arguments
                     )
                     if target_error:
-                        return [self._handle_tool_call(item) for item in tool_calls]
-                    decision = self.policy.evaluate(expr)
-                    pending.append(
-                        PendingCommand(
-                            expr=expr,
-                            decision=decision,
-                            reason=call.arguments.get("reason"),
-                            target_display=target.display() if target else None,
-                            target_name=target.name if target else None,
-                            target_kind=target.kind if target else None,
-                        )
-                    )
-                    call_map.append((call, expr, target_name, target))
+                        return abandon_batch()
+                prepared = self._prepare_commands(commands, call.arguments, target)
+                if any(item.error for item in prepared):
+                    return abandon_batch()
+                for item in prepared:
+                    assert item.expr is not None and item.pending is not None
+                    pending.append(item.pending)
+                    call_map.append((call, item.expr, target_name, target))
                     groups.append(group)
             elif call.name == "run_command":
                 expr, parse_error = self._parse_command_for_tool(
                     call.arguments.get("command", {})
                 )
                 if parse_error:
-                    return [self._handle_tool_call(item) for item in tool_calls]
+                    return abandon_batch()
                 assert expr is not None
                 target_name, target, target_error = self._resolve_target(
                     call.arguments
                 )
                 if target_error:
-                    return [self._handle_tool_call(item) for item in tool_calls]
+                    return abandon_batch()
                 decision = self.policy.evaluate(expr)
                 pending.append(
                     PendingCommand(
@@ -591,8 +667,6 @@ class Agent:
                 )
             call.arguments["commands"] = commands
 
-            parsed: list[object | str] = []
-            pending = []
             ordering, ordering_error = batch_ordering(call.arguments)
             if ordering_error:
                 payload = {"success": False, "error": ordering_error}
@@ -611,22 +685,9 @@ class Agent:
                     content=json.dumps(payload, ensure_ascii=True),
                     tool_call_id=call.id,
                 )
-            for command_data in commands:
-                expr, parse_error = self._parse_command_for_tool(command_data)
-                if parse_error:
-                    parsed.append(parse_error)
-                    continue
-                parsed.append(expr)
-                pending.append(
-                    PendingCommand(
-                        expr=expr,
-                        decision=self.policy.evaluate(expr),
-                        reason=call.arguments.get("reason"),
-                        target_display=target.display() if target else None,
-                        target_name=target.name if target else None,
-                        target_kind=target.kind if target else None,
-                    )
-                )
+            # A command that does not parse is one failed entry. The others still run.
+            prepared = self._prepare_commands(commands, call.arguments, target)
+            pending = [item.pending for item in prepared if item.pending is not None]
 
             approval = (
                 self.prompter.prompt_batch(
@@ -644,17 +705,16 @@ class Agent:
             flag_iter = iter(flags)
             payloads = []
             decided: list[dict] = []
-            pending_iter = iter(pending)
-            for item in parsed:
-                if isinstance(item, str):
-                    payloads.append({"success": False, "error": item})
+            for item in prepared:
+                if item.error is not None:
+                    payloads.append({"success": False, "error": item.error})
                     continue
-                pending_item = next(pending_iter)
+                assert item.expr is not None and item.pending is not None
                 payload = self._execute_with_audit(
                     tool_name=call.name,
                     arguments=call.arguments,
-                    expr=item,
-                    decision=pending_item.decision,
+                    expr=item.expr,
+                    decision=item.pending.decision,
                     approved=next(flag_iter),
                     target_name=target_name,
                     target=target,
@@ -731,6 +791,42 @@ class Agent:
             content=json.dumps(payload, ensure_ascii=True),
             tool_call_id=call.id,
         )
+
+    def _prepare_commands(
+        self,
+        commands: list,
+        arguments: dict,
+        target: ExecutionTarget | None,
+    ) -> list[PreparedCommand]:
+        """Parse every command and build a pending approval for each one that parses.
+
+        The returned list has one entry per command, in order. An entry with
+        ``error`` set did not parse. Callers choose what that means.
+        """
+        prepared: list[PreparedCommand] = []
+        for command_data in commands:
+            expr, parse_error = self._parse_command_for_tool(command_data)
+            if parse_error:
+                prepared.append(
+                    PreparedCommand(expr=None, pending=None, error=parse_error)
+                )
+                continue
+            assert expr is not None
+            prepared.append(
+                PreparedCommand(
+                    expr=expr,
+                    pending=PendingCommand(
+                        expr=expr,
+                        decision=self.policy.evaluate(expr),
+                        reason=arguments.get("reason"),
+                        target_display=target.display() if target else None,
+                        target_name=target.name if target else None,
+                        target_kind=target.kind if target else None,
+                    ),
+                    error=None,
+                )
+            )
+        return prepared
 
     @staticmethod
     def _parse_command_for_tool(
@@ -870,24 +966,3 @@ class Agent:
         )
         return payload
 
-    @staticmethod
-    def _was_cut_short(response: LLMResponse) -> bool:
-        """True when generation stopped for a limit rather than being finished."""
-        if response.stop_reason == "length":
-            return Agent._has_generation_output(response.message)
-        if response.error_kind in _RECOVERABLE_TRUNCATION_KINDS:
-            return Agent._has_generation_output(response.message)
-        return False
-
-    @staticmethod
-    def _has_generation_output(message: LLMMessage) -> bool:
-        if (message.content or "").strip():
-            return True
-        for call in message.tool_calls:
-            if call.name != "respond":
-                continue
-            if call.arguments.get("message"):
-                return True
-            if call.arguments.get("_malformed"):
-                return True
-        return False

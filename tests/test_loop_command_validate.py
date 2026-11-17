@@ -1,8 +1,8 @@
-from ai_agent.agent.loop import Agent
+from ai_agent.agent.loop import ToolHandler
 
 
 def test_parse_command_for_tool_rejects_broken_find_exec() -> None:
-    _, err = Agent._parse_command_for_tool(
+    _, err = ToolHandler._parse_command_for_tool(
         {
             "type": "single",
             "argv": [
@@ -22,7 +22,7 @@ def test_parse_command_for_tool_rejects_broken_find_exec() -> None:
 
 
 def test_parse_command_for_tool_rejects_semicolon_chain() -> None:
-    _, err = Agent._parse_command_for_tool(
+    _, err = ToolHandler._parse_command_for_tool(
         {"type": "single", "argv": ["echo", "a", ";", "echo", "b"]},
     )
     assert err is not None
@@ -30,7 +30,7 @@ def test_parse_command_for_tool_rejects_semicolon_chain() -> None:
 
 
 def test_parse_command_for_tool_rejects_semicolon_inside_argv_string() -> None:
-    _, err = Agent._parse_command_for_tool(
+    _, err = ToolHandler._parse_command_for_tool(
         {"type": "single", "argv": ["echo", "hello;world"]},
     )
     assert err is not None
@@ -38,7 +38,7 @@ def test_parse_command_for_tool_rejects_semicolon_inside_argv_string() -> None:
 
 
 def test_parse_command_for_tool_accepts_find_exec_plus() -> None:
-    expr, err = Agent._parse_command_for_tool(
+    expr, err = ToolHandler._parse_command_for_tool(
         {
             "type": "single",
             "argv": [
@@ -64,6 +64,6 @@ def test_parse_command_for_tool_accepts_grep_batch_shapes() -> None:
         {"type": "single", "argv": ["grep", "-R", "-l", "stub", "--include=*.py", "."]},
         {"type": "single", "argv": ["grep", "-R", "-n", "temperature", "--include=*.py", "."]},
     ):
-        expr, err = Agent._parse_command_for_tool(data)
+        expr, err = ToolHandler._parse_command_for_tool(data)
         assert err is None
         assert expr is not None
