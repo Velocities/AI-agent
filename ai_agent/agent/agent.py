@@ -27,6 +27,8 @@ from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.execution_targets.router import ExecutionTargetRouter
 from ai_agent.llm.base import ImageInput, LLMErrorKind, LLMMessage, LLMProvider
 from ai_agent.policy.engine import PolicyEngine
+from ai_agent.workflows.prompt import append_workflow_prompt
+from ai_agent.workflows.session import WorkflowSession
 
 
 @dataclass
@@ -55,6 +57,7 @@ class Agent:
         router: ExecutionTargetRouter | None = None,
         runtime_context: RuntimeContext | None = None,
         personalization: UserPreferences | None = None,
+        workflow_session: WorkflowSession | None = None,
     ):
         self.settings = settings
         self.llm = llm
@@ -64,17 +67,27 @@ class Agent:
         self.audit = audit
         self.prompter = prompter
         self.session = session
-        self.tool_definitions = build_tool_definitions(self.router.names())
+        self.workflow_session = workflow_session
+        tool_names = None
+        if workflow_session is not None:
+            tool_names = [tool.name for tool in workflow_session.manifest.tools]
+        self.tool_definitions = build_tool_definitions(
+            self.router.names(),
+            workflow_tool_names=tool_names,
+        )
         runtime = runtime_context or gather_runtime_context(settings)
-        system_prompt = append_personalization(
-            build_system_prompt(
-                runtime,
-                policy.allowed_binaries(),
-                self.router.summaries(),
-                default_target=self.router.default_name,
-                unlisted_need_approval=policy.unlisted_need_approval(),
+        system_prompt = append_workflow_prompt(
+            append_personalization(
+                build_system_prompt(
+                    runtime,
+                    policy.allowed_binaries(),
+                    self.router.summaries(),
+                    default_target=self.router.default_name,
+                    unlisted_need_approval=policy.unlisted_need_approval(),
+                ),
+                personalization,
             ),
-            personalization,
+            workflow_session,
         )
         self.messages: list[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt)
@@ -82,7 +95,14 @@ class Agent:
         self.on_message: Callable[[LLMMessage], None] | None = None
         self.should_stop: Callable[[], bool] | None = None
         self._assistant = AssistantGenerator(llm, settings, self.tool_definitions)
-        self._tools = ToolHandler(policy, prompter, self.router, audit, session)
+        self._tools = ToolHandler(
+            policy,
+            prompter,
+            self.router,
+            audit,
+            session,
+            workflow=None if workflow_session is None else workflow_session.manifest,
+        )
 
     def warmup(self) -> tuple[bool, str, float]:
         """Load the model with the agent system prompt and tool schema."""

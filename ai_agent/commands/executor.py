@@ -88,6 +88,59 @@ class CommandExecutor:
                 rendered=rendered,
             )
 
+    def run_argv(
+        self,
+        argv: list[str],
+        *,
+        stdin_text: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
+        """Run one argv array. stdin_text is the process stdin, not a shell string."""
+        rendered = " ".join(argv)
+        start = time.perf_counter()
+        try:
+            completed = subprocess.run(
+                argv,
+                input=stdin_text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.timeout,
+                env=env if env is not None else self._safe_env(),
+            )
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            stdout, stdout_truncated = self._limit_output(completed.stdout or "")
+            stderr, stderr_truncated = self._limit_output(completed.stderr or "")
+            return CommandResult(
+                success=completed.returncode == 0,
+                exit_status=completed.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+                truncated=stdout_truncated or stderr_truncated,
+                rendered=rendered,
+            )
+        except subprocess.TimeoutExpired:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            return CommandResult(
+                success=False,
+                exit_status=124,
+                stdout="",
+                stderr=f"Command timed out after {self.timeout}s",
+                duration_ms=duration_ms,
+                rendered=rendered,
+            )
+        except OSError as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            return CommandResult(
+                success=False,
+                exit_status=127,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=duration_ms,
+                rendered=rendered,
+            )
+
     def _execute(self, expr: CommandExpr) -> tuple[int, str, str]:
         if isinstance(expr, SingleCommand):
             return self._run_single(expr.argv, cwd=expr.cwd)

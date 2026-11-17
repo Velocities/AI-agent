@@ -1,0 +1,22 @@
+apiVersion: ai-agent.tool/v1
+name: count-lines
+version: 0.1.0
+description: Count lines in a text string.
+nix:
+  attr: count-lines
+entrypoint: count-lines
+interface:
+  stdin: json
+  stdout: json
+  input:
+    type: object
+    required: [text]
+    properties:
+      text:
+        type: string
+  output:
+    type: object
+    required: [lines]
+    properties:
+      lines:
+        type: integer

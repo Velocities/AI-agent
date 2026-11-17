@@ -13,13 +13,20 @@ from ai_agent.approval.selection import (
 )
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
-from ai_agent.commands.ast import CommandExpr, parse_command_expr
+from ai_agent.commands.ast import CommandExpr, SingleCommand, parse_command_expr
 from ai_agent.commands.render import render_command
 from ai_agent.commands.validate import command_expression_issue
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
+from ai_agent.execution_targets.sandbox import SANDBOX_TARGET_NAME, SandboxExecutionTarget
 from ai_agent.llm.base import LLMMessage, ToolCall
 from ai_agent.policy.engine import PolicyEngine
+from ai_agent.workflows.manifests import (
+    WorkflowError,
+    WorkflowManifest,
+    parse_tool_output,
+    validate_tool_input,
+)
 
 _STRING_COMMANDS_ERROR = (
     "commands must be a JSON array of command objects, not a string. "
@@ -66,12 +73,14 @@ class ToolHandler:
         router: ExecutionTargetRouter,
         audit: AuditLogger,
         session: ApprovalSession,
+        workflow: WorkflowManifest | None = None,
     ) -> None:
         self.policy = policy
         self.prompter = prompter
         self.router = router
         self.audit = audit
         self.session = session
+        self.workflow = workflow
 
     def _process_tool_calls(
         self,
@@ -250,6 +259,9 @@ class ToolHandler:
         ]
 
     def _handle_tool_call(self, call: ToolCall) -> LLMMessage:
+        if call.name == "run_tool":
+            return self._handle_run_tool(call)
+
         if call.name == "run_commands":
             commands, commands_error = coerce_command_list(call.arguments.get("commands", []))
             if commands_error or commands is None:
@@ -387,6 +399,71 @@ class ToolHandler:
             tool_call_id=call.id,
         )
 
+    def _handle_run_tool(self, call: ToolCall) -> LLMMessage:
+        """Run a manifest tool inside the sandbox. The entrypoint comes from the manifest."""
+        if self.workflow is None:
+            return self._tool_error(call, "run_tool is only available inside a workflow session")
+        name = call.arguments.get("tool")
+        raw_input = call.arguments.get("input")
+        if not isinstance(name, str):
+            return self._tool_error(call, "tool must be a workflow tool name")
+        try:
+            tool = self.workflow.tool(name)
+            validate_tool_input(tool, raw_input)
+        except WorkflowError as exc:
+            return self._tool_error(call, str(exc))
+        try:
+            target = self.router.resolve(SANDBOX_TARGET_NAME)
+        except UnknownExecutionTarget as exc:
+            return self._tool_error(call, str(exc))
+        if not isinstance(target, SandboxExecutionTarget):
+            return self._tool_error(call, "run_tool requires the sandbox execution target")
+        expr = SingleCommand(argv=[tool.entrypoint])
+        decision = self.policy.evaluate(expr)
+        if self.prompter.should_auto_run(decision):
+            approved = True
+        else:
+            approval = self.prompter.prompt_single(
+                decision,
+                reason=call.arguments.get("reason"),
+                target_display=target.display(),
+                target_name=target.name,
+                target_kind=target.kind,
+            )
+            approved = approval.approved
+        stdin_text = json.dumps(raw_input)
+        payload = self._execute_with_audit(
+            tool_name=call.name,
+            arguments=call.arguments,
+            expr=expr,
+            decision=decision,
+            approved=approved,
+            target_name=target.name,
+            target=target,
+            runner=lambda: target.run_tool(tool.entrypoint, stdin_text),
+        )
+        if payload.get("success") and isinstance(payload.get("stdout"), str):
+            try:
+                payload["output"] = parse_tool_output(tool, payload["stdout"])
+            except WorkflowError as exc:
+                payload["success"] = False
+                payload["error"] = str(exc)
+        return LLMMessage(
+            role="tool",
+            name=call.name,
+            content=json.dumps(payload, ensure_ascii=True),
+            tool_call_id=call.id,
+        )
+
+    def _tool_error(self, call: ToolCall, message: str) -> LLMMessage:
+        payload = {"success": False, "error": message}
+        return LLMMessage(
+            role="tool",
+            name=call.name,
+            content=json.dumps(payload, ensure_ascii=True),
+            tool_call_id=call.id,
+        )
+
     def _prepare_commands(
         self,
         commands: list,
@@ -463,6 +540,7 @@ class ToolHandler:
         approved: bool,
         target_name: str,
         target: ExecutionTarget | None,
+        runner: Callable[[], object] | None = None,
     ) -> dict:
         payload = self._run_audited(
             tool_name=tool_name,
@@ -472,6 +550,7 @@ class ToolHandler:
             approved=approved,
             target_name=target_name,
             target=target,
+            runner=runner,
         )
         payload.setdefault("rendered_command", render_command(expr))
         payload["execution_target"] = {
@@ -498,6 +577,7 @@ class ToolHandler:
         approved: bool,
         target_name: str,
         target: ExecutionTarget | None,
+        runner: Callable[[], object] | None = None,
     ) -> dict:
         confirmation_required = not self.prompter.should_auto_run(decision)
         if not decision.allowed:
@@ -545,7 +625,7 @@ class ToolHandler:
             }
             return payload
 
-        result = target.run(expr)
+        result = runner() if runner is not None else target.run(expr)
         payload = result.as_tool_payload()
         if result.truncated:
             payload["note"] = "Output was truncated before being returned to the model."

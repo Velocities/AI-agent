@@ -26,6 +26,7 @@ from ai_agent.execution_targets.secure_key_store import OSSecureKeyStore, Secure
 from ai_agent.execution_targets.store import TargetConfigError
 from ai_agent.llm import create_llm_provider
 from ai_agent.policy.engine import PolicyEngine
+from ai_agent.workflows.session import WorkflowSession, router_for_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def build_agent(
     access_store: DeploymentAccessStore | None = None,
     key_store: SecureKeyStore | None = None,
     personalization: UserPreferences | None = None,
+    workflow_session: WorkflowSession | None = None,
 ) -> Agent:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
@@ -93,13 +95,16 @@ def build_agent(
         linux_username=run_as_linux_user,
     )
     try:
-        router = _build_router(
-            executor=executor,
-            user_id=user_id,
-            target_repo=target_repo,
-            access_store=access_store,
-            key_store=key_store,
-        )
+        if workflow_session is None:
+            router = _build_router(
+                executor=executor,
+                user_id=user_id,
+                target_repo=target_repo,
+                access_store=access_store,
+                key_store=key_store,
+            )
+        else:
+            router = router_for_workflow(executor, workflow_session)
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")
         raise
@@ -123,6 +128,7 @@ def build_agent(
         router=router,
         runtime_context=runtime,
         personalization=personalization,
+        workflow_session=workflow_session,
     )
 
 
