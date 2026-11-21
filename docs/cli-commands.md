@@ -35,6 +35,7 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 | `/attach PATH` | Stages a PNG, JPEG, or WebP for the next message. Example: `/attach screenshot.png` then `What's wrong with this UI?` |
 | `/detach` | Drops staged images. `/attach --clear` does the same. |
 | `/new` | Starts a new conversation and drops staged images. |
+| `/workflow` | Lists workflows. `/workflow <name> key=value` starts one in a sandbox container. |
 | `/list` | Lists conversations on the server. |
 | `/server` | Lists saved servers. `*` is the one this chat is using. |
 | `/server URL` | Adds that server or switches to it. A server you have not signed in to ends the chat so you can run `ai-agent login`. |

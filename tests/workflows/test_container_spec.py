@@ -1,17 +1,28 @@
-"""Container launch contract. Bodies are still TODOs."""
+"""Container launch contract. Some bodies are still TODOs."""
+
+from pathlib import Path
 
 import pytest
 
+from ai_agent.workflows.container import ContainerMount, SandboxContainerSpec
 
-def test_run_argv_requires_a_user_namespace():
+
+def test_run_argv_never_opts_out_of_daemon_user_namespace_remap(tmp_path: Path):
     """Container root must not be host root.
 
-    TODO: SandboxContainerSpec(user_namespace="host") raises SandboxSpecError.
-    TODO: an empty user namespace raises SandboxSpecError.
-    TODO: user_namespace="default" is accepted and the argv contains --userns default.
-    TODO: the argv does not contain --privileged or --userns host.
+    Remapping is the daemon's userns-remap setting. The only --userns value
+    docker run accepts is "host", which disables it, so the argv never has one.
     """
-    pytest.skip("TODO")
+    sleep = tmp_path / "user" / "conversation"
+    sleep.mkdir(parents=True)
+    argv = SandboxContainerSpec(
+        image="ai-agent-workflow:text-lab-" + "ab" * 8,
+        container_name="wf" + "cd" * 16,
+        mounts=(ContainerMount(source=sleep, target="/work", read_only=False),),
+        sleep_root=tmp_path,
+    ).run_argv()
+    assert "--userns" not in argv
+    assert "--privileged" not in argv
 
 
 def test_run_argv_rejects_docker_socket_mount():

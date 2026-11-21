@@ -198,6 +198,181 @@ for key, value in replacements.items():
 Path(dest).write_text(text)
 PY
 
+install_docker_broker() {
+  local broker_user=ai-docker
+  local broker_home=/var/lib/ai-docker
+  local broker_template="${script_dir}/ai-agent-docker.service.in"
+  local broker_dest=/etc/systemd/system/ai-agent-docker.service
+  local broker_bin="${venv}/bin/ai-agent-docker-broker"
+  if [[ ! -x "${broker_bin}" ]]; then
+    echo "warning: ${broker_bin} is missing, so the Docker broker was not installed." >&2
+    echo "From ${root}: pip install -e .   then re-run this installer." >&2
+    return 0
+  fi
+  if ! id -u "${broker_user}" >/dev/null 2>&1; then
+    local broker_shell=/usr/sbin/nologin
+    if [[ ! -x "${broker_shell}" ]]; then
+      broker_shell=/bin/false
+    fi
+    useradd \
+      --system \
+      --home-dir "${broker_home}" \
+      --create-home \
+      --shell "${broker_shell}" \
+      "${broker_user}"
+    echo "Created system user ${broker_user}. It is the only account that should open the Docker socket."
+  else
+    usermod -d "${broker_home}" "${broker_user}" || true
+    if [[ "$(getent passwd "${broker_user}" | cut -d: -f6)" != "${broker_home}" ]]; then
+      echo "warning: set ${broker_user} home to ${broker_home}:" >&2
+      echo "  sudo usermod -d ${broker_home} ${broker_user}" >&2
+    fi
+  fi
+  install -d -o "${broker_user}" -g "${broker_user}" -m 0750 "${broker_home}"
+  install -d -o "${broker_user}" -g "${broker_user}" -m 0750 "${broker_home}/.docker"
+  usermod -aG "${service_group}" "${broker_user}"
+  local dir="${root}"
+  while [[ "${dir}" != "/" ]]; do
+    if ! runuser -u "${broker_user}" -- test -x "${dir}" 2>/dev/null; then
+      if command -v setfacl >/dev/null 2>&1; then
+        setfacl -m "u:${broker_user}:--x" "${dir}" || true
+      fi
+    fi
+    dir=$(dirname "${dir}")
+  done
+  install -d -o "${broker_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent/workflow-sleep
+  if ! runuser -u "${broker_user}" -- test -r "${root}/sandbox/Dockerfile" 2>/dev/null; then
+    echo "warning: ${broker_user} cannot read ${root}/sandbox/Dockerfile." >&2
+    echo "Workflow image builds need that tree to be readable by ${broker_user}." >&2
+  fi
+  python3 - \
+    "${broker_template}" \
+    "${broker_dest}" \
+    "${broker_user}" \
+    "${service_group}" \
+    "${service_user}" \
+    "${root}" \
+    "${broker_bin}" <<'PY'
+import sys
+from pathlib import Path
+
+template, dest, user, group, api_user, root, broker_bin = sys.argv[1:]
+
+def escape(value: str) -> str:
+    return value.replace("%", "%%")
+
+text = Path(template).read_text()
+replacements = {
+    "@BROKER_USER@": escape(user),
+    "@SERVICE_GROUP@": escape(group),
+    "@SERVICE_USER@": escape(api_user),
+    "@WORKING_DIRECTORY@": escape(root),
+    "@BROKER_BIN@": escape(broker_bin),
+}
+for key, value in replacements.items():
+    if key not in text:
+        raise SystemExit(f"broker template is missing {key}")
+    text = text.replace(key, value)
+Path(dest).write_text(text)
+PY
+  install -d /etc/systemd/system/ai-agent.service.d
+  cat > /etc/systemd/system/ai-agent.service.d/docker-broker.conf <<EOF
+[Unit]
+After=ai-agent-docker.service
+Wants=ai-agent-docker.service
+
+[Service]
+Environment=AI_AGENT_DOCKER_BROKER=/run/ai-agent/docker.sock
+EOF
+  configure_docker_userns
+  systemctl daemon-reload
+  if ! systemctl enable --now ai-agent-docker.service; then
+    echo "warning: the Docker broker did not start. Workflows stay unavailable until it does." >&2
+  else
+    echo "Docker broker is enabled. The API user ${service_user} is not in the docker group."
+  fi
+}
+
+configure_docker_userns() {
+  local pending=/var/lib/ai-agent/docker-userns.pending
+  if docker info --format '{{range .SecurityOptions}}{{.}} {{end}}' 2>/dev/null | grep -q userns; then
+    rm -f "${pending}"
+    echo "Docker user namespaces are already enabled."
+    return 0
+  fi
+  local running=0
+  if docker ps -q >/dev/null 2>&1; then
+    running=$(docker ps -q | wc -l | tr -d ' ')
+  fi
+  if [[ "${running}" != "0" ]]; then
+    install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
+    echo "userns-remap is not enabled. Other containers were running, so dockerd was left alone." > "${pending}"
+    echo "warning: workflow containers need Docker userns-remap. Other containers are running," >&2
+    echo "so this installer did not restart dockerd. Stop those containers and re-run the installer." >&2
+    return 0
+  fi
+  if ! grep -q '^dockremap:' /etc/subuid 2>/dev/null; then
+    echo 'dockremap:100000:65536' >> /etc/subuid
+  fi
+  if ! grep -q '^dockremap:' /etc/subgid 2>/dev/null; then
+    echo 'dockremap:100000:65536' >> /etc/subgid
+  fi
+  if ! python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/etc/docker/daemon.json")
+data = {}
+if path.exists() and path.read_text().strip():
+    data = json.loads(path.read_text())
+current = data.get("userns-remap")
+if current not in (None, "default"):
+    raise SystemExit(f"leave-userns:{current}")
+data["userns-remap"] = "default"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  then
+    echo "warning: left Docker's userns-remap setting unchanged." >&2
+    return 0
+  fi
+  if ! systemctl restart docker; then
+    python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path("/etc/docker/daemon.json")
+data = json.loads(path.read_text())
+data.pop("userns-remap", None)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+    systemctl restart docker || true
+    echo "userns-remap could not be enabled; dockerd was restored." > "${pending}"
+    echo "warning: could not enable userns-remap. Workflow containers will not start until it is on." >&2
+    return 0
+  fi
+  rm -f "${pending}"
+  echo "Enabled Docker userns-remap so root inside a workflow container is not root on the host."
+}
+
+# Workflow images are built with BuildKit. docker-buildx depends on docker.io,
+# so this also installs the engine when the machine does not have it yet.
+if ! command -v docker >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
+  echo "Installing docker-buildx. Workflow image builds use BuildKit."
+  if ! apt-get update || ! apt-get install -y docker-buildx; then
+    echo "warning: docker-buildx was not installed. Workflow image builds need it." >&2
+    echo "Install it with: sudo apt install docker-buildx" >&2
+    echo "Then re-run this installer." >&2
+  fi
+fi
+
+if command -v docker >/dev/null 2>&1 && getent group docker >/dev/null 2>&1; then
+  install_docker_broker
+else
+  rm -f /etc/systemd/system/ai-agent.service.d/docker-broker.conf
+  systemctl disable --now ai-agent-docker.service >/dev/null 2>&1 || true
+  echo "Docker is not installed. The API still starts. Workflows and Docker targets stay unavailable until Docker is installed and this installer is run again."
+fi
+
 systemctl daemon-reload
 
 cat <<EOF
@@ -207,6 +382,10 @@ Service user: ${service_user}
 Working directory: ${root}
 Local commands run as each approved user's UID/GID (setpriv).
 The unit does not remount the filesystem.
+Workflow image builds use BuildKit. The installer installs the docker-buildx
+package when that plugin is missing. The package depends on Docker.
+Docker is reached through ai-agent-docker.service.
+The API user is not added to the docker group.
 
 The unit is not started and not enabled.
 

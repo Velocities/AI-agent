@@ -57,6 +57,7 @@ fun ChatDrawerContent(
     chat: ChatUiState,
     auth: AuthUiState,
     onNewChat: () -> Unit,
+    onStartWorkflow: (String, Map<String, String>) -> Unit,
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
     onSignOut: () -> Unit,
@@ -67,6 +68,7 @@ fun ChatDrawerContent(
     onOpenApkBuilds: (() -> Unit)? = null,
 ) {
     var pendingDelete by remember { mutableStateOf<ConversationSummary?>(null) }
+    var workflowOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         FilledTonalButton(
@@ -76,6 +78,23 @@ fun ChatDrawerContent(
             Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text("New chat")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { workflowOpen = true },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(48.dp),
+        ) {
+            Text("Workflow")
+        }
+        if (workflowOpen) {
+            WorkflowPickerDialog(
+                workflows = chat.workflows,
+                onDismiss = { workflowOpen = false },
+                onStart = { name, parameters ->
+                    workflowOpen = false
+                    onStartWorkflow(name, parameters)
+                },
+            )
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
@@ -181,12 +200,7 @@ private fun HistoryRow(
     var menuOpen by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
     Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-        Text(
-            titleOf(conversation),
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
@@ -200,7 +214,26 @@ private fun HistoryRow(
                     onLongClickLabel = "Chat options",
                 )
                 .padding(horizontal = 12.dp, vertical = 12.dp),
-        )
+        ) {
+            Text(
+                titleOf(conversation),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val detail = conversation.workflow?.description?.ifBlank { null }
+                ?: conversation.workflow?.name?.takeIf { it.isNotBlank() && it != titleOf(conversation) }
+            detail?.let { line ->
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
                 text = { Text("Delete", color = MaterialTheme.colorScheme.error) },

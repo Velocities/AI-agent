@@ -15,6 +15,7 @@ from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.run_as import build_command_executor
+from ai_agent.docker_broker.client import default_docker_broker
 from ai_agent.config import Settings
 from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.deployment.access import AccessStatus
@@ -94,6 +95,7 @@ def build_agent(
         scratch_dir=settings.agent_scratch_dir,
         linux_username=run_as_linux_user,
     )
+    docker_broker = default_docker_broker()
     try:
         if workflow_session is None:
             router = _build_router(
@@ -102,9 +104,10 @@ def build_agent(
                 target_repo=target_repo,
                 access_store=access_store,
                 key_store=key_store,
+                docker_broker=docker_broker,
             )
         else:
-            router = router_for_workflow(executor, workflow_session)
+            router = router_for_workflow(executor, workflow_session, docker_broker)
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")
         raise
@@ -139,6 +142,7 @@ def _build_router(
     target_repo: UserExecutionTargetRepository | None,
     access_store: DeploymentAccessStore | None,
     key_store: SecureKeyStore | None,
+    docker_broker=None,
 ) -> ExecutionTargetRouter:
     if user_id and target_repo is not None and access_store is not None:
         record = access_store.get(user_id)
@@ -157,6 +161,7 @@ def _build_router(
             executor=executor,
             target_repo=target_repo,
             key_store=store,
+            docker_broker=docker_broker,
         )
     return ExecutionTargetRouter.local_only(executor)
 

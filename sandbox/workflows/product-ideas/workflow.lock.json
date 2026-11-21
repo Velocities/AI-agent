@@ -1,0 +1,12 @@
+{
+  "name": "product-ideas",
+  "version": "0.1.0",
+  "tools": [
+    {
+      "attr": "fetch-pages",
+      "entrypoint": "fetch-pages",
+      "name": "fetch-pages",
+      "version": "0.1.0"
+    }
+  ]
+}

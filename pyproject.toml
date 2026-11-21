@@ -46,6 +46,7 @@ voice = [
 ai-agent = "ai_agent.cli.app:main"
 ai-agent-llm = "ai_agent.cli.llm_serve:main"
 ai-agent-serve = "ai_agent.api.serve:main"
+ai-agent-docker-broker = "ai_agent.docker_broker.server:main"
 
 [tool.setuptools.packages.find]
 where = [".", "clients/cli"]

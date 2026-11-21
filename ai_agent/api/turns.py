@@ -18,6 +18,9 @@ from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore, Message
 from ai_agent.llm.client.types import ImageInput, LLMMessage
 from ai_agent.speech.live import SPEECH_NOT_CONFIGURED, ReplySpeaker
+from ai_agent.workflows.container import SandboxSpecError
+from ai_agent.workflows.manifests import WorkflowError
+from ai_agent.workflows.runtime import WorkflowAttachment, WorkflowRuntimeError, attachment_for
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +91,8 @@ def iter_turn_events(
             emit({"type": "done", "message": "", "error": "cancelled"})
         except ConversationNotFound:
             emit({"type": "error", "message": "Conversation not found."})
+        except (WorkflowError, SandboxSpecError, WorkflowRuntimeError) as exc:
+            emit({"type": "error", "message": str(exc)})
         except Exception:
             logger.exception("Turn failed for conversation %s", conversation_id)
             emit({"type": "error", "message": "The turn failed."})
@@ -144,11 +149,23 @@ def _run_turn(
     )
     if agent_factory is None:
         raise AgentFactoryNotConfigured(AGENT_FACTORY_MISSING_MESSAGE)
+    conversation = store.get_conversation(user_id, conversation_id)
+    if conversation is None:
+        raise ConversationNotFound(conversation_id)
+    attachment: WorkflowAttachment | None = None
+    if conversation.workflow_name:
+        attachment = attachment_for(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            workflow_name=conversation.workflow_name,
+            parameters=conversation.workflow_parameters,
+        )
     agent = agent_factory(
         settings=settings,
         prompter=prompter,
         session=session,
         audit_user=user_id,
+        workflow_attachment=attachment,
     )
     try:
         _drive_agent(

@@ -19,7 +19,7 @@ def closure_fingerprint(manifest: WorkflowManifest, sandbox_root: Path | None = 
     """Hash the Nix inputs for this workflow. Ignores parameters and prompts."""
     root = (sandbox_root or default_sandbox_root()).resolve()
     digest = hashlib.sha256()
-    digest.update(b"workflow-closure-v1\0")
+    digest.update(b"workflow-closure-v2\0")
     digest.update(manifest.name.encode())
     digest.update(b"\0")
     digest.update(manifest.version.encode())
@@ -34,8 +34,8 @@ def closure_fingerprint(manifest: WorkflowManifest, sandbox_root: Path | None = 
         digest.update(tool.entrypoint.encode())
         _hash_tree(digest, tool.directory, skip_names={"tool.yaml"})
     _hash_tree(digest, root / "nix")
-    flake = root / "flake.nix"
-    _hash_file(digest, flake, flake.name)
+    for name in ("flake.nix", "Dockerfile"):
+        _hash_file(digest, root / name, name)
     return digest.hexdigest()[:16]
 
 
@@ -55,12 +55,18 @@ def docker_build_argv(
     sandbox_root: Path | None = None,
     nix_system: str = "x86_64-linux",
 ) -> list[str]:
-    """Build the generic Dockerfile for this workflow's required tools."""
+    """Build the generic Dockerfile with BuildKit.
+
+    ``--load`` puts the finished image in the local engine, which is where
+    the later inspect and ``docker run`` look for it.
+    """
     root = sandbox_root or default_sandbox_root()
     tag = image_tag(manifest, root)
     return [
         "docker",
+        "buildx",
         "build",
+        "--load",
         "--build-arg",
         f"WORKFLOW={manifest.name}",
         "--build-arg",

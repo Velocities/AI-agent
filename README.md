@@ -61,6 +61,7 @@ If you have never run this project, use this table once. You can ignore the othe
 | `pip install -e ".[dev]"` | Installs **ai-agent only** — not Ollama, vLLM, or speech engines |
 | `pip install -e '.[voice]'` | Optional. Vosk and Kokoro-82M Python packages. Weights are a separate step |
 | `.env` file | Start from `.env.example` |
+| `docker-buildx` (Ubuntu) | BuildKit for workflow images. `sudo apt install docker-buildx` also installs Docker. Path G and `sudo deploy/systemd/install.sh` install this package when it is missing |
 
 **Engine installs are separate:**
 
@@ -247,8 +248,10 @@ Run `ai-agent-llm` (facade + warmup) or point `LLM_HOST` directly at the engine 
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv python3-pip acl
+sudo apt install -y python3-venv python3-pip acl docker-buildx
 ```
+
+`docker-buildx` is the BuildKit plugin workflow image builds use. The package depends on Docker, so this installs the engine as well. `sudo deploy/systemd/install.sh` installs the same package if it is still missing.
 
 Install **Ollama** ([ollama.com](https://ollama.com/)) or **vLLM** on the same machine. The Python package does not install them.
 
@@ -357,6 +360,7 @@ ai-agent start     # delegates to systemctl; use sudo if you get “Permission d
 | `activating (start)` a long time | Model warmup | Normal; `sudo journalctl -u ai-agent -f` |
 | Start fails after ~900s | Model too slow to load | Increase `LLM_STARTUP_TIMEOUT` in `.env` and `TimeoutStartSec` in the unit template, reinstall unit |
 | `ollama` / `vllm` not found in journal | Engine not on `PATH` for `ai` | Install Ollama system-wide or set `LLM_OLLAMA_BINARY` / `LLM_VLLM_BINARY` in `.env` |
+| Workflow build cannot find BuildKit, or Docker says the legacy builder is deprecated | `docker-buildx` is not installed | `sudo apt install docker-buildx`, then `sudo deploy/systemd/install.sh` |
 | GPU errors | `ai` not in device groups | `sudo usermod -aG render,video ai`, restart service |
 | API bind error / port in use | vLLM and API both want 8000 | Change `API_BIND_PORT` and tunnel config |
 

@@ -34,12 +34,13 @@ class WorkflowSession:
     def session_file(self) -> dict:
         return session_document(self.manifest, self.parameters)
 
-    def target(self, executor: CommandExecutor) -> SandboxExecutionTarget:
+    def target(self, executor: CommandExecutor, broker=None) -> SandboxExecutionTarget:
         return SandboxExecutionTarget(
             container=self.container_name,
             executor=executor,
             workflow_name=self.manifest.name,
             description=self.manifest.description,
+            broker=broker,
         )
 
 
@@ -52,7 +53,6 @@ def bind_workflow(
     sleep_dir: Path,
     parameters: dict[str, str] | None = None,
     nix_store: Path | None = None,
-    user_namespace: str = "default",
     sleep_root: Path = SLEEP_ROOT,
 ) -> WorkflowSession:
     """Validate a session. This does not start Docker."""
@@ -70,7 +70,6 @@ def bind_workflow(
     spec = SandboxContainerSpec(
         image=image_tag(manifest, sandbox_root),
         container_name=container_name,
-        user_namespace=user_namespace,
         mounts=tuple(mounts),
         sleep_root=sleep_root,
     )
@@ -88,7 +87,8 @@ def bind_workflow(
 def router_for_workflow(
     executor: CommandExecutor,
     session: WorkflowSession,
+    broker=None,
 ) -> ExecutionTargetRouter:
     """The model sees only the sandbox target."""
-    target = session.target(executor)
+    target = session.target(executor, broker=broker)
     return ExecutionTargetRouter({target.name: target}, default_name=target.name)

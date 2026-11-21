@@ -17,6 +17,7 @@ internal object ApiEndpoints {
     const val SPEECH_TRANSCRIBE = "/api/speech/transcribe"
     const val SPEECH_SYNTHESIZE = "/api/speech/synthesize"
     const val MODEL = "/api/model"
+    const val WORKFLOWS = "/api/workflows"
 
     fun conversation(conversationId: String) =
         "$CONVERSATIONS/${encodePathSegment(conversationId)}"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -29,6 +29,8 @@ class Conversation:
     title: str
     created_at: datetime
     updated_at: datetime
+    workflow_name: str = ""
+    workflow_parameters: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -54,15 +56,25 @@ class ConversationStore:
         self.engine = engine
         self._sessions = sessionmaker(bind=engine, expire_on_commit=False)
 
-    def create_conversation(self, user_id: str, *, title: str = "") -> Conversation:
+    def create_conversation(
+        self,
+        user_id: str,
+        *,
+        title: str = "",
+        workflow_name: str = "",
+        workflow_parameters: dict[str, str] | None = None,
+    ) -> Conversation:
         owner = _require_user_id(user_id)
         now = _now()
+        parameters = dict(workflow_parameters or {})
         row = ConversationRow(
             id=str(uuid4()),
             user_id=owner,
             title=_clean_title(title),
             created_at=now,
             updated_at=now,
+            workflow_name=workflow_name.strip() or None,
+            workflow_parameters=parameters or None,
         )
         with self._session() as db:
             db.add(row)
@@ -220,12 +232,16 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _conversation(row: ConversationRow) -> Conversation:
+    raw = row.workflow_parameters if isinstance(row.workflow_parameters, dict) else {}
+    parameters = {str(key): str(value) for key, value in raw.items()}
     return Conversation(
         id=row.id,
         user_id=row.user_id,
         title=row.title,
         created_at=_as_utc(row.created_at),
         updated_at=_as_utc(row.updated_at),
+        workflow_name=row.workflow_name or "",
+        workflow_parameters=parameters,
     )
 
 

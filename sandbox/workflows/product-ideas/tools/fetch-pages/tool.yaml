@@ -1,0 +1,41 @@
+apiVersion: ai-agent.tool/v1
+name: fetch-pages
+version: 0.1.0
+description: >
+  Fetch up to 16 public http(s) URLs in one call and return readable text.
+  Up to 8 requests run at once, with at most 4 to the same host. HTML is
+  reduced to text. Reddit listings, Arctic Shift post JSON, Lobsters
+  stories, Hacker News search JSON, and titled discussion JSON (Stack
+  Exchange, GitHub issues) are turned into titles and posts. A login wall
+  is reported as an error. input is
+  {"urls": ["https://..."], "concurrency": 8, "max_chars": 8000};
+  concurrency and max_chars are optional. output is
+  {"pages": [{"url", "final_url", "status", "title", "text", "error"}],
+  "fetched", "failed"}. It does not crawl links, log in, or accept
+  private-network hosts.
+nix:
+  attr: fetch-pages
+entrypoint: fetch-pages
+interface:
+  stdin: json
+  stdout: json
+  input:
+    type: object
+    required: [urls]
+    properties:
+      urls:
+        type: array
+      concurrency:
+        type: integer
+      max_chars:
+        type: integer
+  output:
+    type: object
+    required: [pages, fetched, failed]
+    properties:
+      pages:
+        type: array
+      fetched:
+        type: integer
+      failed:
+        type: integer

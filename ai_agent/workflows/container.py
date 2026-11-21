@@ -3,6 +3,10 @@
 The model never supplies these arguments. The only writable mount is the
 sleep volume, and it has to live under the workflow sleep root so a container
 cannot be pointed at the user's home or the agent tree.
+
+Root inside the container is not host root because the Docker daemon runs
+with ``userns-remap``. That is daemon-wide configuration, not a ``docker run``
+flag: ``--userns`` only accepts ``host``, which turns remapping off.
 """
 
 from __future__ import annotations
@@ -31,7 +35,6 @@ class ContainerMount:
 class SandboxContainerSpec:
     image: str
     container_name: str
-    user_namespace: str
     mounts: tuple[ContainerMount, ...]
     network: str = "bridge"
     sleep_root: Path = SLEEP_ROOT
@@ -46,8 +49,6 @@ class SandboxContainerSpec:
             "-d",
             "--name",
             self.container_name,
-            "--userns",
-            self.user_namespace,
             "--security-opt",
             "no-new-privileges",
             "--cap-drop",
@@ -58,26 +59,20 @@ class SandboxContainerSpec:
             self.network,
         ]
         for mount in self.mounts:
-            mode = "ro" if mount.read_only else "rw"
-            argv.extend(
-                [
-                    "--mount",
-                    "type=bind,"
-                    f"source={mount.source},"
-                    f"target={mount.target},"
-                    f"{mode}",
-                ]
-            )
+            argv.extend(["--mount", mount_option(mount)])
         argv.extend([self.image, "sleep", "infinity"])
         return argv
 
 
+def mount_option(mount: ContainerMount) -> str:
+    """``--mount`` value. Writable is Docker's default; read-only is ``readonly``."""
+    option = f"type=bind,source={mount.source},target={mount.target}"
+    if mount.read_only:
+        option += ",readonly"
+    return option
+
+
 def validate_spec(spec: SandboxContainerSpec) -> None:
-    if spec.user_namespace.strip().lower() in {"", "host"}:
-        raise SandboxSpecError(
-            "Workflow containers require a user namespace such as 'default'. "
-            "Root inside the container must not be root on the host."
-        )
     if spec.network.strip().lower() == "host":
         raise SandboxSpecError("Workflow containers cannot share the host network.")
     if "/" in spec.docker_bin or spec.docker_bin.startswith("-"):

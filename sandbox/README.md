@@ -40,33 +40,42 @@ cd sandbox
 nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.text-lab
 ```
 
-Build the image. Docker skips this layer when the workflow sources and the
-`WORKFLOW` argument are unchanged. If the tag is already present, skip the
-build and start a container:
+Build the image with BuildKit. On Ubuntu the package is `docker-buildx`
+(`sudo apt install docker-buildx`), which also installs Docker. The systemd
+installer installs that package when the plugin is missing. Docker skips this
+layer when the workflow sources and the `WORKFLOW` argument are unchanged.
+If the tag is already present, skip the build and start a container:
 
 ```bash
-docker build --build-arg WORKFLOW=text-lab --build-arg NIX_SYSTEM=x86_64-linux \
+docker buildx build --load --build-arg WORKFLOW=text-lab --build-arg NIX_SYSTEM=x86_64-linux \
   -t ai-agent-workflow:text-lab sandbox
 ```
 
 The agent tags images as `ai-agent-workflow:<name>-<fingerprint>`. The
-fingerprint covers the lock, the Nix expressions, and the shared libraries.
-It ignores session parameters.
+fingerprint covers the lock, the Nix expressions, the shared libraries, and
+the Dockerfile.
+It ignores session parameters. Preparation behaves like a Makefile rule: if
+that tag is already in the local engine (`docker image inspect`), the build
+is skipped; otherwise the broker builds once and later sessions reuse the
+same image. Each conversation still gets its own container instance. The chat
+can take a message only after the container is ready.
 
 Run a container. Replace the sleep directory with a path under the workflow
-sleep root, not a home directory. The daemon needs a user namespace named
-`default` (`userns-remap` in `/etc/docker/daemon.json`) so root inside the
-container is an ordinary uid on the host.
+sleep root, not a home directory. The daemon must run with
+`"userns-remap": "default"` in `/etc/docker/daemon.json` so root inside the
+container is an ordinary uid on the host. That is a daemon setting, not a
+`docker run` flag; the installer turns it on. Because container root is that
+remapped uid, the sleep directory has to be mode `0777` (its parent stays
+`2770`, so other host users still cannot reach it).
 
 ```bash
-mkdir -p /var/lib/ai-agent/workflow-sleep/demo
+mkdir -p -m 0777 /var/lib/ai-agent/workflow-sleep/demo
 docker run -d --name text-lab-demo \
-  --userns=default \
   --security-opt no-new-privileges \
   --cap-drop SYS_ADMIN \
   --pids-limit 256 \
   --network bridge \
-  --mount type=bind,source=/var/lib/ai-agent/workflow-sleep/demo,target=/work,rw \
+  --mount type=bind,source=/var/lib/ai-agent/workflow-sleep/demo,target=/work \
   ai-agent-workflow:text-lab \
   sleep infinity
 
@@ -107,4 +116,32 @@ agent = build_agent(workflow_session=session)
 
 `bind_workflow` checks the container spec and does not start Docker. Start
 the container with `session.spec.run_argv()` before the model runs commands.
+
+## Example: product-ideas
+
+`fetch-pages` is a separate tool with its own Python. It does not use
+`textkit`. One call takes up to 16 public URLs and fetches them together
+(8 at a time, at most 4 to one host). It returns page text. Reddit listing
+JSON, Arctic Shift post JSON, Lobsters stories, and Hacker News search
+JSON become titles and posts. A login wall is reported as a failed page.
+
+The workflow asks the user five questions first: time, product shape,
+audience, domain, and one constraint. Those answers are not image inputs.
+Build it the same way, with a different workflow name:
+
+```bash
+cd sandbox
+nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.product-ideas
+docker buildx build --load --build-arg WORKFLOW=product-ideas --build-arg NIX_SYSTEM=x86_64-linux \
+  -t ai-agent-workflow:product-ideas sandbox
+```
+
+From a client, start it with `/workflow product-ideas` or the Android
+Workflow button. The model then uses `fetch-pages`, for example:
+
+```bash
+docker exec -i PRODUCT_CONTAINER fetch-pages <<'EOF'
+{"urls":["https://hn.algolia.com/api/v1/search?query=inventory&tags=comment&hitsPerPage=5"]}
+EOF
+```
 

@@ -7,7 +7,7 @@
 # fills in) are not build inputs. The host writes those into /work when it
 # starts a container from this image.
 #
-#   docker build --build-arg WORKFLOW=text-lab -t ai-agent-workflow:text-lab .
+#   docker buildx build --load --build-arg WORKFLOW=text-lab -t ai-agent-workflow:text-lab .
 #
 # The same file builds any workflow that has a workflow.lock.json and a
 # default.nix per tool. Unchanged tools stay in the Nix store of this build
@@ -15,7 +15,8 @@
 # argument are unchanged. Do not mount a fresh empty directory over
 # /nix/store here: that hides the Nix this image needs in order to build.
 
-FROM nixos/nix:2.24 AS build
+# Hub publishes patch tags (2.24.15), not bare 2.24.
+FROM nixos/nix:2.24.15 AS build
 
 ARG WORKFLOW=text-lab
 ARG NIX_SYSTEM=x86_64-linux
@@ -34,7 +35,13 @@ RUN --mount=type=cache,target=/root/.cache/nix \
 
 FROM debian:bookworm-slim
 
-RUN mkdir -p /work && chmod 1777 /work
+# Tools built by Nix use their own OpenSSL, which does not look in
+# /etc/ssl/certs unless SSL_CERT_FILE points there.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /work && chmod 1777 /work
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 COPY --from=build /export/nix/store /nix/store
 COPY --from=build /export/workflow /opt/workflow

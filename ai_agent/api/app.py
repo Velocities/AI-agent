@@ -13,6 +13,7 @@ from ai_agent.api.speech import router as speech_router
 from ai_agent.api.deps import get_current_user, require_deployment_access
 from ai_agent.api.model import router as model_router
 from ai_agent.api.settings import router as settings_router
+from ai_agent.api.workflows import router as workflow_router
 from ai_agent.config import Settings
 from ai_agent.conversations.attachments import AttachmentCatalog
 from ai_agent.conversations.client_logs import ClientLogWriter
@@ -22,6 +23,7 @@ from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
 from ai_agent.llm.capabilities import ModelInfo
 from ai_agent.speech.check import note_speech_configuration
+from ai_agent.workflows.lifecycle import DockerWorkflowLifecycle
 
 __all__ = ["create_app", "get_current_user"]
 
@@ -78,6 +80,7 @@ def create_app(
     app.state.client_logs = (
         ClientLogWriter(settings.resolved_client_log_root()) if store is not None else None
     )
+    app.state.workflow_lifecycle = DockerWorkflowLifecycle()
     note_speech_configuration(settings)
 
     @app.get("/health")
@@ -110,4 +113,5 @@ def create_app(
     app.include_router(model_router)
     app.include_router(settings_router)
     app.include_router(client_logs_router)
+    app.include_router(workflow_router)
     return app

@@ -18,6 +18,8 @@ class ConversationRow(Base):
     title: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    workflow_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    workflow_parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     messages: Mapped[list[MessageRow]] = relationship(
         back_populates="conversation",
