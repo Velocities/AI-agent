@@ -94,6 +94,27 @@ Session parameters are applied by writing `/work/session.json` after the
 container starts, for example `{"label": "north-office"}`. That write does
 not rebuild the image.
 
+## Host policy vs the container
+
+`default_policy.yaml` and command approval apply to **host** execution targets
+(`local`, SSH remotes, and similar). They do **not** gate what runs inside a
+workflow container.
+
+Inside the sandbox, confinement is:
+
+- one container per chat, with `/work` as the writable tree
+- `docker exec` planning and a broker whitelist on the host
+- manifest tools (`run_tool`) whose entrypoints come from the lock file, not
+  from free-form model argv
+
+The model may use `run_command`, `run_commands`, and `run_tool` against the
+`sandbox` target without host confirmation prompts. That is intentional: risk
+is isolated to the container user namespace and network namespace Docker
+gives the workflow image, not to the `ai` API user's host shell.
+
+Copying artifacts from `/work` onto the host is still a separate promotion step
+with its own confirmation.
+
 From the agent, bind a session and pass it to `build_agent`. The model then
 sees only the `sandbox` target and `run_tool` for `count-lines` and
 `count-words`:
@@ -121,7 +142,9 @@ the container with `session.spec.run_argv()` before the model runs commands.
 
 `fetch-pages` is a separate tool with its own Python. It does not use
 `textkit`. One call takes up to 16 public URLs and fetches them together
-(8 at a time, at most 4 to one host). It returns page text. Reddit listing
+(8 at a time, at most 4 to one host). It returns a short `excerpt` per page
+plus clipped `text` for the agent (`run_tool` forwards only parsed JSON, not
+raw stdout). Reddit listing
 JSON, Arctic Shift post JSON, Lobsters stories, and Hacker News search
 JSON become titles and posts. A login wall is reported as a failed page.
 

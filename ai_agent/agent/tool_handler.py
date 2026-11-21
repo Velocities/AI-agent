@@ -20,7 +20,8 @@ from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTar
 from ai_agent.execution_targets.router import ExecutionTargetRouter
 from ai_agent.execution_targets.sandbox import SANDBOX_TARGET_NAME, SandboxExecutionTarget
 from ai_agent.llm.base import LLMMessage, ToolCall
-from ai_agent.policy.engine import PolicyEngine
+from ai_agent.policy.engine import PolicyDecision, PolicyEngine
+from ai_agent.policy.risk import RiskLevel
 from ai_agent.workflows.manifests import (
     WorkflowError,
     WorkflowManifest,
@@ -32,6 +33,10 @@ _STRING_COMMANDS_ERROR = (
     "commands must be a JSON array of command objects, not a string. "
     "Call run_commands again with commands as an array. "
     "Do not split the batch into separate run_command calls."
+)
+
+_SANDBOX_POLICY_REASON = (
+    "Workflow target: commands run in an isolated container; host policy does not apply."
 )
 
 
@@ -81,6 +86,23 @@ class ToolHandler:
         self.audit = audit
         self.session = session
         self.workflow = workflow
+
+    @staticmethod
+    def _sandbox_policy_decision(expr: CommandExpr) -> PolicyDecision:
+        return PolicyDecision(
+            expr=expr,
+            effective_risk=RiskLevel.READ_ONLY,
+            segments=[],
+            allowed=True,
+            reason=_SANDBOX_POLICY_REASON,
+        )
+
+    def _policy_decision(
+        self, expr: CommandExpr, target: ExecutionTarget | None
+    ) -> PolicyDecision:
+        if target is not None and not target.uses_host_policy:
+            return self._sandbox_policy_decision(expr)
+        return self.policy.evaluate(expr)
 
     def _process_tool_calls(
         self,
@@ -214,7 +236,7 @@ class ToolHandler:
                 )
                 if target_error:
                     return abandon_batch()
-                decision = self.policy.evaluate(expr)
+                decision = self._policy_decision(expr, target)
                 pending.append(
                     PendingCommand(
                         expr=expr,
@@ -228,8 +250,16 @@ class ToolHandler:
                 call_map.append((call, expr, target_name, target))
                 groups.append(None)
 
-        approval = self.prompter.prompt_batch(pending, order_groups=groups)
-        flags = approval_flags(approval.approved, approval.accepted, len(pending))
+        sandbox_batch = all(
+            target is not None and not target.uses_host_policy
+            for _call, _expr, _target_name, target in call_map
+        )
+        if sandbox_batch:
+            flags = [True] * len(pending)
+            approval = None
+        else:
+            approval = self.prompter.prompt_batch(pending, order_groups=groups)
+            flags = approval_flags(approval.approved, approval.accepted, len(pending))
         payloads: list[dict] = []
         for index, ((call, expr, target_name, target), item) in enumerate(
             zip(call_map, pending, strict=True)
@@ -296,19 +326,23 @@ class ToolHandler:
             prepared = self._prepare_commands(commands, call.arguments, target)
             pending = [item.pending for item in prepared if item.pending is not None]
 
-            approval = (
-                self.prompter.prompt_batch(
-                    pending,
-                    order_groups=order_groups_for(ordering, len(pending)),
+            if target is not None and not target.uses_host_policy:
+                approval = None
+                flags = [True] * len(pending)
+            else:
+                approval = (
+                    self.prompter.prompt_batch(
+                        pending,
+                        order_groups=order_groups_for(ordering, len(pending)),
+                    )
+                    if pending
+                    else None
                 )
-                if pending
-                else None
-            )
-            flags = (
-                approval_flags(approval.approved, approval.accepted, len(pending))
-                if approval is not None
-                else []
-            )
+                flags = (
+                    approval_flags(approval.approved, approval.accepted, len(pending))
+                    if approval is not None
+                    else []
+                )
             flag_iter = iter(flags)
             payloads = []
             decided: list[dict] = []
@@ -361,9 +395,10 @@ class ToolHandler:
                     tool_call_id=call.id,
                 )
 
-            decision = self.policy.evaluate(expr)
-            auto = self.prompter.should_auto_run(decision)
-            if auto:
+            decision = self._policy_decision(expr, target)
+            if target is not None and not target.uses_host_policy:
+                approval_granted = True
+            elif self.prompter.should_auto_run(decision):
                 approval_granted = True
             else:
                 approval = self.prompter.prompt_single(
@@ -419,18 +454,8 @@ class ToolHandler:
         if not isinstance(target, SandboxExecutionTarget):
             return self._tool_error(call, "run_tool requires the sandbox execution target")
         expr = SingleCommand(argv=[tool.entrypoint])
-        decision = self.policy.evaluate(expr)
-        if self.prompter.should_auto_run(decision):
-            approved = True
-        else:
-            approval = self.prompter.prompt_single(
-                decision,
-                reason=call.arguments.get("reason"),
-                target_display=target.display(),
-                target_name=target.name,
-                target_kind=target.kind,
-            )
-            approved = approval.approved
+        decision = self._sandbox_policy_decision(expr)
+        approved = True
         stdin_text = json.dumps(raw_input)
         payload = self._execute_with_audit(
             tool_name=call.name,
@@ -442,18 +467,39 @@ class ToolHandler:
             target=target,
             runner=lambda: target.run_tool(tool.entrypoint, stdin_text),
         )
-        if payload.get("success") and isinstance(payload.get("stdout"), str):
-            try:
-                payload["output"] = parse_tool_output(tool, payload["stdout"])
-            except WorkflowError as exc:
-                payload["success"] = False
-                payload["error"] = str(exc)
+        payload = self._run_tool_payload(payload, tool)
         return LLMMessage(
             role="tool",
             name=call.name,
             content=json.dumps(payload, ensure_ascii=True),
             tool_call_id=call.id,
         )
+
+    @staticmethod
+    def _run_tool_payload(payload: dict, tool: WorkflowTool) -> dict:
+        """Return parsed tool JSON only — do not echo raw stdout to the model."""
+        slim: dict = {
+            "success": payload.get("success", False),
+            "exit_status": payload.get("exit_status"),
+            "execution_target": payload.get("execution_target"),
+        }
+        stdout = payload.get("stdout")
+        if payload.get("success") and isinstance(stdout, str):
+            try:
+                slim["output"] = parse_tool_output(tool, stdout)
+            except WorkflowError as exc:
+                slim["success"] = False
+                slim["error"] = str(exc)
+            return slim
+        if payload.get("error"):
+            slim["error"] = payload["error"]
+        if payload.get("stderr"):
+            slim["stderr"] = payload["stderr"]
+        if payload.get("user_denied"):
+            slim["user_denied"] = True
+        if payload.get("policy_denied"):
+            slim["policy_denied"] = True
+        return slim
 
     def _tool_error(self, call: ToolCall, message: str) -> LLMMessage:
         payload = {"success": False, "error": message}
@@ -489,7 +535,7 @@ class ToolHandler:
                     expr=expr,
                     pending=PendingCommand(
                         expr=expr,
-                        decision=self.policy.evaluate(expr),
+                        decision=self._policy_decision(expr, target),
                         reason=arguments.get("reason"),
                         target_display=target.display() if target else None,
                         target_name=target.name if target else None,
@@ -579,7 +625,10 @@ class ToolHandler:
         target: ExecutionTarget | None,
         runner: Callable[[], object] | None = None,
     ) -> dict:
-        confirmation_required = not self.prompter.should_auto_run(decision)
+        skip_host_approval = target is not None and not target.uses_host_policy
+        confirmation_required = (
+            not skip_host_approval and not self.prompter.should_auto_run(decision)
+        )
         if not decision.allowed:
             payload = {
                 "success": False,

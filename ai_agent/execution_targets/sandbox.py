@@ -51,6 +51,12 @@ class SandboxExecutionTarget(ExecutionTarget):
     def display(self) -> str:
         return f"{self.name} (workflow {self.workflow_name})"
 
+    @property
+    def uses_host_policy(self) -> bool:
+        # Confinement is the container, /work layout, and broker exec whitelist.
+        # default_policy.yaml applies to the host agent user, not argv inside Docker.
+        return False
+
     def run(self, expr: CommandExpr) -> CommandResult:
         try:
             if isinstance(expr, WriteFileCommand):
