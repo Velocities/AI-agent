@@ -38,11 +38,11 @@ def create_engine(
         return VLLMEngine(
             upstream,
             model=settings.llm_model,
-            max_tokens=settings.vllm_max_tokens,
+            max_tokens=settings.llm_max_output_tokens,
         )
     return OllamaEngine(
         upstream,
         model=settings.llm_model,
-        num_predict=settings.ollama_num_predict,
-        num_ctx=settings.ollama_num_ctx,
+        num_predict=settings.llm_max_output_tokens,
+        num_ctx=settings.llm_context_length,
     )

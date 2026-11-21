@@ -52,7 +52,7 @@ def run_error_notice(error: str | None) -> str | None:
         return "Agent stopped at the tool iteration limit."
     if error == "truncated":
         return (
-            "Answer stopped early after repeated cutoffs. Raise OLLAMA_NUM_CTX (Ollama) or "
+            "Answer stopped early after repeated cutoffs. Raise LLM_CONTEXT_LENGTH or "
             "AGENT_MAX_CONTINUATIONS, or ask for a smaller piece at a time."
         )
     if error == "empty_response":

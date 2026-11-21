@@ -115,23 +115,27 @@ class Settings(BaseSettings):
         alias="LLM_VLLM_BINARY",
         description="Optional path to the vllm executable.",
     )
-    ollama_num_predict: int | None = Field(
-        default=None,
-        alias="OLLAMA_NUM_PREDICT",
-        description="Optional num_predict override (Ollama engine only).",
-    )
-    ollama_num_ctx: int | None = Field(
+    llm_context_length: int = Field(
         default=16384,
-        alias="OLLAMA_NUM_CTX",
+        ge=1,
+        validation_alias=AliasChoices("LLM_CONTEXT_LENGTH", "OLLAMA_NUM_CTX"),
         description=(
-            "Ollama context window (Ollama engine only). The default of 4096 "
-            "truncates long answers, so this is raised explicitly."
+            "Model context window in tokens (Ollama num_ctx, vLLM --max-model-len). "
+            "Both engine kinds use the same unit."
         ),
     )
-    vllm_max_tokens: int | None = Field(
+    llm_max_output_tokens: int | None = Field(
         default=None,
-        alias="VLLM_MAX_TOKENS",
-        description="Optional vLLM max_tokens override for chat completions.",
+        ge=1,
+        validation_alias=AliasChoices(
+            "LLM_MAX_OUTPUT_TOKENS",
+            "OLLAMA_NUM_PREDICT",
+            "VLLM_MAX_TOKENS",
+        ),
+        description=(
+            "Optional cap on reply length in tokens (Ollama num_predict, "
+            "vLLM max_tokens on chat completions)."
+        ),
     )
 
     agent_log_level: str = Field(default="INFO", alias="AGENT_LOG_LEVEL")

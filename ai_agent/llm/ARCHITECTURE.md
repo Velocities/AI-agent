@@ -67,7 +67,8 @@ Used by `ai-agent-llm`. Owns model lifecycle (healthcheck, warmup, bind URL).
 | `LLM_MODEL` | Both | Model name/id for the configured engine |
 | `LLM_UPSTREAM` | Server | Real engine URL (Ollama, vLLM, …) |
 | `LLM_ENGINE` | Server | `ollama` or `vllm` |
-| `OLLAMA_NUM_CTX` | Server | Ollama engine only |
+| `LLM_CONTEXT_LENGTH` | Server | Context window in tokens (Ollama `num_ctx`, vLLM `--max-model-len`) |
+| `LLM_MAX_OUTPUT_TOKENS` | Server | Optional reply cap in tokens (Ollama `num_predict`, vLLM `max_tokens`) |
 
 When `LLM_MODEL` is wrong for the chosen engine, startup reports:
 `ModelMissingError: the requested model '…' is not available with {Ollama|vLLM} at …`
