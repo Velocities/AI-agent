@@ -26,8 +26,9 @@ MAX_BODY_BYTES = 1_000_000
 DEFAULT_CONCURRENCY = 8
 MAX_CONCURRENCY = 8
 HOST_CONCURRENCY = 4
-DEFAULT_CHARS = 8000
-MAX_CHARS = 12000
+DEFAULT_CHARS = 3000
+DEFAULT_EXCERPT_CHARS = 1200
+MAX_CHARS = 6000
 MIN_CHARS = 500
 TIMEOUT_SECONDS = 12
 USER_AGENT = "ai-agent-fetch-pages/0.1 (public page text; no login)"
@@ -476,11 +477,15 @@ def _bounded_int(value, name: str, low: int, high: int) -> int:
 
 
 def _page(url, *, final_url="", status=0, title="", text="", error="") -> dict:
+    excerpt = _clip(text, DEFAULT_EXCERPT_CHARS)
+    if text and len(text) > len(excerpt):
+        excerpt = excerpt.rstrip() + "…"
     return {
         "url": url,
         "final_url": final_url or url,
         "status": status,
         "title": _clip(title, 200).replace("\n", " "),
+        "excerpt": excerpt,
         "text": text,
         "error": error,
     }
