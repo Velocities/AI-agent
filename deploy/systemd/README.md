@@ -127,6 +127,16 @@ Host monitoring is a second allowlist in the same SQLite file. It does not follo
 ai-agent config monitoring grant <user_id>
 ai-agent config monitoring list
 ai-agent config monitoring revoke <user_id>
+
+Workflow containers (one per workflow chat) can be listed or removed on the host:
+
+```bash
+ai-agent config workflow-containers list --service-db
+ai-agent config workflow-containers rm wf40f11de7c8a9b0012345678abcdef01
+ai-agent config workflow-containers rm --all --state stopped -y
+```
+
+Requires permission to run `docker` on the server. See `docs/cli-commands.md`.
 ```
 
 Use `--service-db` the same way as `config access` when you mean the shared deployment database. `grant` can be repeated. `revoke` removes the row; revoking an unknown id fails so a typo is obvious. The API sees the change on the next request. The Android Monitoring button is decided at sign-in, so it stays until the user signs in again.

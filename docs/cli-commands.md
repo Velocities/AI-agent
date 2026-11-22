@@ -89,6 +89,24 @@ Changes how this deployment runs. It does not open a chat. Subcommands that edit
 | `ai-agent config monitoring` | Grants or revokes host-monitoring admins. |
 | `ai-agent config service-access` | Explains which Linux account runs local commands. |
 | `ai-agent config execution-target` | Adds SSH or Docker machines the agent may run commands on. |
+| `ai-agent config workflow-containers` | Lists or removes workflow sandbox containers (`wf…`) on this host. |
+
+### `ai-agent config workflow-containers`
+
+Workflow chats start a Docker container per conversation (name `wf` + hex). This is an **on-host** admin tool: it calls the `docker` CLI directly, not the API Docker broker. Run it on the server with permission to use Docker (often `sudo` or membership in the `docker` group).
+
+Removing a container does not delete workflow files under `/var/lib/ai-agent/workflow-sleep/` (the bind-mounted `/work` tree). Chats remain in SQLite; the next agent turn may start a new container.
+
+| Command | What it does |
+|---------|----------------|
+| `ai-agent config workflow-containers list` | Shows every workflow container and Docker state. |
+| `ai-agent config workflow-containers list --state running` | Only containers that are up (`sleep infinity`). |
+| `ai-agent config workflow-containers list --state stopped` | Exited, paused, restarting, or created. |
+| `ai-agent config workflow-containers list --state dead` | Dead containers only. |
+| `ai-agent config workflow-containers list --service-db` | Adds workflow name and chat title from the deployment database. |
+| `ai-agent config workflow-containers rm NAME …` | `docker rm -f` on one or more `wf…` names. |
+| `ai-agent config workflow-containers rm --all` | Remove every workflow container (asks for confirmation). |
+| `ai-agent config workflow-containers rm --all --state stopped -y` | Remove stopped workflow containers without prompting. |
 
 ### `ai-agent config remote-provider`
 
