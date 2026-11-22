@@ -6,7 +6,7 @@ import pytest
 def test_load_text_lab_manifest():
     """text-lab loads both tools from tool.yaml.
 
-    TODO: load_workflow(default_sandbox_root(), "text-lab").
+    TODO: load_workflow(default_workflow_image_root(), "text-lab").
     TODO: assert the tool names are count-lines and count-words, in that order.
     TODO: assert each tool's entrypoint equals its nix attr and its directory name.
     """

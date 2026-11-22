@@ -18,7 +18,7 @@ from ai_agent.commands.render import render_command
 from ai_agent.commands.validate import command_expression_issue
 from ai_agent.execution_targets.base import ExecutionTarget, UnknownExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter
-from ai_agent.execution_targets.sandbox import SANDBOX_TARGET_NAME, SandboxExecutionTarget
+from ai_agent.execution_targets.workflow import WORKFLOW_TARGET_NAME, WorkflowExecutionTarget
 from ai_agent.llm.base import LLMMessage, ToolCall
 from ai_agent.policy.engine import PolicyDecision, PolicyEngine
 from ai_agent.policy.risk import RiskLevel
@@ -35,7 +35,7 @@ _STRING_COMMANDS_ERROR = (
     "Do not split the batch into separate run_command calls."
 )
 
-_SANDBOX_POLICY_REASON = (
+_WORKFLOW_POLICY_REASON = (
     "Workflow target: commands run in an isolated container; host policy does not apply."
 )
 
@@ -88,20 +88,20 @@ class ToolHandler:
         self.workflow = workflow
 
     @staticmethod
-    def _sandbox_policy_decision(expr: CommandExpr) -> PolicyDecision:
+    def _workflow_policy_decision(expr: CommandExpr) -> PolicyDecision:
         return PolicyDecision(
             expr=expr,
             effective_risk=RiskLevel.READ_ONLY,
             segments=[],
             allowed=True,
-            reason=_SANDBOX_POLICY_REASON,
+            reason=_WORKFLOW_POLICY_REASON,
         )
 
     def _policy_decision(
         self, expr: CommandExpr, target: ExecutionTarget | None
     ) -> PolicyDecision:
         if target is not None and not target.uses_host_policy:
-            return self._sandbox_policy_decision(expr)
+            return self._workflow_policy_decision(expr)
         return self.policy.evaluate(expr)
 
     def _process_tool_calls(
@@ -250,11 +250,11 @@ class ToolHandler:
                 call_map.append((call, expr, target_name, target))
                 groups.append(None)
 
-        sandbox_batch = all(
+        workflow_batch = all(
             target is not None and not target.uses_host_policy
             for _call, _expr, _target_name, target in call_map
         )
-        if sandbox_batch:
+        if workflow_batch:
             flags = [True] * len(pending)
             approval = None
         else:
@@ -435,7 +435,7 @@ class ToolHandler:
         )
 
     def _handle_run_tool(self, call: ToolCall) -> LLMMessage:
-        """Run a manifest tool inside the sandbox. The entrypoint comes from the manifest."""
+        """Run a manifest tool inside the workflow container. The entrypoint comes from the manifest."""
         if self.workflow is None:
             return self._tool_error(call, "run_tool is only available inside a workflow session")
         name = call.arguments.get("tool")
@@ -448,13 +448,13 @@ class ToolHandler:
         except WorkflowError as exc:
             return self._tool_error(call, str(exc))
         try:
-            target = self.router.resolve(SANDBOX_TARGET_NAME)
+            target = self.router.resolve(WORKFLOW_TARGET_NAME)
         except UnknownExecutionTarget as exc:
             return self._tool_error(call, str(exc))
-        if not isinstance(target, SandboxExecutionTarget):
-            return self._tool_error(call, "run_tool requires the sandbox execution target")
+        if not isinstance(target, WorkflowExecutionTarget):
+            return self._tool_error(call, "run_tool requires the workflow execution target")
         expr = SingleCommand(argv=[tool.entrypoint])
-        decision = self._sandbox_policy_decision(expr)
+        decision = self._workflow_policy_decision(expr)
         approved = True
         stdin_text = json.dumps(raw_input)
         payload = self._execute_with_audit(

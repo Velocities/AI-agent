@@ -34,7 +34,7 @@ def test_run_tool_payload_drops_stdout() -> None:
         "exit_status": 0,
         "stdout": stdout,
         "stderr": "",
-        "execution_target": {"name": "sandbox", "kind": "sandbox"},
+        "execution_target": {"name": "workflow", "kind": "workflow"},
     }
     slim = ToolHandler._run_tool_payload(payload, tool)
     assert "stdout" not in slim

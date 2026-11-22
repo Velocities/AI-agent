@@ -110,14 +110,15 @@ class WorkflowManifest:
         raise WorkflowError(f"Unknown workflow tool {name!r}. Tools: {known}")
 
 
-def default_sandbox_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "sandbox"
+def default_workflow_image_root() -> Path:
+    """Tree with the generic workflow Dockerfile, flakes, and workflow manifests."""
+    return Path(__file__).resolve().parents[2] / "workflow_image"
 
 
-def load_workflow(sandbox_root: Path, name: str) -> WorkflowManifest:
+def load_workflow(workflow_image_root: Path, name: str) -> WorkflowManifest:
     """Load one workflow directory and require its lock to match the YAML."""
     workflow_name = _segment(name, "workflow name")
-    directory = sandbox_root / "workflows" / workflow_name
+    directory = workflow_image_root / "workflows" / workflow_name
     workflow_path = directory / "workflow.yaml"
     if not workflow_path.is_file():
         raise WorkflowError(f"No workflow.yaml in {directory}")

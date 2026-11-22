@@ -183,7 +183,7 @@ def _run_tool_definition(tool_names: list[str]) -> dict:
         "function": {
             "name": "run_tool",
             "description": (
-                "Run one workflow tool inside the sandbox container. "
+                "Run one workflow tool inside the workflow container. "
                 "tool is a name from this workflow. input is a JSON object "
                 "for that tool. The executable and its dependencies are fixed "
                 "by the workflow; do not pass a binary path."

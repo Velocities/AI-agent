@@ -36,7 +36,7 @@ class BrokerServer:
         path: Path,
         *,
         runner,
-        sandbox_root: Path,
+        workflow_image_root: Path,
         api_uid: int | None,
         sleep_root: Path = SLEEP_ROOT,
         run_guard=None,
@@ -44,7 +44,7 @@ class BrokerServer:
         self.path = Path(path)
         self.broker = DockerBroker(
             runner,
-            sandbox_root=sandbox_root,
+            workflow_image_root=workflow_image_root,
             sleep_root=sleep_root,
             run_guard=run_guard,
         )
@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the AI Agent Docker broker.")
     parser.add_argument("--socket", default="/run/ai-agent/docker.sock")
     parser.add_argument("--api-user", required=True)
-    parser.add_argument("--sandbox-root", required=True)
+    parser.add_argument("--workflow-image-root", required=True)
     parser.add_argument("--sleep-root", default=str(SLEEP_ROOT))
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
     server = BrokerServer(
         path,
         runner=subprocess_runner,
-        sandbox_root=Path(args.sandbox_root),
+        workflow_image_root=Path(args.workflow_image_root),
         api_uid=api_uid,
         sleep_root=Path(args.sleep_root),
         run_guard=UsernsRemapGuard(),

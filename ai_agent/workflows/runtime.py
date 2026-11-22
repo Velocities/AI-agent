@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_agent.workflows.container import SLEEP_ROOT
-from ai_agent.workflows.manifests import WorkflowError, default_sandbox_root
+from ai_agent.workflows.manifests import WorkflowError, default_workflow_image_root
 from ai_agent.workflows.session import WorkflowSession, bind_workflow
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,10 @@ def open_attached_workflow(
     attachment: WorkflowAttachment,
     linux_username: str,
     *,
-    sandbox_root: Path | None = None,
+    workflow_image_root: Path | None = None,
 ) -> WorkflowSession:
     return bind_workflow(
-        sandbox_root or default_sandbox_root(),
+        workflow_image_root or default_workflow_image_root(),
         attachment.name,
         linux_username=linux_username,
         container_name=attachment.container_name,
@@ -83,13 +83,13 @@ def start_workflow_container(
     attachment: WorkflowAttachment,
     linux_username: str,
     *,
-    sandbox_root: Path | None = None,
+    workflow_image_root: Path | None = None,
 ) -> WorkflowSession:
     """Create or start the conversation's container and write session.json."""
     session = open_attached_workflow(
         attachment,
         linux_username,
-        sandbox_root=sandbox_root,
+        workflow_image_root=workflow_image_root,
     )
     ensure_workflow_container(session)
     return session
@@ -122,7 +122,7 @@ def ensure_workflow_container(session: WorkflowSession) -> None:
             raise WorkflowRuntimeError(
                 detail
                 or f"Could not start workflow image {session.image}. "
-                "Build it with the sandbox Dockerfile before opening this workflow."
+                "Build it with the workflow image Dockerfile before opening this workflow."
             )
     elif inspect.stdout.strip() != "true":
         resumed = _docker(docker, "start", session.container_name)

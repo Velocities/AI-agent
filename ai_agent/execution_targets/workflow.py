@@ -15,15 +15,15 @@ from ai_agent.execution_targets.base import ExecutionTarget
 from ai_agent.execution_targets.remote_script import render_posix_script
 
 WORK_ROOT = "/work"
-SANDBOX_TARGET_NAME = "sandbox"
+WORKFLOW_TARGET_NAME = "workflow"
 
 
-class SandboxEscape(ValueError):
-    """A path would leave the container work directory."""
+class WorkflowPathEscape(ValueError):
+    """A path would leave the workflow container work directory."""
 
 
-class SandboxExecutionTarget(ExecutionTarget):
-    kind = "sandbox"
+class WorkflowExecutionTarget(ExecutionTarget):
+    kind = "workflow"
 
     def __init__(
         self,
@@ -31,15 +31,15 @@ class SandboxExecutionTarget(ExecutionTarget):
         container: str,
         executor: CommandExecutor,
         workflow_name: str,
-        name: str = SANDBOX_TARGET_NAME,
+        name: str = WORKFLOW_TARGET_NAME,
         description: str = "",
         docker_bin: str = "docker",
         broker=None,
     ):
         if not container or container.startswith("-") or "/" in container:
-            raise SandboxEscape(f"Invalid sandbox container name {container!r}.")
+            raise WorkflowPathEscape(f"Invalid workflow container name {container!r}.")
         if "/" in docker_bin or docker_bin.startswith("-"):
-            raise SandboxEscape("docker_bin must be a command name.")
+            raise WorkflowPathEscape("docker_bin must be a command name.")
         self.name = name
         self.description = description or f"Workflow {workflow_name} container"
         self.container = container
@@ -76,7 +76,7 @@ class SandboxExecutionTarget(ExecutionTarget):
                 script=script,
                 docker_bin=self.docker_bin,
             )
-        except (SandboxEscape, BrokerRejected) as exc:
+        except (WorkflowPathEscape, BrokerRejected) as exc:
             return self._rejected(expr, str(exc))
         return self._finish(
             planned,
@@ -224,7 +224,7 @@ class SandboxExecutionTarget(ExecutionTarget):
             stderr=message,
             duration_ms=0,
             rendered=render_command(expr),
-            metadata={"execution_target": self.name, "sandbox_rejected": True},
+            metadata={"execution_target": self.name, "workflow_rejected": True},
         )
 
     def _rejected_message(self, message: str) -> CommandResult:
@@ -235,7 +235,7 @@ class SandboxExecutionTarget(ExecutionTarget):
             stderr=message,
             duration_ms=0,
             rendered="",
-            metadata={"execution_target": self.name, "sandbox_rejected": True},
+            metadata={"execution_target": self.name, "workflow_rejected": True},
         )
 
 
@@ -243,24 +243,24 @@ def _workflow_cwd(cwd: str | None) -> str:
     """Workflow commands stay under /work. The path is inside the container."""
     chosen = cwd or WORK_ROOT
     if chosen != WORK_ROOT and not chosen.startswith(WORK_ROOT + "/"):
-        raise SandboxEscape("Commands in a workflow stay under /work.")
+        raise WorkflowPathEscape("Commands in a workflow stay under /work.")
     if any(part in {".", ".."} for part in chosen.split("/")):
-        raise SandboxEscape("Commands in a workflow stay under /work.")
+        raise WorkflowPathEscape("Commands in a workflow stay under /work.")
     return chosen
 
 
 def confine_work_path(path: str) -> str:
     """Lexically force a write_file path to stay under /work."""
     if not isinstance(path, str) or not path.strip() or "\0" in path:
-        raise SandboxEscape("write_file path is empty or contains NUL.")
+        raise WorkflowPathEscape("write_file path is empty or contains NUL.")
     raw = path if path.startswith("/") else f"{WORK_ROOT}/{path}"
     parts: list[str] = []
     for part in raw.split("/"):
         if part in {"", "."}:
             continue
         if part == "..":
-            raise SandboxEscape("write_file path cannot contain '..'.")
+            raise WorkflowPathEscape("write_file path cannot contain '..'.")
         parts.append(part)
     if not parts or parts[0] != "work":
-        raise SandboxEscape("write_file only writes under /work inside the workflow container.")
+        raise WorkflowPathEscape("write_file only writes under /work inside the workflow container.")
     return "/" + "/".join(parts)

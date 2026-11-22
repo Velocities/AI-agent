@@ -34,10 +34,10 @@ from ai_agent.conversations.store import (
 from ai_agent.deployment.access import ACCESS_INCOMPLETE_CODE, ACCESS_INCOMPLETE_MESSAGE
 from ai_agent.images import ImageRejected, validate_image_bytes
 from ai_agent.llm.client.types import ImageInput, LLMMessage
-from ai_agent.workflows.container import SandboxSpecError
+from ai_agent.workflows.container import WorkflowSpecError
 from ai_agent.workflows.manifests import (
     WorkflowError,
-    default_sandbox_root,
+    default_workflow_image_root,
     load_workflow,
     validate_parameters,
 )
@@ -187,7 +187,7 @@ def create_conversation(
     if body.workflow is not None:
         try:
             current = _begin_workflow(request, conversation)
-        except (WorkflowError, SandboxSpecError, WorkflowRuntimeError, OSError) as exc:
+        except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
             lifecycle = getattr(request.app.state, "workflow_lifecycle", None)
             if lifecycle is not None:
                 lifecycle.forget(conversation.id)
@@ -615,7 +615,7 @@ def _workflow_response(
     version = ""
     description = ""
     try:
-        manifest = load_workflow(default_sandbox_root(), conversation.workflow_name)
+        manifest = load_workflow(default_workflow_image_root(), conversation.workflow_name)
     except WorkflowError:
         manifest = None
     if manifest is not None:
@@ -661,7 +661,7 @@ def _status_for_open(request: Request, conversation: Conversation) -> str:
         return recorded
     try:
         return _begin_workflow(request, conversation).value
-    except (WorkflowError, SandboxSpecError, WorkflowRuntimeError, OSError) as exc:
+    except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -685,7 +685,7 @@ def _require_workflow_ready(request: Request, conversation: Conversation) -> Non
     if not status_value:
         try:
             status_value = _begin_workflow(request, conversation).value
-        except (WorkflowError, SandboxSpecError, WorkflowRuntimeError, OSError) as exc:
+        except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     try:
         status = WorkflowStatus(status_value)
@@ -707,7 +707,7 @@ def _require_workflow_ready(request: Request, conversation: Conversation) -> Non
 
 def _validated_workflow(body: WorkflowStartRequest) -> tuple[str, dict[str, str]]:
     try:
-        manifest = load_workflow(default_sandbox_root(), body.name.strip())
+        manifest = load_workflow(default_workflow_image_root(), body.name.strip())
         parameters = validate_parameters(manifest, body.parameters)
     except WorkflowError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

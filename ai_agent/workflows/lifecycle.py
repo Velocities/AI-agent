@@ -14,7 +14,7 @@ import threading
 from collections.abc import Callable
 
 from ai_agent.workflows.image_supply import WorkflowImageCache, broker_workflow_image_supply
-from ai_agent.workflows.manifests import default_sandbox_root
+from ai_agent.workflows.manifests import default_workflow_image_root
 from ai_agent.workflows.runtime import (
     WorkflowAttachment,
     WorkflowRuntimeError,
@@ -80,17 +80,17 @@ class DockerWorkflowLifecycle:
         runner: CommandRunner | None = None,
         start_container: Callable[[WorkflowSession], None] | None = None,
         spawn: Spawn | None = None,
-        sandbox_root=None,
+        workflow_image_root=None,
         nix_system: str | None = None,
     ) -> None:
         self._runner = runner or _subprocess_runner
         self._start_container = start_container or ensure_workflow_container
         self._spawn = spawn or _spawn_thread
-        self._sandbox_root = sandbox_root or default_sandbox_root()
+        self._workflow_image_root = workflow_image_root or default_workflow_image_root()
         self._nix_system = nix_system or _nix_system()
         self._image_cache = WorkflowImageCache(
             broker_workflow_image_supply(self._runner),
-            sandbox_root=self._sandbox_root,
+            workflow_image_root=self._workflow_image_root,
             nix_system=self._nix_system,
         )
         self._status: dict[str, WorkflowStatus] = {}
@@ -124,7 +124,7 @@ class DockerWorkflowLifecycle:
         session = open_attached_workflow(
             attachment,
             linux_username,
-            sandbox_root=self._sandbox_root,
+            workflow_image_root=self._workflow_image_root,
         )
         image = self._image_cache.inspect_session(session)
         if image.unavailable:

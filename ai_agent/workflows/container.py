@@ -20,7 +20,7 @@ NIX_STORE_MOUNT = "/nix/store"
 _SOCKET_NAMES = {"docker.sock"}
 
 
-class SandboxSpecError(ValueError):
+class WorkflowSpecError(ValueError):
     """The container would be able to see or change the host."""
 
 
@@ -32,7 +32,7 @@ class ContainerMount:
 
 
 @dataclass(frozen=True)
-class SandboxContainerSpec:
+class WorkflowContainerSpec:
     image: str
     container_name: str
     mounts: tuple[ContainerMount, ...]
@@ -72,26 +72,26 @@ def mount_option(mount: ContainerMount) -> str:
     return option
 
 
-def validate_spec(spec: SandboxContainerSpec) -> None:
+def validate_spec(spec: WorkflowContainerSpec) -> None:
     if spec.network.strip().lower() == "host":
-        raise SandboxSpecError("Workflow containers cannot share the host network.")
+        raise WorkflowSpecError("Workflow containers cannot share the host network.")
     if "/" in spec.docker_bin or spec.docker_bin.startswith("-"):
-        raise SandboxSpecError("docker_bin must be a command name, not a path.")
+        raise WorkflowSpecError("docker_bin must be a command name, not a path.")
     _require_container_name(spec.container_name)
     work = [mount for mount in spec.mounts if mount.target == WORK_MOUNT]
     if len(work) != 1 or work[0].read_only:
-        raise SandboxSpecError("The container needs exactly one writable mount at /work.")
+        raise WorkflowSpecError("The container needs exactly one writable mount at /work.")
     _require_sleep_source(work[0].source, spec.sleep_root)
     for mount in spec.mounts:
         _reject_host_escape_mount(mount)
     nix = [mount for mount in spec.mounts if mount.target == NIX_STORE_MOUNT]
     if len(nix) > 1 or (nix and not nix[0].read_only):
-        raise SandboxSpecError("The Nix store mount must be a single read-only mount.")
+        raise WorkflowSpecError("The Nix store mount must be a single read-only mount.")
 
 
 def _require_container_name(name: str) -> None:
     if not name or name[0] == "-" or "/" in name or " " in name or "\n" in name:
-        raise SandboxSpecError(f"Invalid container name {name!r}.")
+        raise WorkflowSpecError(f"Invalid container name {name!r}.")
 
 
 def _require_sleep_source(source: Path, sleep_root: Path) -> None:
@@ -99,9 +99,9 @@ def _require_sleep_source(source: Path, sleep_root: Path) -> None:
         resolved = source.resolve()
         root = sleep_root.resolve()
     except OSError as exc:
-        raise SandboxSpecError(f"Sleep volume path cannot be resolved: {exc}") from exc
+        raise WorkflowSpecError(f"Sleep volume path cannot be resolved: {exc}") from exc
     if resolved != root and root not in resolved.parents:
-        raise SandboxSpecError(
+        raise WorkflowSpecError(
             f"Sleep volume {resolved} must stay under {root}. "
             "It cannot be the user's home or the agent checkout."
         )
@@ -111,12 +111,12 @@ def _reject_host_escape_mount(mount: ContainerMount) -> None:
     source = mount.source.as_posix()
     name = mount.source.name
     if name in _SOCKET_NAMES or source.endswith("/docker.sock"):
-        raise SandboxSpecError("Workflow containers cannot mount the Docker socket.")
+        raise WorkflowSpecError("Workflow containers cannot mount the Docker socket.")
     if mount.target in {"/", "/etc", "/usr", "/bin", "/home", "/root", "/var/run/docker.sock"}:
-        raise SandboxSpecError(f"Refusing to mount the host over {mount.target}.")
+        raise WorkflowSpecError(f"Refusing to mount the host over {mount.target}.")
     if mount.target != WORK_MOUNT and mount.target != NIX_STORE_MOUNT:
-        raise SandboxSpecError(
+        raise WorkflowSpecError(
             f"Unexpected mount {mount.target}. Only /work and a read-only /nix/store are allowed."
         )
     if mount.target == WORK_MOUNT and mount.read_only:
-        raise SandboxSpecError("/work is the writable sleep volume.")
+        raise WorkflowSpecError("/work is the writable sleep volume.")

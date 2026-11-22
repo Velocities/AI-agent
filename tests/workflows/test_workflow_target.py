@@ -1,4 +1,4 @@
-"""Sandbox execution target. No model. Bodies are still TODOs.
+"""Workflow execution target. No model. Bodies are still TODOs.
 
 Live cases need a Docker daemon and are marked docker. They stay skipped
 until the container fixture exists.
@@ -10,7 +10,7 @@ import pytest
 def test_exec_prefix_uses_the_bound_container_only():
     """The model cannot choose which container docker exec enters.
 
-    TODO: build a SandboxExecutionTarget with container name text-lab-demo.
+    TODO: build a WorkflowExecutionTarget with container name text-lab-demo.
     TODO: docker_argv for ["whoami"] starts with docker exec -i -w /work text-lab-demo.
     TODO: the argv does not contain -u. Root inside the container is the image default.
     TODO: a container name that starts with "-" is rejected at construction.
@@ -31,10 +31,10 @@ def test_write_file_is_applied_inside_the_container():
 def test_write_file_rejects_paths_that_leave_work():
     """Lexical escapes never become a host path.
 
-    TODO: confine_work_path("../etc/passwd") raises SandboxEscape.
-    TODO: confine_work_path("/etc/passwd") raises SandboxEscape.
+    TODO: confine_work_path("../etc/passwd") raises WorkflowPathEscape.
+    TODO: confine_work_path("/etc/passwd") raises WorkflowPathEscape.
     TODO: confine_work_path("/work/nested/note.txt") returns that path.
-    TODO: SandboxExecutionTarget.run returns success False and does not call the executor.
+    TODO: WorkflowExecutionTarget.run returns success False and does not call the executor.
     """
     pytest.skip("TODO")
 
@@ -43,7 +43,7 @@ def test_run_tool_entrypoint_comes_from_the_manifest():
     """A tool call cannot substitute its own binary path.
 
     TODO: run_tool("count-lines", stdin) execs count-lines under /work.
-    TODO: run_tool("../bin/sh") returns sandbox_rejected and does not exec.
+    TODO: run_tool("../bin/sh") returns workflow_rejected and does not exec.
     TODO: an unknown tool name fails in the tool handler before any docker argv is built.
     """
     pytest.skip("TODO")

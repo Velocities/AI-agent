@@ -13,8 +13,8 @@ from pathlib import Path
 from ai_agent.workflows.container import (
     SLEEP_ROOT,
     ContainerMount,
-    SandboxContainerSpec,
-    SandboxSpecError,
+    WorkflowContainerSpec,
+    WorkflowSpecError,
 )
 
 class BrokerRejected(ValueError):
@@ -88,7 +88,7 @@ def plan_target_exec(
 def authorize(
     argv: list[str],
     *,
-    sandbox_root: Path | None = None,
+    workflow_image_root: Path | None = None,
     sleep_root: Path = SLEEP_ROOT,
 ) -> list[str]:
     """Accept one of the known Docker operations. Anything else is refused."""
@@ -107,7 +107,7 @@ def authorize(
     if argv[1:3] == ["image", "inspect"]:
         return _authorize_image_inspect(argv)
     if argv[1:3] == ["buildx", "build"]:
-        return _authorize_build(argv, sandbox_root)
+        return _authorize_build(argv, workflow_image_root)
     if len(argv) > 1 and argv[1] == "run":
         return _authorize_run(argv, sleep_root)
     if argv[1:3] == ["rm", "-f"]:
@@ -150,9 +150,9 @@ def _authorize_image_inspect(argv: list[str]) -> list[str]:
     return argv
 
 
-def _authorize_build(argv: list[str], sandbox_root: Path | None) -> list[str]:
-    if sandbox_root is None:
-        raise BrokerRejected("The broker has no sandbox directory configured.")
+def _authorize_build(argv: list[str], workflow_image_root: Path | None) -> list[str]:
+    if workflow_image_root is None:
+        raise BrokerRejected("The broker has no workflow image root configured.")
     if (
         len(argv) != 11
         or argv[:4] != ["docker", "buildx", "build", "--load"]
@@ -174,11 +174,11 @@ def _authorize_build(argv: list[str], sandbox_root: Path | None) -> list[str]:
         raise BrokerRejected("The image tag does not match this workflow.")
     try:
         context = Path(argv[10]).resolve()
-        allowed = Path(sandbox_root).resolve()
+        allowed = Path(workflow_image_root).resolve()
     except OSError as exc:
         raise BrokerRejected(f"Build context cannot be resolved: {exc}") from exc
     if context != allowed:
-        raise BrokerRejected("The build context is the configured sandbox tree.")
+        raise BrokerRejected("The build context is the configured workflow_image tree.")
     return argv
 
 
@@ -221,7 +221,7 @@ def _authorize_run(argv: list[str], sleep_root: Path) -> list[str]:
         if flag != "--mount":
             raise BrokerRejected("Workflow containers do not accept extra Docker options.")
         mounts.append(_parse_mount(value))
-    spec = SandboxContainerSpec(
+    spec = WorkflowContainerSpec(
         image=image,
         container_name=name,
         mounts=tuple(mounts),
@@ -231,7 +231,7 @@ def _authorize_run(argv: list[str], sleep_root: Path) -> list[str]:
     )
     try:
         expected = spec.run_argv()
-    except SandboxSpecError as exc:
+    except WorkflowSpecError as exc:
         raise BrokerRejected(str(exc)) from exc
     if argv != expected:
         raise BrokerRejected(

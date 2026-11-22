@@ -18,7 +18,7 @@ from ai_agent.config import Settings
 from ai_agent.conversations.store import ConversationNotFound, ConversationStore, Message
 from ai_agent.llm.client.types import ImageInput, LLMMessage
 from ai_agent.speech.live import SPEECH_NOT_CONFIGURED, ReplySpeaker
-from ai_agent.workflows.container import SandboxSpecError
+from ai_agent.workflows.container import WorkflowSpecError
 from ai_agent.workflows.manifests import WorkflowError
 from ai_agent.workflows.runtime import WorkflowAttachment, WorkflowRuntimeError, attachment_for
 
@@ -91,7 +91,7 @@ def iter_turn_events(
             emit({"type": "done", "message": "", "error": "cancelled"})
         except ConversationNotFound:
             emit({"type": "error", "message": "Conversation not found."})
-        except (WorkflowError, SandboxSpecError, WorkflowRuntimeError) as exc:
+        except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError) as exc:
             emit({"type": "error", "message": str(exc)})
         except Exception:
             logger.exception("Turn failed for conversation %s", conversation_id)

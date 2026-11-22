@@ -41,7 +41,7 @@ class WorkflowImageSupply(Protocol):
         self,
         session: WorkflowSession,
         *,
-        sandbox_root: Path,
+        workflow_image_root: Path,
         nix_system: str,
     ) -> None:
         """Create the session image when :meth:`inspect` reported absent."""
@@ -54,11 +54,11 @@ class WorkflowImageCache:
         self,
         supply: WorkflowImageSupply,
         *,
-        sandbox_root: Path,
+        workflow_image_root: Path,
         nix_system: str,
     ) -> None:
         self._supply = supply
-        self._sandbox_root = sandbox_root
+        self._workflow_image_root = workflow_image_root
         self._nix_system = nix_system
 
     def inspect_session(self, session: WorkflowSession) -> ImagePresence:
@@ -80,7 +80,7 @@ class WorkflowImageCache:
         logger.info("Building workflow image %s", session.image)
         self._supply.build(
             session,
-            sandbox_root=self._sandbox_root,
+            workflow_image_root=self._workflow_image_root,
             nix_system=self._nix_system,
         )
         logger.info("Built workflow image %s", session.image)
@@ -109,14 +109,14 @@ class BrokerBackedImageSupply:
         self,
         session: WorkflowSession,
         *,
-        sandbox_root: Path,
+        workflow_image_root: Path,
         nix_system: str,
     ) -> None:
         from ai_agent.workflows.runtime import WorkflowRuntimeError
 
         argv = docker_build_argv(
             session.manifest,
-            sandbox_root=sandbox_root,
+            workflow_image_root=workflow_image_root,
             nix_system=nix_system,
         )
         argv = [session.spec.docker_bin, *argv[1:]]
@@ -153,7 +153,7 @@ class RemoteRegistryImageSupply:
         self,
         session: WorkflowSession,
         *,
-        sandbox_root: Path,
+        workflow_image_root: Path,
         nix_system: str,
     ) -> None:
         # TODO: pull (and verify) the closure image instead of buildx on host.

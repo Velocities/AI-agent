@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from ai_agent.workflows.manifests import default_sandbox_root, load_workflow
+from ai_agent.workflows.manifests import default_workflow_image_root, load_workflow
 
 _TOOL = (
     Path(__file__).resolve().parents[2]
-    / "sandbox"
+    / "workflow_image"
     / "workflows"
     / "product-ideas"
     / "tools"
@@ -28,7 +28,7 @@ def _tool():
 
 
 def test_product_ideas_manifest_asks_for_five_preferences() -> None:
-    manifest = load_workflow(default_sandbox_root(), "product-ideas")
+    manifest = load_workflow(default_workflow_image_root(), "product-ideas")
     assert [tool.name for tool in manifest.tools] == ["fetch-pages"]
     assert manifest.parameters == ()
     prompt = manifest.initial_prompt

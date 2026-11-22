@@ -23,10 +23,10 @@ from ai_agent.docker_broker.broker import DockerBroker
 from ai_agent.docker_broker.client import SocketDockerBroker
 from ai_agent.docker_broker.server import BrokerServer
 from ai_agent.execution_targets.docker import DockerExecutionTarget
-from ai_agent.execution_targets.sandbox import SandboxExecutionTarget
-from ai_agent.workflows.container import ContainerMount, SandboxContainerSpec
+from ai_agent.execution_targets.workflow import WorkflowExecutionTarget
+from ai_agent.workflows.container import ContainerMount, WorkflowContainerSpec
 from ai_agent.workflows.image import docker_build_argv, docker_image_inspect_argv, image_tag
-from ai_agent.workflows.manifests import default_sandbox_root, load_workflow
+from ai_agent.workflows.manifests import default_workflow_image_root, load_workflow
 
 _TAG = "ai-agent-workflow:text-lab-" + "ab" * 8
 _WF = "wf" + "cd" * 16
@@ -263,11 +263,11 @@ def test_broker_refuses_fields_that_would_change_the_sandbox() -> None:
     assert calls == []
 
 
-def _workflow_spec(tmp_path: Path) -> SandboxContainerSpec:
+def _workflow_spec(tmp_path: Path) -> WorkflowContainerSpec:
     sleep_root = tmp_path / "sleep"
     sleep = sleep_root / "user" / "conversation"
     sleep.mkdir(parents=True)
-    return SandboxContainerSpec(
+    return WorkflowContainerSpec(
         image=_TAG,
         container_name=_WF,
         mounts=(ContainerMount(source=sleep, target="/work", read_only=False),),
@@ -314,7 +314,7 @@ def test_workflow_run_argv_uses_syntax_docker_accepts(tmp_path: Path) -> None:
 def test_read_only_mount_round_trips_through_the_broker(tmp_path: Path) -> None:
     spec = _workflow_spec(tmp_path)
     store = ContainerMount(source=Path("/nix/store"), target="/nix/store", read_only=True)
-    spec = SandboxContainerSpec(
+    spec = WorkflowContainerSpec(
         image=spec.image,
         container_name=spec.container_name,
         mounts=(*spec.mounts, store),
@@ -342,32 +342,32 @@ def test_run_guard_refuses_containers_when_dockerd_does_not_remap(tmp_path: Path
     assert broker.invoke(inspect, timeout=5).returncode == 0
 
 
-def test_workflow_build_context_is_the_sandbox_tree() -> None:
-    root = default_sandbox_root()
+def test_workflow_build_context_is_the_workflow_image_tree() -> None:
+    root = default_workflow_image_root()
     manifest = load_workflow(root, "text-lab")
-    argv = docker_build_argv(manifest, sandbox_root=root, nix_system="x86_64-linux")
+    argv = docker_build_argv(manifest, workflow_image_root=root, nix_system="x86_64-linux")
     assert argv[:4] == ["docker", "buildx", "build", "--load"]
-    assert authorize(argv, sandbox_root=root) == argv
+    assert authorize(argv, workflow_image_root=root) == argv
     tag = image_tag(manifest, root)
     assert authorize(docker_image_inspect_argv(tag))[-1] == tag
     with pytest.raises(BrokerRejected):
-        authorize([*argv[:-1], "/"], sandbox_root=root)
+        authorize([*argv[:-1], "/"], workflow_image_root=root)
     with pytest.raises(BrokerRejected):
         authorize(
             ["docker", "build", "--network=host", "-t", tag, str(root)],
-            sandbox_root=root,
+            workflow_image_root=root,
         )
     with pytest.raises(BrokerRejected):
         authorize(
             ["docker", "buildx", "build", "--push", *argv[4:]],
-            sandbox_root=root,
+            workflow_image_root=root,
         )
 
 
-def test_sandbox_write_does_not_splice_content_into_a_host_shell() -> None:
+def test_workflow_write_does_not_splice_content_into_a_host_shell() -> None:
     calls: list[dict] = []
     content = "'; touch /tmp/pwned; echo "
-    target = SandboxExecutionTarget(
+    target = WorkflowExecutionTarget(
         container=_WF,
         executor=_executor([]),
         workflow_name="text-lab",
@@ -394,7 +394,7 @@ def test_socket_server_does_not_run_a_rejected_command(tmp_path: Path) -> None:
     server = BrokerServer(
         path,
         runner=_recorder(calls),
-        sandbox_root=tmp_path,
+        workflow_image_root=tmp_path,
         api_uid=os.getuid(),
     )
     server.start()
@@ -415,7 +415,7 @@ def test_socket_server_does_not_run_a_rejected_command(tmp_path: Path) -> None:
         stranger = BrokerServer(
             other_path,
             runner=_recorder(other_calls),
-            sandbox_root=tmp_path,
+            workflow_image_root=tmp_path,
             api_uid=0 if os.getuid() != 0 else 65534,
         )
         stranger.start()

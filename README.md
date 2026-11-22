@@ -564,11 +564,11 @@ Effective risk for chained expressions is the **maximum** risk of all segments.
 
 Policy is enforced in **`ai_agent/policy/default_policy.yaml`**. The LLM cannot override it.
 
-**Workflow sandbox exception:** When the execution target is `sandbox` (a per-chat
-workflow container), host policy and CLI approval are **not** applied to
-`run_command`, `run_commands`, or `run_tool`. Isolation is the container,
+**Workflow execution exception:** When the execution target is `workflow` (a
+per-chat workflow container), host policy and CLI approval are **not** applied
+to `run_command`, `run_commands`, or `run_tool`. Isolation is the container,
 `/work` confinement, and the Docker broker exec whitelist instead. See
-[`sandbox/README.md`](sandbox/README.md#host-policy-vs-the-container).
+[`workflow_image/README.md`](workflow_image/README.md#host-policy-vs-the-container).
 
 ### Linux user boundary
 

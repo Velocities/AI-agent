@@ -10,14 +10,14 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from ai_agent.workflows.manifests import WorkflowManifest, default_sandbox_root
+from ai_agent.workflows.manifests import WorkflowManifest, default_workflow_image_root
 
 _IMAGE_PREFIX = "ai-agent-workflow"
 
 
-def closure_fingerprint(manifest: WorkflowManifest, sandbox_root: Path | None = None) -> str:
+def closure_fingerprint(manifest: WorkflowManifest, workflow_image_root: Path | None = None) -> str:
     """Hash the Nix inputs for this workflow. Ignores parameters and prompts."""
-    root = (sandbox_root or default_sandbox_root()).resolve()
+    root = (workflow_image_root or default_workflow_image_root()).resolve()
     digest = hashlib.sha256()
     digest.update(b"workflow-closure-v2\0")
     digest.update(manifest.name.encode())
@@ -39,8 +39,8 @@ def closure_fingerprint(manifest: WorkflowManifest, sandbox_root: Path | None = 
     return digest.hexdigest()[:16]
 
 
-def image_tag(manifest: WorkflowManifest, sandbox_root: Path | None = None) -> str:
-    fingerprint = closure_fingerprint(manifest, sandbox_root)
+def image_tag(manifest: WorkflowManifest, workflow_image_root: Path | None = None) -> str:
+    fingerprint = closure_fingerprint(manifest, workflow_image_root)
     return f"{_IMAGE_PREFIX}:{manifest.name}-{fingerprint}"
 
 
@@ -52,7 +52,7 @@ def docker_image_inspect_argv(tag: str) -> list[str]:
 def docker_build_argv(
     manifest: WorkflowManifest,
     *,
-    sandbox_root: Path | None = None,
+    workflow_image_root: Path | None = None,
     nix_system: str = "x86_64-linux",
 ) -> list[str]:
     """Build the generic Dockerfile with BuildKit.
@@ -60,7 +60,7 @@ def docker_build_argv(
     ``--load`` puts the finished image in the local engine, which is where
     the later inspect and ``docker run`` look for it.
     """
-    root = sandbox_root or default_sandbox_root()
+    root = workflow_image_root or default_workflow_image_root()
     tag = image_tag(manifest, root)
     return [
         "docker",

@@ -42,7 +42,7 @@ fun WorkflowPickerDialog(
                     return@Column
                 }
                 Text(
-                    "The tools run in a sandbox for this chat. Your name and other details stay with the chat.",
+                    "Tools run in an isolated workflow container for this chat. Your name and other details stay with the chat.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

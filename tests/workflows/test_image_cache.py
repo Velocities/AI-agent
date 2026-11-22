@@ -27,7 +27,7 @@ def test_docker_build_uses_the_generic_dockerfile_and_workflow_name():
     """One Dockerfile, selected by the WORKFLOW build arg.
 
     TODO: docker_build_argv for text-lab includes --build-arg WORKFLOW=text-lab.
-    TODO: the context directory is the sandbox root, not the repo root.
+    TODO: the context directory is the workflow_image root, not the repo root.
     TODO: docker_image_inspect_argv uses the same tag the build would create.
     TODO: the tag does not contain the session label.
     """

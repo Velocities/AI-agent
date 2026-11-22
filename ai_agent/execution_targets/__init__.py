@@ -6,7 +6,7 @@ from ai_agent.execution_targets.base import (
 from ai_agent.execution_targets.docker import DockerExecutionTarget
 from ai_agent.execution_targets.local import LocalExecutionTarget
 from ai_agent.execution_targets.router import ExecutionTargetRouter, build_router, load_router
-from ai_agent.execution_targets.sandbox import SandboxExecutionTarget
+from ai_agent.execution_targets.workflow import WorkflowExecutionTarget
 from ai_agent.execution_targets.ssh import SshExecutionTarget
 
 __all__ = [
@@ -14,7 +14,7 @@ __all__ = [
     "ExecutionTarget",
     "ExecutionTargetRouter",
     "LocalExecutionTarget",
-    "SandboxExecutionTarget",
+    "WorkflowExecutionTarget",
     "SshExecutionTarget",
     "TargetSummary",
     "UnknownExecutionTarget",

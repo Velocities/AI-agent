@@ -241,8 +241,8 @@ install_docker_broker() {
     dir=$(dirname "${dir}")
   done
   install -d -o "${broker_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent/workflow-sleep
-  if ! runuser -u "${broker_user}" -- test -r "${root}/sandbox/Dockerfile" 2>/dev/null; then
-    echo "warning: ${broker_user} cannot read ${root}/sandbox/Dockerfile." >&2
+  if ! runuser -u "${broker_user}" -- test -r "${root}/workflow_image/Dockerfile" 2>/dev/null; then
+    echo "warning: ${broker_user} cannot read ${root}/workflow_image/Dockerfile." >&2
     echo "Workflow image builds need that tree to be readable by ${broker_user}." >&2
   fi
   python3 - \

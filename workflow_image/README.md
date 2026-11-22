@@ -1,4 +1,8 @@
-# Workflow sandbox
+# Workflow image definitions
+
+This directory (`workflow_image/`) is the Docker build context for workflow
+containers: the shared `Dockerfile`, Nix flake, and per-workflow manifests.
+It is not the same thing as the SSH key sandbox under `.ai-agent/ssh/`.
 
 One generic image build, one container per workflow session. Tools are Nix
 packages. Personalization is a file the host writes at start, not a Docker
@@ -36,7 +40,7 @@ Build the closure on the host when Nix is installed. Later workflow builds
 reuse the same `textkit` store path:
 
 ```bash
-cd sandbox
+cd workflow_image
 nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.text-lab
 ```
 
@@ -48,7 +52,7 @@ If the tag is already present, skip the build and start a container:
 
 ```bash
 docker buildx build --load --build-arg WORKFLOW=text-lab --build-arg NIX_SYSTEM=x86_64-linux \
-  -t ai-agent-workflow:text-lab sandbox
+  -t ai-agent-workflow:text-lab workflow_image
 ```
 
 The agent tags images as `ai-agent-workflow:<name>-<fingerprint>`. The
@@ -100,7 +104,7 @@ not rebuild the image.
 (`local`, SSH remotes, and similar). They do **not** gate what runs inside a
 workflow container.
 
-Inside the sandbox, confinement is:
+Inside each workflow container, confinement is:
 
 - one container per chat, with `/work` as the writable tree
 - `docker exec` planning and a broker whitelist on the host
@@ -108,7 +112,7 @@ Inside the sandbox, confinement is:
   from free-form model argv
 
 The model may use `run_command`, `run_commands`, and `run_tool` against the
-`sandbox` target without host confirmation prompts. That is intentional: risk
+`workflow` target without host confirmation prompts. That is intentional: risk
 is isolated to the container user namespace and network namespace Docker
 gives the workflow image, not to the `ai` API user's host shell.
 
@@ -116,7 +120,7 @@ Copying artifacts from `/work` onto the host is still a separate promotion step
 with its own confirmation.
 
 From the agent, bind a session and pass it to `build_agent`. The model then
-sees only the `sandbox` target and `run_tool` for `count-lines` and
+sees only the `workflow` target and `run_tool` for `count-lines` and
 `count-words`:
 
 ```python
@@ -125,7 +129,7 @@ from ai_agent.agent.factory import build_agent
 from ai_agent.workflows.session import bind_workflow
 
 session = bind_workflow(
-    Path("sandbox"),
+    Path("workflow_image"),
     "text-lab",
     linux_username="alice",
     container_name="text-lab-demo",
@@ -153,10 +157,10 @@ audience, domain, and one constraint. Those answers are not image inputs.
 Build it the same way, with a different workflow name:
 
 ```bash
-cd sandbox
+cd workflow_image
 nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.product-ideas
 docker buildx build --load --build-arg WORKFLOW=product-ideas --build-arg NIX_SYSTEM=x86_64-linux \
-  -t ai-agent-workflow:product-ideas sandbox
+  -t ai-agent-workflow:product-ideas workflow_image
 ```
 
 From a client, start it with `/workflow product-ideas` or the Android

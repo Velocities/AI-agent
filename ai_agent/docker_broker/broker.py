@@ -41,12 +41,12 @@ class DockerBroker:
         self,
         runner: Runner,
         *,
-        sandbox_root: Path | None = None,
+        workflow_image_root: Path | None = None,
         sleep_root: Path = SLEEP_ROOT,
         run_guard: Callable[[], str | None] | None = None,
     ) -> None:
         self._runner = runner
-        self.sandbox_root = sandbox_root
+        self.workflow_image_root = workflow_image_root
         self.sleep_root = sleep_root
         self._run_guard = run_guard
 
@@ -111,7 +111,7 @@ class DockerBroker:
                 self._only(_INVOKE_FIELDS, message)
                 planned = authorize(
                     message.get("argv"),
-                    sandbox_root=self.sandbox_root,
+                    workflow_image_root=self.workflow_image_root,
                     sleep_root=self.sleep_root,
                 )
                 if planned[1] == "run" and self._run_guard is not None:

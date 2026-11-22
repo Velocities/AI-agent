@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-agent config workflow-containers",
         description=(
-            "List or remove workflow sandbox containers (names wf…). "
+            "List or remove workflow containers (names wf…). "
             "Run on the server with permission to run docker. "
             "This does not go through the API Docker broker."
         ),

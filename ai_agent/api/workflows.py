@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ai_agent.api.auth import AuthenticatedUser
 from ai_agent.api.deps import require_deployment_access
-from ai_agent.workflows.manifests import WorkflowError, default_sandbox_root, load_workflow
+from ai_agent.workflows.manifests import WorkflowError, default_workflow_image_root, load_workflow
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -33,7 +33,7 @@ class WorkflowListResponse(BaseModel):
 def list_workflows(
     _user: AuthenticatedUser = Depends(require_deployment_access),
 ) -> WorkflowListResponse:
-    root = default_sandbox_root()
+    root = default_workflow_image_root()
     directory = root / "workflows"
     items: list[WorkflowSummaryResponse] = []
     if directory.is_dir():
