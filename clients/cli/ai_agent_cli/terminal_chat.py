@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import httpx
 from rich.console import Console
 
@@ -32,6 +34,30 @@ from ai_agent_cli.server_config import (
 )
 
 
+@dataclass
+class _ConversationMemory:
+    """Ephemeral conversation id for loopback local mode (no servers.json entry)."""
+
+    conversation_id: str | None = None
+
+
+def _is_local_config(config: ServerConfig) -> bool:
+    return not config.supabase_url.strip() and not config.supabase_publishable_key.strip()
+
+
+def _remember_conversation_id(conversation_id: str, memory: _ConversationMemory | None) -> None:
+    if memory is not None:
+        memory.conversation_id = conversation_id
+        return
+    save_conversation_id(conversation_id)
+
+
+def _active_conversation_id(memory: _ConversationMemory | None) -> str | None:
+    if memory is not None:
+        return memory.conversation_id
+    return load_conversation_id()
+
+
 def run_api_chat() -> int:
     console = Console()
     config = ensure_server_config(console)
@@ -56,10 +82,11 @@ def run_terminal_chat(
     if token is None:
         return 1
 
-    local_mode = not config.supabase_url.strip() and not config.supabase_publishable_key.strip()
+    local_mode = _is_local_config(config)
+    memory = _ConversationMemory() if local_mode else None
     client = AgentApiClient(config.server_url, token)
     try:
-        conversation_id = _current_conversation(client, console)
+        conversation_id = _current_conversation(client, console, memory)
         model = _load_model(client, console)
         vision = bool(model and model.get("vision"))
     except AgentApiError as exc:
@@ -110,7 +137,7 @@ def run_terminal_chat(
                 console.print("Goodbye.")
                 return 0
             if user_input == "/list":
-                if not _print_conversations(client, console):
+                if not _print_conversations(client, console, memory):
                     return 1
                 continue
             if user_input == "/server" or user_input.startswith("/server "):
@@ -132,7 +159,7 @@ def run_terminal_chat(
                 conversation_id = created["id"]
                 workflow_status = None
                 workflow_error = ""
-                save_conversation_id(conversation_id)
+                _remember_conversation_id(conversation_id, memory)
                 console.print("[dim]Started a new chat.[/dim]")
                 continue
             if user_input == "/workflow" or user_input.startswith("/workflow "):
@@ -145,7 +172,7 @@ def run_terminal_chat(
                 if created is None:
                     continue
                 conversation_id = created["id"]
-                save_conversation_id(conversation_id)
+                _remember_conversation_id(conversation_id, memory)
                 workflow_status, workflow_error = _status_from_conversation(created)
                 _print_workflow_started(console, created)
                 _print_workflow_status(console, None, workflow_status, workflow_error)
@@ -324,19 +351,23 @@ def _remove_saved_server(
     return remaining
 
 
-def _current_conversation(client: AgentApiClient, console: Console) -> str:
-    saved = load_conversation_id()
+def _current_conversation(
+    client: AgentApiClient,
+    console: Console,
+    memory: _ConversationMemory | None,
+) -> str:
+    saved = _active_conversation_id(memory)
     if saved:
         return saved
     rows = client.list_conversations()
     if rows:
         conversation_id = rows[0]["id"]
         title = rows[0].get("title") or "Untitled"
-        save_conversation_id(conversation_id)
+        _remember_conversation_id(conversation_id, memory)
         console.print(f"[dim]Resuming {title}.[/dim]")
         return conversation_id
     created = client.create_conversation()
-    save_conversation_id(created["id"])
+    _remember_conversation_id(created["id"], memory)
     return created["id"]
 
 
@@ -523,7 +554,11 @@ def _print_workflow_status(
         console.print(f"[yellow]{line}[/yellow]")
 
 
-def _print_conversations(client: AgentApiClient, console: Console) -> bool:
+def _print_conversations(
+    client: AgentApiClient,
+    console: Console,
+    memory: _ConversationMemory | None,
+) -> bool:
     try:
         rows = client.list_conversations()
     except (AgentApiError, httpx.HTTPError) as exc:
@@ -532,7 +567,7 @@ def _print_conversations(client: AgentApiClient, console: Console) -> bool:
     if not rows:
         console.print("[dim]No chats yet.[/dim]")
         return True
-    current = load_conversation_id()
+    current = _active_conversation_id(memory)
     for row in rows:
         mark = "*" if row.get("id") == current else " "
         title = row.get("title") or "Untitled"
