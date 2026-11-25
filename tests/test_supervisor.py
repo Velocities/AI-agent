@@ -158,9 +158,20 @@ def test_run_points_the_api_at_the_facade_and_stops_it(monkeypatch) -> None:
     httpd.server_address = ("127.0.0.1", 43111)
     seen: dict = {}
 
-    def run_api(api_settings, _store, _access_store, _target_repo, _admins, _console, model_info=None):
+    def run_api(
+        api_settings,
+        _store,
+        _access_store,
+        _target_repo,
+        _admins,
+        _console,
+        model_info=None,
+        *,
+        verifier=None,
+    ):
         seen["host"] = api_settings.llm_host
         seen["transport"] = api_settings.llm_transport
+        seen["verifier"] = verifier
         return 0
 
     monkeypatch.setattr(

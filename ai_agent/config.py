@@ -271,7 +271,33 @@ class Settings(BaseSettings):
     cli_oauth_port: int = Field(
         default=53682,
         alias="CLI_OAUTH_PORT",
-        description="Loopback port for Discord sign-in in the CLI.",
+        description="Loopback port for Discord sign-in in the chat client.",
+    )
+    local_standalone_mode: bool = Field(
+        default=False,
+        alias="LOCAL_STANDALONE_MODE",
+        description=(
+            "When true, the API accepts LOCAL_STANDALONE_TOKEN as the bearer "
+            "and maps requests to LOCAL_STANDALONE_USER_ID (loopback chat client)."
+        ),
+    )
+    local_standalone_user_id: str = Field(
+        default="00000000-0000-4000-8000-000000000001",
+        alias="LOCAL_STANDALONE_USER_ID",
+        description="Fixed user id for LOCAL_STANDALONE_MODE.",
+    )
+    local_standalone_token: str = Field(
+        default="",
+        alias="LOCAL_STANDALONE_TOKEN",
+        description="Shared bearer for LOCAL_STANDALONE_MODE. Empty generates one at startup.",
+    )
+    local_standalone_linux_user: str = Field(
+        default="",
+        alias="LOCAL_STANDALONE_LINUX_USER",
+        description=(
+            "Linux account for local standalone command execution. "
+            "Defaults to the USER environment variable."
+        ),
     )
     conversation_database: str = Field(
         default="",

@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 from rich.console import Console
 
-from ai_agent.config import Settings
+import os
+
 from ai_agent_cli.client_state import (
     StoredSession,
     clear_session_for,
@@ -86,11 +87,10 @@ def refresh_session(
 def main(argv: list[str] | None = None) -> int:
     del argv
     console = Console()
-    settings = Settings()
     config = ensure_server_config(console)
     if config is None:
         return 1
-    port = settings.cli_oauth_port
+    port = int(os.environ.get("CLI_OAUTH_PORT", "53682") or "53682")
     if port < 1 or port > 65535:
         console.print(f"[red]CLI_OAUTH_PORT is not a valid port: {port}[/red]")
         return 1

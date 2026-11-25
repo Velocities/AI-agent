@@ -3,11 +3,18 @@ from __future__ import annotations
 import httpx
 from rich.console import Console
 
-from ai_agent.cli.image_stage import ImageStage, StageCommand
-from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
-from ai_agent.images import ImageRejected
-from ai_agent.llm.client.types import ImageInput
-from ai_agent.workflows.status import WorkflowStatus, workflow_status_text
+from ai_agent_cli.auth.base import ChatAuth
+from ai_agent_cli.auth.remote import RemoteSupabaseAuth
+from ai_agent_cli.contracts import (
+    ACCESS_DENIED_CODE,
+    ACCESS_INCOMPLETE_CODE,
+    ACCESS_PENDING_CODE,
+    WorkflowStatus,
+    workflow_status_text,
+)
+from ai_agent_cli.image_stage import ImageStage, StageCommand
+from ai_agent_cli.images import ImageRejected
+from ai_agent_cli.types import ImageInput
 from ai_agent_cli.api_client import AgentApiClient, AgentApiError
 from ai_agent_cli.api_url import public_api_base_url_hint
 from ai_agent_cli.client_state import (
@@ -15,9 +22,7 @@ from ai_agent_cli.client_state import (
     load_session_for,
     save_conversation_id,
     save_session_for,
-    session_is_fresh,
 )
-from ai_agent_cli.login import refresh_session
 from ai_agent_cli.server_config import (
     ServerConfig,
     ensure_server_config,
@@ -27,21 +32,27 @@ from ai_agent_cli.server_config import (
 )
 
 
-def run_remote_repl() -> int:
+def run_api_chat() -> int:
     console = Console()
     config = ensure_server_config(console)
     if config is None:
         return 1
+    auth: ChatAuth = RemoteSupabaseAuth(console)
     while True:
-        result = _chat_with(console, config)
+        result = run_terminal_chat(console, config, auth=auth)
         if not isinstance(result, ServerConfig):
             return result
         config = result
 
 
-def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
+def run_terminal_chat(
+    console: Console,
+    config: ServerConfig,
+    *,
+    auth: ChatAuth,
+) -> int | ServerConfig:
     """Chat with [config]. Return another server when the user switches to one."""
-    token = _access_token(config, console)
+    token = auth.bearer_token(config)
     if token is None:
         return 1
 
@@ -246,31 +257,6 @@ def _print_stage(console: Console, command: StageCommand) -> None:
         console.print(command.message)
 
 
-def _access_token(config: ServerConfig, console: Console) -> str | None:
-    session = load_session_for(config.server_url)
-    if session is None:
-        console.print(
-            f"Not signed in to {config.server_url}. Run [bold]ai-agent login[/bold]."
-        )
-        return None
-    if session_is_fresh(session):
-        return session.access_token
-    if not config.supabase_url.strip() or not config.supabase_publishable_key.strip():
-        console.print("[red]The saved session expired. Run ai-agent login.[/red]")
-        return None
-    try:
-        refreshed = refresh_session(
-            supabase_url=config.supabase_url,
-            anon_key=config.supabase_publishable_key,
-            refresh_token=session.refresh_token,
-        )
-    except httpx.HTTPError:
-        console.print("[red]Could not refresh sign-in. Run ai-agent login.[/red]")
-        return None
-    save_session_for(config.server_url, refreshed)
-    return refreshed.access_token
-
-
 def _apply_server_command(
     console: Console,
     current: ServerConfig,
@@ -300,7 +286,7 @@ def _apply_server_command(
         return False
     console.print(f"Using {update.config.server_url}.")
     if update.needs_login:
-        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
+        console.print("Not signed in on this server. Run [bold]ai-agent-chat login[/bold].")
         return True
     if update.config.server_url == current.server_url:
         return False
@@ -332,7 +318,7 @@ def _remove_saved_server(
         return False
     console.print(f"Using {remaining.server_url}.")
     if load_session_for(remaining.server_url) is None:
-        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
+        console.print("Not signed in on this server. Run [bold]ai-agent-chat login[/bold].")
         return True
     return remaining
 
@@ -354,7 +340,7 @@ def _current_conversation(client: AgentApiClient, console: Console) -> str:
 
 
 def _print_access_error(console: Console, exc: AgentApiError) -> None:
-    if exc.code in {ACCESS_PENDING_CODE, ACCESS_DENIED_CODE}:
+    if exc.code in {ACCESS_PENDING_CODE, ACCESS_DENIED_CODE, ACCESS_INCOMPLETE_CODE}:
         console.print(f"[yellow]{exc.detail}[/yellow]")
         if exc.code == ACCESS_PENDING_CODE:
             console.print(
@@ -364,7 +350,7 @@ def _print_access_error(console: Console, exc: AgentApiError) -> None:
             )
         return
     if exc.status == 401:
-        console.print("[red]Sign-in was rejected. Run ai-agent login.[/red]")
+        console.print("[red]Sign-in was rejected. Run ai-agent-chat login.[/red]")
         return
     console.print(f"[red]{exc.detail}[/red]")
 
@@ -585,7 +571,7 @@ def _play_turn(
                 return False
     except AgentApiError as exc:
         if exc.status == 401:
-            console.print("[red]Sign-in was rejected. Run ai-agent login.[/red]")
+            console.print("[red]Sign-in was rejected. Run ai-agent-chat login.[/red]")
         else:
             console.print(f"[red]{exc.detail}[/red]")
         return False

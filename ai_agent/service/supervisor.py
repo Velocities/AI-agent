@@ -9,6 +9,7 @@ from rich.console import Console
 
 from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
+from ai_agent.api.local_auth import bootstrap_local_standalone_access, local_standalone_enabled, resolve_verifier
 from ai_agent.api.serve import PublicBindError, assert_loopback_bind
 from ai_agent.agent.factory import configure_logging, configure_stdio_encoding
 from ai_agent.attachments.runtime import open_attachment_services
@@ -106,6 +107,8 @@ def _run_api(
     monitoring_admins,
     console: Console,
     model_info=None,
+    *,
+    verifier=None,
 ) -> int:
     host = settings.api_bind_host.strip()
     port = settings.api_bind_port
@@ -116,6 +119,7 @@ def _run_api(
     )
     app = create_app(
         settings,
+        verifier=verifier,
         store=store,
         access_store=access_store,
         monitoring_admin_store=monitoring_admins,
@@ -131,7 +135,9 @@ def _run_api(
     listening = f"http://{display}:{port}"
     logger.info("API listening at %s", listening)
     console.print(f"[bold]API:[/bold] {listening}")
-    if settings.supabase_url.strip():
+    if local_standalone_enabled(settings):
+        console.print("Auth: local standalone bearer token")
+    elif settings.supabase_url.strip():
         console.print("Auth: Supabase access token")
     else:
         console.print("[yellow]Auth: not configured[/yellow] (set SUPABASE_URL)")
@@ -161,6 +167,8 @@ def _serve_with_engine(
     target_repo,
     monitoring_admins,
     process,
+    *,
+    verifier=None,
 ) -> int:
     sd_notify(f"Warming {settings.llm_model}")
     prepared = prepare_upstream(
@@ -216,6 +224,7 @@ def _serve_with_engine(
             monitoring_admins,
             console,
             model_info=prepared.model_info,
+            verifier=verifier,
         )
     finally:
         sd_notify("Stopping", stopping=True)
@@ -233,7 +242,7 @@ def run(settings: Settings, console: Console) -> int:
         console.print(f"[red]{exc}[/red]")
         return 1
 
-    if not settings.supabase_url.strip():
+    if not settings.supabase_url.strip() and not local_standalone_enabled(settings):
         logger.warning(
             "SUPABASE_URL is unset. /health will answer, /api/me will return 503."
         )
@@ -246,6 +255,10 @@ def run(settings: Settings, console: Console) -> int:
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
         return 1
 
+    verifier, settings = resolve_verifier(settings)
+    if local_standalone_enabled(settings):
+        bootstrap_local_standalone_access(access_store, settings)
+
     sd_notify(f"Starting {settings.llm_engine.value}")
     try:
         with managed_engine_process(settings, console) as process:
@@ -257,6 +270,7 @@ def run(settings: Settings, console: Console) -> int:
                 target_repo,
                 monitoring_admins,
                 process,
+                verifier=verifier,
             )
     except EngineProcessError:
         return 1 if startup_should_exit(healthy=False, warmup_ok=False) else 0

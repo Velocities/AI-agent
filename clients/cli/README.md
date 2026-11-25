@@ -1,32 +1,25 @@
-# AI Agent — CLI chat client
+# AI Agent — terminal chat client
 
-Terminal chat client for [`ai-agent-serve`](../../README.md): Discord sign-in through Supabase Auth, saved server URL, then NDJSON streaming over the public HTTP API.
+HTTP-only chat client for [`ai-agent serve`](../../README.md). Use **`ai-agent-chat`** (not `ai-agent`, which is for server operators).
 
-This is the sibling of [`clients/android/`](../android/README.md). Both clients only talk to the server API and `GET /api/client-config`; they do not run the model or execute shell commands locally.
+| Command | Role |
+|---------|------|
+| `ai-agent-chat` | Chat with the saved remote server (Supabase sign-in). |
+| `ai-agent-chat --local` | Start loopback `ai-agent serve` with standalone auth (no sign-in) and chat over HTTP. |
+| `ai-agent-chat login` | Discord OAuth sign-in for remote mode. |
+| `ai-agent-chat server-url` | Manage saved server URLs. |
 
 ## Layout
 
 | Module | Role |
 |--------|------|
-| `ai_agent_cli/api_client.py` | HTTP client (conversations, turns, approvals) |
-| `ai_agent_cli/client_state.py` | Saved servers, and each server's sign-in and chat id |
-| `ai_agent_cli/server_config.py` | Download Supabase settings and the `server-url` command |
-| `ai_agent_cli/login.py` | Browser PKCE sign-in |
-| `ai_agent_cli/remote_repl.py` | Interactive chat REPL |
+| `ai_agent_cli/app.py` | Chat client entry (`ai-agent-chat`). |
+| `ai_agent_cli/terminal_chat.py` | Interactive HTTP chat loop |
+| `ai_agent_cli/local_server.py` | Spawns `ai-agent serve` for `--local` |
+| `ai_agent_cli/auth/` | Swappable bearer auth (remote Supabase vs local standalone) |
+| `ai_agent_cli/api_client.py` | HTTP client |
+| `ai_agent_cli/contracts.py` | API literals shared with Android |
 
-The `ai-agent` console script still lives in the main Python package (`ai_agent.cli.app`); it dispatches here for `login`, `logout`, `server-url`, and the default chat loop.
+The chat client does not import `ai_agent.cli` or run the agent in-process. Local mode is still HTTP against a child server process.
 
-Every `ai-agent` command, including `config`, `apk`, and `host-setup`, is listed in [`docs/cli-commands.md`](../../docs/cli-commands.md). Execution targets are configured on the server (not in this chat client); see [`docs/execution-targets.md`](../../docs/execution-targets.md).
-
-## Usage
-
-Install the project from the repo root (`pip install -e ".[dev]"`), then:
-
-```bash
-ai-agent login
-ai-agent
-```
-
-In the chat, `/new` starts an ordinary chat. `/workflow` lists workflows installed on the server, and `/workflow text-lab label=north-office` starts that workflow. The tools run in an isolated workflow container for that chat. Optional values such as `label` are stored with the chat and do not rebuild the image.
-
-See the root [README](../../README.md) for server setup and Cloudflare tunnel notes.
+See [`docs/cli-commands.md`](../../docs/cli-commands.md) for operator commands (`ai-agent config`, `ai-agent serve`, …).

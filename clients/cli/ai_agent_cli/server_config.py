@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import httpx
 from rich.console import Console
 
-from ai_agent.api.client_config import CLIENT_CONFIG_PATH
+from ai_agent_cli.contracts import CLIENT_CONFIG_PATH
 from ai_agent_cli.client_state import (
     ServerConfig,
     clear_session_for,

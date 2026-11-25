@@ -4,7 +4,8 @@ from pathlib import Path
 
 import httpx
 
-from ai_agent.cli.image_stage import ImageStage, maybe_strip_for_transit
+from ai_agent_cli.image_stage import ImageStage
+from ai_agent_cli.images import maybe_strip_for_transit
 from ai_agent.llm.client.types import ImageInput
 from ai_agent_cli.api_client import AgentApiClient
 from tests.test_images import jpeg_bytes, png_bytes
