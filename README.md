@@ -14,9 +14,9 @@ pip install -e ".[dev]"
 cp .env.example .env
 # Path A for the model, plus SUPABASE_URL and SUPABASE_ANON_KEY
 
-ai-agent serve    # model and API, one process
-ai-agent login    # once, in the browser
-ai-agent          # chat client
+ai-agent serve         # model and API, one process (operator)
+ai-agent-chat --local  # loopback chat, no sign-in (starts serve for you)
+# or remote: ai-agent serve on the server, then ai-agent-chat login && ai-agent-chat
 ```
 
 On an Ubuntu server, use [Path G — Ubuntu production (systemd)](#path-g-ubuntu-production-systemd) (`sudo systemctl enable --now ai-agent`) instead of leaving a terminal open. Details: [`deploy/systemd/README.md`](deploy/systemd/README.md).
@@ -41,11 +41,11 @@ If you have never run this project, use this table once. You can ignore the othe
 
 | Your goal | Path | What you run |
 |-----------|------|----------------|
-| Try it on a laptop (Windows, macOS, or Linux) | [A](#path-a-ollama-on-this-machine-recommended) | `ai-agent serve`, then `ai-agent login`, then `ai-agent` |
+| Try it on a laptop (Windows, macOS, or Linux) | [A](#path-a-ollama-on-this-machine-recommended) | `ai-agent-chat --local`, or `ai-agent serve` + `ai-agent-chat login` + `ai-agent-chat` |
 | Run model and API in **two terminals** (debugging) | [B](#path-b-two-window-workflow-same-machine) | `ai-agent-llm` in one window, `ai-agent-serve` in another |
 | **Ubuntu server**, starts at boot, no SSH needed | [G](#path-g-ubuntu-production-systemd) | `sudo deploy/systemd/install.sh`, then `sudo systemctl enable --now ai-agent` |
 | HTTPS for CLI + Android (Cloudflare Tunnel) | [F](#path-f--public-api-through-cloudflare) | Path **G** (or A) on the model machine, then cloudflared |
-| Model on a GPU box, agent on your laptop | [C](#path-c-remote-ollama-over-ssh) | `ai-agent config remote-provider`, then `ai-agent` |
+| Model on a GPU box, agent on your laptop | [C](#path-c-remote-ollama-over-ssh) | `ai-agent config remote-provider`, then `ai-agent-chat` |
 | vLLM instead of Ollama | [D](#path-d-vllm-linux--wsl2) | Same as A or B, with `LLM_ENGINE=vllm` |
 | Ollama/vLLM already running (Docker, systemd, cloud) | [E](#path-e-attach-to-an-already-running-engine) | `LLM_MANAGE_UPSTREAM=false`, then B or `ai-agent serve` |
 
@@ -98,13 +98,13 @@ Optional: `LLM_CONTEXT_LENGTH=16384` (context window in tokens; Ollama and vLLM)
 
 **3. Run the server and the client.**
 
-Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key) on the **server**. In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`. The chat client does not read those values from `.env`. The first `ai-agent login` or `ai-agent` asks for the server URL (`http://127.0.0.1:8000` on this machine), saves it, and downloads Supabase settings from `GET /api/client-config`. Add another with `ai-agent server-url https://agent.example.com` or `/server` in the chat. Each server keeps its own sign-in.
+Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (the publishable key) on the **server**. In the Supabase redirect allow list, add `http://127.0.0.1:53682/callback`. The chat client does not read those values from `.env`. The first `ai-agent-chat login` or `ai-agent-chat` asks for the server URL (`http://127.0.0.1:8000` on this machine), saves it, and downloads Supabase settings from `GET /api/client-config`. Add another with `ai-agent-chat server-url https://agent.example.com` or `/server` in the chat. Each server keeps its own sign-in.
 
 Recommended — one terminal for model + API (`ai-agent serve` starts Ollama when needed and does not require setting `LLM_HOST`):
 
 ```bash
 ai-agent serve
-ai-agent login
+ai-agent-chat login
 ai-agent
 ```
 
@@ -145,7 +145,7 @@ Wait for `Endpoint: http://127.0.0.1:…` and copy the printed `LLM_HOST=…` li
 
 ```bash
 ai-agent-serve
-ai-agent login
+ai-agent-chat login
 ai-agent
 ```
 
@@ -311,7 +311,7 @@ ai-agent config access list             # after you tried ai-agent once from you
 ai-agent config access approve YOUR_SUPABASE_USER_ID --run-as YOUR_LINUX_USERNAME
 ```
 
-Sign in on your PC with `ai-agent login`, run `ai-agent` once (you will see the whitelist message), then approve the `user_id` shown in `list`.
+Sign in on your PC with `ai-agent-chat login`, run `ai-agent-chat` once (you will see the whitelist message), then approve the `user_id` shown in `list`.
 
 **4b. Monitoring admins (current behavior)**
 
@@ -430,12 +430,12 @@ The first start creates the conversation SQLite file and applies the Alembic mig
 
 `{"status":"ok"}` means the process is up. `/api/me` without a token is rejected.
 
-**CLI on your PC.** The first `ai-agent login` or `ai-agent` asks for the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. The CLI saves that URL and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Add or switch servers with `ai-agent server-url https://agent.example.com` (or `/server` in the chat). Each server keeps its own sign-in. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
+**CLI on your PC.** The first `ai-agent-chat login` or `ai-agent-chat` asks for the **public HTTPS origin only** — for example `https://agent.myremotecloud.app`, not `https://agent.myremotecloud.app:8000`. Port `8000` exists on the **server loopback** (`http://127.0.0.1:8000`); cloudflared forwards that to the internet on **443**. The CLI saves that URL and downloads Supabase settings from `GET /api/client-config`. It does not ask again. Add or switch servers with `ai-agent-chat server-url https://agent.example.com` (or `/server` in the chat). Each server keeps its own sign-in. Test from your PC: `curl -s https://agent.myremotecloud.app/health`.
 
 **CLI sign-in.** Add `http://127.0.0.1:53682/callback` to the Supabase redirect allow list (next to the Android `aiagent://login-callback` URL), then:
 
 ```bash
-ai-agent login
+ai-agent-chat login
 ai-agent
 ```
 
@@ -719,7 +719,7 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 | `SUPABASE_JWT_AUDIENCE` | Expected `aud` claim (default `authenticated`) |
 | `SUPABASE_JWT_SECRET` | Legacy HS256 secret. Leave empty for current projects. |
 | `API_BASE_URL` | Unused by chat clients (default `http://127.0.0.1:8000`). They save a server URL instead. |
-| `CLI_OAUTH_PORT` | Loopback port for `ai-agent login` (default `53682`) |
+| `CLI_OAUTH_PORT` | Loopback port for `ai-agent-chat login` (default `53682`) |
 | `CONVERSATION_DATABASE` | SQLAlchemy URL. Empty uses the local SQLite file. |
 | `AGENT_APPROVAL_TIMEOUT` | Seconds a turn waits for approval (default `900`) |
 | `SPEECH_STT_MODEL` | Vosk model directory for Android microphone transcription. Empty disables it. CPU only. |
@@ -762,7 +762,7 @@ target config; `ai-agent serve` resolves targets per turn. See
 [`docs/execution-targets.md`](docs/execution-targets.md). When the model omits
 `target`, the server uses **`local`** only.
 
-Configure on the server (after `ai-agent login` or with `--user-id`):
+Configure on the server (after `ai-agent-chat login` or with `--user-id`):
 
 ```bash
 ai-agent config execution-target list
@@ -1082,14 +1082,14 @@ ai_agent/
   api/            # Public HTTP API (`ai-agent-serve`)
   speech/         # CPU Vosk transcription and Kokoro-82M synthesis
   conversations/  # SQLite transcript store and Alembic migrations
-  cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
-  agent/factory.py # In-process Agent wiring (API turns, smoke tests, local REPL)
+  cli/            # Operator commands (`serve`, `config`, `apk`, `host-setup`)
+  agent/factory.py # In-process agent wiring (API turns, smoke tests)
   service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
-clients/cli/      # Terminal chat client (`ai_agent_cli`: login, HTTP API REPL)
+clients/cli/      # Terminal chat client (`ai_agent_cli`, entry `ai-agent-chat`)
 clients/android/  # Discord sign-in, then reads chats from ai-agent-serve
 deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
 deploy/systemd/   # Ubuntu service unit and installer (`ai-agent.service`)
@@ -1097,7 +1097,7 @@ supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
 
-CLI chat client: [`clients/cli/README.md`](clients/cli/README.md). Every `ai-agent` command: [`docs/cli-commands.md`](docs/cli-commands.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
+Chat client: [`clients/cli/README.md`](clients/cli/README.md). Commands reference: [`docs/cli-commands.md`](docs/cli-commands.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
 
 ---
 
@@ -1115,7 +1115,7 @@ This is separate from where the LLM runs (`LLM_HOST` / `remote-provider`).
 
 Targets are **per Supabase user** in the deployment database. Every
 `config execution-target` command requires a subject user id from
-`ai-agent login` or `--user-id`. Omitting `target` in a tool call always means
+`ai-agent-chat login` or `--user-id`. Omitting `target` in a tool call always means
 **`local`** (this machine, as the approved Linux user).
 
 ```bash

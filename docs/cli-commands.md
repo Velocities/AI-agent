@@ -1,14 +1,19 @@
 # AI Agent commands
 
-`ai-agent` is the main program. With no extra words it opens the chat client. Any other first word selects a category: service control, APK publishing, server configuration, sign-in, or the saved server URL.
+Two console programs ship in the `ai-agent` package:
 
-Two other programs are installed beside it and are not subcommands of `ai-agent`: [ai-agent-llm](#ai-agent-llm) and [ai-agent-serve](#ai-agent-serve).
+- **`ai-agent-chat`** — terminal chat (HTTP). Use `--local` for loopback chat without sign-in.
+- **`ai-agent`** — server operator (`serve`, `config`, `apk`, …). With no arguments it prints usage; it does not open chat.
 
-`ai-agent apk` and `ai-agent config` print help when you give them no further arguments. `start`, `stop`, `restart`, `status`, and `serve` are not menus: each one runs as soon as you type it. `start`, `stop`, and `restart` ask for permission to manage the systemd unit when your user is not allowed to, which is a password prompt, not a help page.
+Two other programs are installed beside them: [ai-agent-llm](#ai-agent-llm) and [ai-agent-serve](#ai-agent-serve).
 
 | Command | What it does |
 |---------|----------------|
-| `ai-agent` | Chat with the agent over the saved server URL. |
+| `ai-agent-chat` | Chat with the agent over the saved server URL. |
+| `ai-agent-chat --local` | Start loopback `ai-agent serve` (standalone auth) and chat. |
+| `ai-agent-chat login` | Sign in with Discord in the browser. |
+| `ai-agent-chat logout` | Forget the active server's sign-in. |
+| `ai-agent-chat server-url` | Show, add, list, or remove chat servers. |
 | `ai-agent start` | Start the `ai-agent` systemd service. |
 | `ai-agent stop` | Stop that service. |
 | `ai-agent restart` | Restart that service. |
@@ -17,17 +22,16 @@ Two other programs are installed beside it and are not subcommands of `ai-agent`
 | `ai-agent apk` | Publish a debug APK for the admin download page. |
 | `ai-agent config` | Change deployment settings without opening a chat. |
 | `ai-agent host-setup` | Install the laptop SSH key on a GPU machine. |
-| `ai-agent server-url` | Show, add, list, or remove chat servers. Each keeps its own sign-in. |
-| `ai-agent login` | Sign in with Discord in the browser. |
-| `ai-agent logout` | Forget the active server's sign-in. |
+
+`ai-agent apk` and `ai-agent config` print help when you give them no further arguments. `start`, `stop`, `restart`, `status`, and `serve` run as soon as you type them.
 
 ---
 
-## Chat client
+## Chat client (`ai-agent-chat`)
 
-`ai-agent` with no arguments is the terminal chat. It talks to the HTTP API at the saved server URL. It does not run shell commands on the machine where you type.
+`ai-agent-chat` talks to the HTTP API at the saved server URL. It does not run shell commands on the machine where you type.
 
-The first run asks for the server URL if none is saved, then requires `ai-agent login`. Inside the chat:
+The first remote run asks for the server URL if none is saved, then requires `ai-agent-chat login`. Inside the chat:
 
 | Input | What it does |
 |-------|----------------|
@@ -38,7 +42,7 @@ The first run asks for the server URL if none is saved, then requires `ai-agent 
 | `/workflow` | Lists workflows. `/workflow <name> key=value` starts one in an isolated workflow container. |
 | `/list` | Lists conversations on the server. |
 | `/server` | Lists saved servers. `*` is the one this chat is using. |
-| `/server URL` | Adds that server or switches to it. A server you have not signed in to ends the chat so you can run `ai-agent login`. |
+| `/server URL` | Adds that server or switches to it. A server you have not signed in to ends the chat so you can run `ai-agent-chat login`. |
 | `/server remove URL` | Forgets that server and its sign-in. |
 | `/model-info` | Prints the model this server is running, and whether it accepts images and tools. |
 | `exit` or `quit` | Leaves the chat. |
@@ -166,7 +170,7 @@ Prints how the accounts fit together. The systemd process stays the service user
 
 Per-user SSH and Docker targets stored in the deployment database. The model only sees the name you choose. Design and storage: [`docs/execution-targets.md`](execution-targets.md).
 
-The subject user is the `ai-agent login` session on this machine, or the id you pass with `--user-id`. That user must already be approved and have a Linux account. `local` is reserved for this machine and is always available; you do not add it.
+The subject user is the `ai-agent-chat login` session on this machine, or the id you pass with `--user-id`. That user must already be approved and have a Linux account. `local` is reserved for this machine and is always available; you do not add it.
 
 | Command | What it does |
 |---------|----------------|
@@ -203,11 +207,11 @@ These run on the chat client machine. They save files under `~/.config/ai-agent/
 
 | Command | What it does |
 |---------|----------------|
-| `ai-agent server-url` | Prints the active server URL. |
-| `ai-agent server-url --list` | Lists saved servers. `*` marks the active one. |
-| `ai-agent server-url URL` | Adds an `http` or `https` origin, or switches to it. That server's sign-in is kept. Other servers are not signed out. |
-| `ai-agent server-url --remove URL` | Forgets that server and deletes its saved sign-in. |
-| `ai-agent login` | Opens Discord sign-in for the active server. Add `http://127.0.0.1:53682/callback` to that server's Supabase redirect allow list the first time. |
+| `ai-agent-chat server-url` | Prints the active server URL. |
+| `ai-agent-chat server-url --list` | Lists saved servers. `*` marks the active one. |
+| `ai-agent-chat server-url URL` | Adds an `http` or `https` origin, or switches to it. That server's sign-in is kept. Other servers are not signed out. |
+| `ai-agent-chat server-url --remove URL` | Forgets that server and deletes its saved sign-in. |
+| `ai-agent-chat login` | Opens Discord sign-in for the active server. Add `http://127.0.0.1:53682/callback` to that server's Supabase redirect allow list the first time. |
 | `ai-agent logout` | Deletes the active server's saved sign-in. Other servers stay signed in. |
 
 ---
