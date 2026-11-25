@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 from rich.console import Console
 
 from ai_agent_cli.auth.local import LocalStandaloneAuth
-from ai_agent_cli.contracts import DEFAULT_LOCAL_STANDALONE_USER_ID
 from ai_agent_cli.client_state import ServerConfig
+from ai_agent_cli.contracts import DEFAULT_LOCAL_STANDALONE_USER_ID
 from ai_agent_cli.terminal_chat import run_terminal_chat
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass
@@ -25,34 +29,46 @@ class LocalServerProcess:
     token: str
 
 
-def _default_api_url() -> str:
-    host = os.environ.get("API_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
-    port = os.environ.get("API_BIND_PORT", "8000").strip() or "8000"
-    display = "127.0.0.1" if host.lower() == "localhost" else host
-    return f"http://{display}:{port}"
+def _pick_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def start_local_server(console: Console) -> LocalServerProcess | None:
     token = secrets.token_urlsafe(32)
-    base_url = _default_api_url()
+    port = _pick_loopback_port()
+    host = "127.0.0.1"
+    base_url = f"http://{host}:{port}"
     env = os.environ.copy()
     env["LOCAL_STANDALONE_MODE"] = "1"
     env["LOCAL_STANDALONE_TOKEN"] = token
     env.setdefault("LOCAL_STANDALONE_USER_ID", DEFAULT_LOCAL_STANDALONE_USER_ID)
+    env["API_BIND_HOST"] = host
+    env["API_BIND_PORT"] = str(port)
     command = [sys.executable, "-m", "ai_agent.service.supervisor"]
-    console.print("[dim]Starting local agent server (ai-agent serve)…[/dim]")
+    console.print(
+        f"[dim]Starting local agent server on {base_url} (ai-agent serve)…[/dim]"
+    )
     try:
         process = subprocess.Popen(
             command,
             env=env,
+            cwd=_REPO_ROOT,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
     except OSError as exc:
         console.print(f"[red]Could not start the local server:[/red] {exc}")
         return None
-    if not _wait_for_health(base_url):
-        console.print("[red]Local server did not become ready.[/red]")
+    if not _wait_for_ready(base_url, token, process):
+        console.print(
+            "[red]Local server did not accept the standalone bearer token.[/red]"
+        )
+        console.print(
+            "[dim]If another ai-agent serve is already running, stop it or use "
+            "ai-agent-chat with a saved server URL.[/dim]"
+        )
         try:
             process.terminate()
             process.wait(timeout=5)
@@ -61,22 +77,37 @@ def start_local_server(console: Console) -> LocalServerProcess | None:
         if process.stderr:
             detail = process.stderr.read().decode("utf-8", errors="replace").strip()
             if detail:
-                console.print(f"[dim]{detail[-2000:]}[/dim]")
+                console.print(f"[dim]{detail[-3000:]}[/dim]")
         return None
     return LocalServerProcess(process=process, base_url=base_url, token=token)
 
 
-def _wait_for_health(base_url: str, *, timeout: float = 120.0) -> bool:
+def _wait_for_ready(
+    base_url: str,
+    token: str,
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float = 300.0,
+) -> bool:
+    """Wait until /health is up and /api/me accepts our standalone bearer."""
     deadline = time.monotonic() + timeout
-    with httpx.Client(timeout=2.0) as client:
+    headers = {"Authorization": f"Bearer {token}"}
+    origin = base_url.rstrip("/")
+    with httpx.Client(timeout=5.0) as client:
         while time.monotonic() < deadline:
+            if process.poll() is not None:
+                return False
             try:
-                response = client.get(f"{base_url.rstrip('/')}/health")
-                if response.status_code == 200:
+                health = client.get(f"{origin}/health")
+                if health.status_code != 200:
+                    time.sleep(0.5)
+                    continue
+                probe = client.get(f"{origin}/api/me", headers=headers)
+                if probe.status_code == 200:
                     return True
             except httpx.HTTPError:
                 pass
-            time.sleep(0.25)
+            time.sleep(0.5)
     return False
 
 
@@ -100,6 +131,6 @@ def run_local_chat() -> int:
         console.print("\n[dim]Stopping local server…[/dim]")
         handle.process.terminate()
         try:
-            handle.process.wait(timeout=10)
+            handle.process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             handle.process.kill()

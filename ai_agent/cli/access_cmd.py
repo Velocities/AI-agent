@@ -295,7 +295,7 @@ def _print_bootstrap_help(console: Console) -> None:
         "(systemd user [bold]ai[/bold] and your admin shell must match):\n"
         f"     CONVERSATION_DATABASE=sqlite:///{shared_deployment_database_path()}\n"
         "2. Restart the API: [bold]sudo systemctl restart ai-agent[/bold]\n"
-        "3. On your PC: [bold]ai-agent login[/bold], then [bold]ai-agent[/bold] once "
+        "3. On your PC: [bold]ai-agent-chat login[/bold], then [bold]ai-agent-chat[/bold] once "
         "(whitelist message creates a pending row).\n"
         "4. On the server:\n"
         "     ai-agent config access list\n"

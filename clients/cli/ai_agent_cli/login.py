@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     save_session_for(config.server_url, session)
     console.print(f"[green]Signed in to {config.server_url}.[/green]")
-    console.print("Start a chat with [bold]ai-agent[/bold].")
+    console.print("Start a chat with [bold]ai-agent-chat[/bold].")
     return 0
 
 

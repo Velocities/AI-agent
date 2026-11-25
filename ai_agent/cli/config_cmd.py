@@ -346,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     targets.add_argument(
         "--user-id",
         metavar="UUID",
-        help="Subject Supabase user id (default: ai-agent login session).",
+        help="Subject Supabase user id (default: ai-agent-chat login session).",
     )
     targets.add_argument(
         "--service-db",

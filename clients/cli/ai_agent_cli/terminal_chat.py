@@ -56,13 +56,14 @@ def run_terminal_chat(
     if token is None:
         return 1
 
+    local_mode = not config.supabase_url.strip() and not config.supabase_publishable_key.strip()
     client = AgentApiClient(config.server_url, token)
     try:
         conversation_id = _current_conversation(client, console)
         model = _load_model(client, console)
         vision = bool(model and model.get("vision"))
     except AgentApiError as exc:
-        _print_access_error(console, exc)
+        _print_access_error(console, exc, local_mode=local_mode)
         client.close()
         return 1
     except httpx.HTTPError as exc:
@@ -339,7 +340,12 @@ def _current_conversation(client: AgentApiClient, console: Console) -> str:
     return created["id"]
 
 
-def _print_access_error(console: Console, exc: AgentApiError) -> None:
+def _print_access_error(
+    console: Console,
+    exc: AgentApiError,
+    *,
+    local_mode: bool = False,
+) -> None:
     if exc.code in {ACCESS_PENDING_CODE, ACCESS_DENIED_CODE, ACCESS_INCOMPLETE_CODE}:
         console.print(f"[yellow]{exc.detail}[/yellow]")
         if exc.code == ACCESS_PENDING_CODE:
@@ -350,7 +356,13 @@ def _print_access_error(console: Console, exc: AgentApiError) -> None:
             )
         return
     if exc.status == 401:
-        console.print("[red]Sign-in was rejected. Run ai-agent-chat login.[/red]")
+        if local_mode:
+            console.print(
+                "[red]The local API rejected the bearer token.[/red] "
+                "Try again; ensure no other server is bound to the same port."
+            )
+        else:
+            console.print("[red]Sign-in was rejected. Run ai-agent-chat login.[/red]")
         return
     console.print(f"[red]{exc.detail}[/red]")
 

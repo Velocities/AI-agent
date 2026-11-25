@@ -85,8 +85,9 @@ def bootstrap_local_standalone_access(
         settings.local_standalone_linux_user.strip()
         or os.environ.get("LOCAL_STANDALONE_LINUX_USER", "").strip()
         or os.environ.get("USER", "").strip()
+        or os.environ.get("USERNAME", "").strip()
         or os.environ.get("LOGNAME", "").strip()
-        or "ai"
+        or "local"
     )
     record = store.get(user_id)
     if (
@@ -95,4 +96,7 @@ def bootstrap_local_standalone_access(
         and record.linux_username.strip()
     ):
         return
-    store.approve(user_id, linux_username=linux_user)
+    try:
+        store.approve(user_id, linux_username=linux_user)
+    except ValueError:
+        store.approve(user_id, linux_username="local")
