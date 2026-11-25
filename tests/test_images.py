@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from ai_agent.agent.loop import AgentLoop, AgentRunResult
+from ai_agent.agent.agent import Agent, AgentRunResult
 from ai_agent.api.app import create_app
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
 from ai_agent.api.transcript import message_from_record, message_metadata
@@ -75,7 +75,7 @@ class _Tokens:
 
 
 class _CapturingAgent:
-    """Stand-in for AgentLoop. Records the images the turn handler handed over."""
+    """Stand-in for Agent. Records the images the turn handler handed over."""
 
     def __init__(self, **_kwargs) -> None:
         self.messages: list[LLMMessage] = []
@@ -84,7 +84,7 @@ class _CapturingAgent:
         self.llm = None
         self.images: list[ImageInput] | None = None
 
-    def run(self, content: str, stream_callback=None, images=None, **_kwargs) -> AgentRunResult:
+    def answer_user(self, content: str, stream_callback=None, images=None, **_kwargs) -> AgentRunResult:
         self.images = list(images or [])
         user = LLMMessage(role="user", content=content, images=self.images)
         self.messages.append(user)
@@ -558,7 +558,7 @@ def test_facade_text_only_request_omits_images(monkeypatch) -> None:
     assert message == {"role": "user", "content": "hello"}
 
 
-# The agent loop does not re-encode. Stripping happens before agent.run.
+# The agent loop does not re-encode. Stripping happens before agent.answer_user.
 
 
 def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
@@ -574,7 +574,7 @@ def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
     llm.chat.return_value = LLMResponse(
         message=LLMMessage(role="assistant", content="The title is clipped.")
     )
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -585,7 +585,7 @@ def test_agent_passes_images_to_the_provider_unchanged(tmp_path: Path) -> None:
     )
     image = ImageInput(data=png_bytes(), media_type="image/png")
     # The provider should see this exact object, not a re-encoded copy.
-    result = agent.run("What's wrong with this UI?", images=[image])
+    result = agent.answer_user("What's wrong with this UI?", images=[image])
     sent = llm.chat.call_args.args[0]
     user = next(message for message in sent if message.role == "user")
     assert user.content == "What's wrong with this UI?"

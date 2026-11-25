@@ -38,6 +38,8 @@ class VLLMEngineProcess(SubprocessEngineProcess):
             host,
             "--port",
             str(port),
+            "--max-model-len",
+            str(self.settings.llm_context_length),
         ]
         if self._binary_override:
             return [self._binary_override, *serve_args]

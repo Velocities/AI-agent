@@ -112,6 +112,7 @@ import com.aiagent.android.data.CommandOutcome
 import com.aiagent.android.data.ImageRejected
 import com.aiagent.android.data.ImageTypes
 import com.aiagent.android.data.ImageUpload
+import com.aiagent.android.data.WorkflowStatus
 import com.aiagent.android.ui.AppIcons
 import com.aiagent.android.ui.AuthDebugPanel
 import com.aiagent.android.ui.AuthUiState
@@ -319,6 +320,9 @@ fun ChatScreen(
                         chat = state,
                         auth = auth,
                         onNewChat = { closeDrawerThen(viewModel::newChat) },
+                        onStartWorkflow = { name, parameters ->
+                            closeDrawerThen { viewModel.startWorkflow(name, parameters) }
+                        },
                         onOpen = { id -> closeDrawerThen { viewModel.openConversation(id) } },
                         onDelete = viewModel::deleteConversation,
                         onSignOut = onSignOut,
@@ -347,6 +351,7 @@ fun ChatScreen(
                             IconButton(onClick = {
                                 scope.launch { drawerState.open() }
                                 viewModel.refreshConversations()
+                                viewModel.refreshWorkflows()
                             }) {
                                 Icon(AppIcons.Menu, contentDescription = "Open chat history")
                             }
@@ -389,9 +394,16 @@ fun ChatScreen(
                 bottomBar = {
                     val voiceBusy = state.voiceStatus == "Checking voice…" || state.voiceStatus == "Transcribing…"
                     val composerEnabled = state.apiConfigured && state.accessMessage == null
+                    val workflow = state.currentWorkflow
                     Composer(
                         chatId = state.currentId,
                         enabled = composerEnabled,
+                        sendEnabled = state.workflowSendEnabled,
+                        workflowNotice = WorkflowStatus.notice(
+                            status = if (workflow == null) null else workflow.status,
+                            showReady = workflow != null && state.messages.isEmpty() && state.pendingUserText == null,
+                            error = workflow?.error.orEmpty(),
+                        ),
                         running = state.running,
                         listening = listening,
                         heard = heard,
@@ -803,6 +815,8 @@ private fun Modifier.persistentVerticalScrollbar(
 private fun Composer(
     chatId: String?,
     enabled: Boolean,
+    sendEnabled: Boolean,
+    workflowNotice: String?,
     running: Boolean,
     listening: Boolean,
     heard: String,
@@ -839,7 +853,7 @@ private fun Composer(
     // Partials belong in the field value. A placeholder stays one line tall and ellipsizes,
     // so spoken text never grew the way typed text does.
     val shown = if (listening) heard else draft
-    val canSend = canType && (draft.isNotBlank() || attachments.isNotEmpty())
+    val canSend = canType && sendEnabled && (draft.isNotBlank() || attachments.isNotEmpty())
 
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -848,6 +862,14 @@ private fun Composer(
                 .imePadding()
                 .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
         ) {
+        if (workflowNotice != null) {
+            Text(
+                workflowNotice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
+            )
+        }
         if (attachments.isNotEmpty()) {
             ImageStrip(
                 images = attachments.map {
@@ -878,7 +900,7 @@ private fun Composer(
                 followLatest = listening && provider.liveTranscript,
                 modifier = Modifier.weight(1f),
                 trailingIcon = {
-                    IconButton(enabled = enabled && !running && !voiceBusy, onClick = onMic) {
+                    IconButton(enabled = enabled && sendEnabled && !running && !voiceBusy, onClick = onMic) {
                         if (voiceBusy) {
                             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
                         } else {

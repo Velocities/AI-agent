@@ -54,10 +54,14 @@ def _target_parameter(target_names: list[str]) -> dict:
     }
 
 
-def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
+def build_tool_definitions(
+    target_names: list[str] | None = None,
+    *,
+    workflow_tool_names: list[str] | None = None,
+) -> list[dict]:
     names = list(target_names) if target_names else ["local"]
     target_parameter = _target_parameter(names)
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -168,6 +172,42 @@ def build_tool_definitions(target_names: list[str] | None = None) -> list[dict]:
             },
         },
     ]
+    if workflow_tool_names:
+        tools.insert(2, _run_tool_definition(workflow_tool_names))
+    return tools
+
+
+def _run_tool_definition(tool_names: list[str]) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "run_tool",
+            "description": (
+                "Run one workflow tool inside the workflow container. "
+                "tool is a name from this workflow. input is a JSON object "
+                "for that tool. The executable and its dependencies are fixed "
+                "by the workflow; do not pass a binary path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "enum": list(tool_names),
+                    },
+                    "input": {
+                        "type": "object",
+                        "description": "JSON object matching the tool input schema.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this tool is needed.",
+                    },
+                },
+                "required": ["tool", "input", "reason"],
+            },
+        },
+    }
 
 
 TOOL_DEFINITIONS = build_tool_definitions()

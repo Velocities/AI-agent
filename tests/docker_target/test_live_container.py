@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.agent import Agent
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
@@ -111,7 +111,7 @@ def test_sudo_can_write_under_root(docker_target) -> None:
     assert read.success, read.stderr
 
 
-def test_agent_loop_writes_file_on_docker_target(
+def test_agent_writes_file_on_docker_target(
     docker_target, executor, tmp_path: Path
 ) -> None:
     settings = Settings()
@@ -149,7 +149,7 @@ def test_agent_loop_writes_file_on_docker_target(
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -163,7 +163,7 @@ def test_agent_loop_writes_file_on_docker_target(
         ),
     )
 
-    result = agent.run("write a file on the lab container")
+    result = agent.answer_user("write a file on the lab container")
     assert result.final_message == "Wrote the file."
 
     read = docker_target.run(
@@ -175,7 +175,7 @@ def test_agent_loop_writes_file_on_docker_target(
     assert "via agent loop" in read.stdout
 
 
-def test_agent_loop_sudo_with_container_admin_policy(
+def test_agent_sudo_with_container_admin_policy(
     docker_target, executor, tmp_path: Path
 ) -> None:
     settings = Settings()
@@ -211,7 +211,7 @@ def test_agent_loop_sudo_with_container_admin_policy(
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     prompter.should_auto_run = MagicMock(return_value=True)
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -222,7 +222,7 @@ def test_agent_loop_sudo_with_container_admin_policy(
         router=ExecutionTargetRouter({"lab": docker_target}, default_name="lab"),
     )
 
-    result = agent.run("are we root in the container with sudo?")
+    result = agent.answer_user("are we root in the container with sudo?")
     assert result.final_message == "root inside lab"
     tool_payload = agent.messages[-2].content
     assert '"success": true' in tool_payload

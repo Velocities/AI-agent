@@ -10,22 +10,27 @@ import com.aiagent.android.data.ApprovalRequest
 import com.aiagent.android.data.ChatItem
 import com.aiagent.android.data.ChatMessage
 import com.aiagent.android.data.ConversationSummary
+import com.aiagent.android.data.ConversationWorkflow
 import com.aiagent.android.data.ImageUpload
 import com.aiagent.android.data.ModelInfo
 import com.aiagent.android.data.Transcript
 import com.aiagent.android.data.TurnEvent
+import com.aiagent.android.data.WorkflowStatus
+import com.aiagent.android.data.WorkflowSummary
 import com.aiagent.android.speech.SpeechFailed
 import com.aiagent.android.speech.SpeechHandled
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -64,6 +69,7 @@ data class ChatUiState(
     val model: ModelInfo? = null,
     /** True when this process could not report a model. Image attach stays off. */
     val modelUnavailable: Boolean = false,
+    val workflows: List<WorkflowSummary> = emptyList(),
 ) {
     val currentTitle: String?
         get() = conversations.firstOrNull { it.id == currentId }?.title?.ifBlank { null }
@@ -71,6 +77,13 @@ data class ChatUiState(
     /** False until GET /api/model says this process accepts images. */
     val visionEnabled: Boolean
         get() = model?.vision == true
+
+    val currentWorkflow: ConversationWorkflow?
+        get() = conversations.firstOrNull { it.id == currentId }?.workflow
+
+    /** Ordinary chats can send. A workflow chat can send only when the container is ready. */
+    val workflowSendEnabled: Boolean
+        get() = currentWorkflow?.let { WorkflowStatus.canSend(it.status) } ?: true
 }
 
 class ChatViewModel : ViewModel() {
@@ -85,6 +98,7 @@ class ChatViewModel : ViewModel() {
     val speechAudio: Flow<SpeechChunk> = speechAudioChannel.receiveAsFlow()
 
     private var turnJob: Job? = null
+    private var readinessJob: Job? = null
     private var listenJob: Job? = null
     @Volatile private var turnConnection: HttpURLConnection? = null
     @Volatile private var stopRequested = false
@@ -100,6 +114,7 @@ class ChatViewModel : ViewModel() {
 
     init {
         refreshConversations()
+        refreshWorkflows()
         refreshModelInfo()
     }
 
@@ -111,6 +126,60 @@ class ChatViewModel : ViewModel() {
                 _state.update { it.copy(conversations = rows, accessMessage = null) }
             }
             _state.update { it.copy(loadingConversations = false) }
+        }
+    }
+
+    fun refreshWorkflows() {
+        if (!_state.value.apiConfigured) return
+        viewModelScope.launch {
+            call { token -> api().listWorkflows(token) }?.let { rows ->
+                _state.update { it.copy(workflows = rows) }
+            }
+        }
+    }
+
+    fun startWorkflow(name: String, parameters: Map<String, String>) {
+        if (_state.value.running) return
+        viewModelScope.launch {
+            val created = call { token ->
+                api().createWorkflowConversation(token, name, parameters)
+            } ?: return@launch
+            _state.update { state ->
+                val without = state.conversations.filterNot { it.id == created.id }
+                state.copy(
+                    conversations = listOf(created) + without,
+                    notice = "Started ${created.workflow?.name ?: name}",
+                )
+            }
+            openConversation(created.id)
+        }
+    }
+
+    private fun watchWorkflow(conversationId: String) {
+        readinessJob?.cancel()
+        readinessJob = viewModelScope.launch {
+            while (isActive && _state.value.currentId == conversationId) {
+                val workflow = _state.value.conversations
+                    .firstOrNull { it.id == conversationId }
+                    ?.workflow
+                if (workflow == null || workflow.status == WorkflowStatus.IS_FAILED || WorkflowStatus.canSend(workflow.status)) {
+                    return@launch
+                }
+                val fresh = call { token -> api().getConversation(token, conversationId) } ?: return@launch
+                if (_state.value.currentId != conversationId) return@launch
+                _state.update { state ->
+                    val known = state.conversations.any { it.id == fresh.id }
+                    val conversations = if (known) {
+                        state.conversations.map { if (it.id == fresh.id) fresh else it }
+                    } else {
+                        listOf(fresh) + state.conversations
+                    }
+                    state.copy(conversations = conversations)
+                }
+                val status = fresh.workflow?.status.orEmpty()
+                if (status == WorkflowStatus.IS_FAILED || WorkflowStatus.canSend(status)) return@launch
+                delay(2_000)
+            }
         }
     }
 
@@ -133,11 +202,13 @@ class ChatViewModel : ViewModel() {
         pendingUpload = emptyList()
         refreshModelInfo()
         loadMessages(id)
+        watchWorkflow(id)
     }
 
     /** New chats are created on the first send, so an untouched "New chat" leaves no row behind. */
     fun newChat() {
         stopTurn()
+        readinessJob?.cancel()
         _state.update {
             it.copy(
                 currentId = null,
@@ -176,6 +247,10 @@ class ChatViewModel : ViewModel() {
     fun send(text: String, images: List<ImageUpload> = emptyList(), speakReply: Boolean = false) {
         val content = text.trim()
         if ((content.isEmpty() && images.isEmpty()) || _state.value.running) return
+        if (!_state.value.workflowSendEnabled) {
+            _state.update { it.copy(voiceStatus = null) }
+            return
+        }
         if (images.isNotEmpty() && !_state.value.visionEnabled) {
             _state.update { it.copy(error = "This model does not accept images.") }
             return

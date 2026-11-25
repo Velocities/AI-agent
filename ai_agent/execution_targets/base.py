@@ -37,6 +37,11 @@ class ExecutionTarget(ABC):
             display=self.display(),
         )
 
+    @property
+    def uses_host_policy(self) -> bool:
+        """When False, the host policy engine and CLI approval are not used."""
+        return True
+
     @abstractmethod
     def run(self, expr: CommandExpr) -> CommandResult:
         raise NotImplementedError

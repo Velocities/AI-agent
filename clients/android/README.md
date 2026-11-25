@@ -2,7 +2,7 @@
 
 Chat client for `ai-agent-serve`: **Discord sign-in through Supabase Auth**, then a chat screen in the usual mobile chatbot layout.
 
-- **Chat history sidebar.** Swipe from the left edge or tap the menu button at the top left. It has **New chat** and your chats grouped by date (Today, Yesterday, Previous 7 days, Previous 30 days, Older). Long-press a chat to delete it, or use **⋮ → Delete chat** in the top bar. Deleting removes the chat and its messages from the server. It is refused while a reply is still running.
+- **Chat history sidebar.** Swipe from the left edge or tap the menu button at the top left. It has **New chat**, **Workflow**, and your chats grouped by date (Today, Yesterday, Previous 7 days, Previous 30 days, Older). **Workflow** lists the workflows installed on the server, asks for that workflow's details, and opens a chat whose tools run in an isolated workflow container. Long-press a chat to delete it, or use **⋮ → Delete chat** in the top bar. Deleting removes the chat and its messages from the server. It is refused while a reply is still running.
 - **Replies** render the model's Markdown: headings, bold/italic, inline code, code blocks, lists, quotes, tables and links. `<think>` reasoning (Qwen3, DeepSeek-R1) is folded behind a **Show reasoning** toggle.
 - **Commands** show as cards coloured by where they run: green for this machine (`local`), violet for SSH, blue for Docker. Each card shows the exit status, duration and output.
 - **Approvals** match the CLI's `y` / `n` / `a`: **Deny**, **Approve** (red **Run anyway** for destructive commands), and **Approve, and allow … for this session** when the CLI would offer `a`.

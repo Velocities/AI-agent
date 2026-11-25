@@ -98,7 +98,11 @@ NVIDIA GPU access, when this machine has a GPU:
 sudo usermod -aG render,video ai
 ```
 
-Adding `ai` to the `docker` group is a separate decision. It is near-root. Do it only if a Docker execution target needs it.
+Workflow image builds use BuildKit. The installer installs the Ubuntu package `docker-buildx` when `docker buildx` is not available. That package depends on Docker, so a machine without Docker gets the engine as well. Re-run the installer after installing the package by hand.
+
+The Docker broker runs as system user `ai-docker` (not root). Its writable state lives under `/var/lib/ai-docker` (`HOME` and `DOCKER_CONFIG` for BuildKit). The installer creates that tree and sets the passwd home directory; the unit uses `StateDirectory=ai-docker` so the broker can persist buildx metadata.
+
+Docker does not require adding `ai` to the `docker` group. That group is near-root. When Docker is installed, the installer enables `ai-agent-docker.service` instead. Only that process gets `SupplementaryGroups=docker`. The API reaches it through `/run/ai-agent/docker.sock`, which is group `ai` and mode `0660`. Workflow containers also need Docker's user namespace remap. The installer turns that on when no other containers are running, and leaves dockerd alone when they are.
 
 ## 2b. Approve users (deployment whitelist)
 
@@ -123,6 +127,16 @@ Host monitoring is a second allowlist in the same SQLite file. It does not follo
 ai-agent config monitoring grant <user_id>
 ai-agent config monitoring list
 ai-agent config monitoring revoke <user_id>
+
+Workflow containers (one per workflow chat) can be listed or removed on the host:
+
+```bash
+ai-agent config workflow-containers list --service-db
+ai-agent config workflow-containers rm wf40f11de7c8a9b0012345678abcdef01
+ai-agent config workflow-containers rm --all --state stopped -y
+```
+
+Requires permission to run `docker` on the server. See `docs/cli-commands.md`.
 ```
 
 Use `--service-db` the same way as `config access` when you mean the shared deployment database. `grant` can be repeated. `revoke` removes the row; revoking an unknown id fails so a typo is obvious. The API sees the change on the next request. The Android Monitoring button is decided at sign-in, so it stays until the user signs in again.

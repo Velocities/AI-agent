@@ -43,13 +43,13 @@ def main() -> int:
         return 1
 
     counter = ResumeCounter()
-    loop_logger = logging.getLogger("ai_agent.agent.loop")
+    loop_logger = logging.getLogger("ai_agent.agent.assistant")
     loop_logger.setLevel(logging.DEBUG)
     loop_logger.addHandler(counter)
 
     parts: list[str] = []
     start = time.perf_counter()
-    result = agent.run(prompt, stream_callback=parts.append)
+    result = agent.answer_user(prompt, stream_callback=parts.append)
     total = time.perf_counter() - start
     answer = "".join(parts)
 

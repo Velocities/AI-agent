@@ -36,8 +36,25 @@ class AgentApiClient:
         rows = payload.get("conversations", [])
         return rows if isinstance(rows, list) else []
 
-    def create_conversation(self, title: str = "") -> dict:
-        return self._request("POST", "/api/conversations", json={"title": title})
+    def create_conversation(
+        self,
+        title: str = "",
+        *,
+        workflow: str | None = None,
+        parameters: dict[str, str] | None = None,
+    ) -> dict:
+        body: dict = {"title": title}
+        if workflow:
+            body["workflow"] = {"name": workflow, "parameters": parameters or {}}
+        return self._request("POST", "/api/conversations", json=body)
+
+    def list_workflows(self) -> list[dict]:
+        payload = self._request("GET", "/api/workflows")
+        rows = payload.get("workflows", [])
+        return rows if isinstance(rows, list) else []
+
+    def get_conversation(self, conversation_id: str) -> dict:
+        return self._request("GET", f"/api/conversations/{conversation_id}")
 
     def list_messages(self, conversation_id: str) -> list[dict]:
         payload = self._request("GET", f"/api/conversations/{conversation_id}/messages")

@@ -18,11 +18,42 @@ import java.net.ProtocolException
 import java.net.URL
 
 @Serializable
+data class ConversationWorkflow(
+    val name: String = "",
+    val version: String = "",
+    val description: String = "",
+    val parameters: Map<String, String> = emptyMap(),
+    val status: String = "",
+    val error: String = "",
+)
+
+@Serializable
 data class ConversationSummary(
     val id: String,
     val title: String = "",
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = "",
+    val workflow: ConversationWorkflow? = null,
+)
+
+@Serializable
+data class WorkflowParameter(
+    val name: String = "",
+    val required: Boolean = false,
+    val description: String = "",
+)
+
+@Serializable
+data class WorkflowSummary(
+    val name: String = "",
+    val version: String = "",
+    val description: String = "",
+    val parameters: List<WorkflowParameter> = emptyList(),
+)
+
+@Serializable
+private data class WorkflowListResponse(
+    val workflows: List<WorkflowSummary> = emptyList(),
 )
 
 @Serializable
@@ -92,6 +123,11 @@ class AgentApi(private val baseUrl: String) {
         return json.decodeFromString<ConversationListResponse>(body).conversations
     }
 
+    fun getConversation(accessToken: String, conversationId: String): ConversationSummary {
+        val body = request("GET", ApiEndpoints.conversation(conversationId), accessToken)
+        return json.decodeFromString(body)
+    }
+
     fun listMessages(accessToken: String, conversationId: String): List<ChatMessage> {
         val body = request("GET", ApiEndpoints.conversationMessages(conversationId), accessToken)
         return json.decodeFromString<MessageListResponse>(body).messages
@@ -99,6 +135,40 @@ class AgentApi(private val baseUrl: String) {
 
     fun createConversation(accessToken: String): ConversationSummary {
         val body = request("POST", ApiEndpoints.CONVERSATIONS, accessToken, "{}")
+        return json.decodeFromString(body)
+    }
+
+    fun listWorkflows(accessToken: String): List<WorkflowSummary> {
+        val body = request("GET", ApiEndpoints.WORKFLOWS, accessToken)
+        return json.decodeFromString<WorkflowListResponse>(body).workflows
+    }
+
+    fun createWorkflowConversation(
+        accessToken: String,
+        name: String,
+        parameters: Map<String, String>,
+    ): ConversationSummary {
+        val payload = buildJsonObject {
+            put("title", JsonPrimitive(name))
+            put(
+                "workflow",
+                buildJsonObject {
+                    put("name", JsonPrimitive(name))
+                    put(
+                        "parameters",
+                        buildJsonObject {
+                            parameters.forEach { (key, value) -> put(key, JsonPrimitive(value)) }
+                        },
+                    )
+                },
+            )
+        }
+        val body = request(
+            "POST",
+            ApiEndpoints.CONVERSATIONS,
+            accessToken,
+            payload.toString(),
+        )
         return json.decodeFromString(body)
     }
 

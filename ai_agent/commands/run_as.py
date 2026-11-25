@@ -41,10 +41,40 @@ class RunAsCommandExecutor(CommandExecutor):
         self._linux_username = normalize_linux_username(linux_username)
         self._account = lookup_posix_account(self._linux_username)
 
+    @property
+    def linux_username(self) -> str:
+        return self._linux_username
+
+    @property
+    def uid(self) -> int:
+        return self._account.uid
+
+    @property
+    def home(self) -> str:
+        return self._account.home
+
     def run(self, expr: CommandExpr) -> CommandResult:
         result = super().run(expr)
         meta = {**(result.metadata or {}), "run_as_linux_user": self._linux_username}
         result.metadata = meta
+        return result
+
+    def run_argv(
+        self,
+        argv: list[str],
+        *,
+        stdin_text: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
+        if _runs_as_current_user(self._linux_username):
+            result = super().run_argv(argv, stdin_text=stdin_text, env=env)
+        else:
+            wrapped, account_env = _wrap_argv_for_user(argv, self._account)
+            result = super().run_argv(wrapped, stdin_text=stdin_text, env=account_env)
+        result.metadata = {
+            **(result.metadata or {}),
+            "run_as_linux_user": self._linux_username,
+        }
         return result
 
     def _run_single(

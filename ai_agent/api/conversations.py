@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from getpass import getuser
 from typing import Literal, Self
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -30,18 +31,46 @@ from ai_agent.conversations.store import (
     ConversationStore,
     Message,
 )
+from ai_agent.deployment.access import ACCESS_INCOMPLETE_CODE, ACCESS_INCOMPLETE_MESSAGE
 from ai_agent.images import ImageRejected, validate_image_bytes
 from ai_agent.llm.client.types import ImageInput, LLMMessage
+from ai_agent.workflows.container import WorkflowSpecError
+from ai_agent.workflows.manifests import (
+    WorkflowError,
+    default_workflow_image_root,
+    load_workflow,
+    validate_parameters,
+)
+from ai_agent.workflows.runtime import (
+    WorkflowRuntimeError,
+    attachment_for,
+    container_name_for,
+    stop_workflow_container,
+)
+from ai_agent.workflows.status import (
+    WORKFLOW_NOT_READY_CODE,
+    WORKFLOW_NOT_READY_STATUS,
+    WorkflowStatus,
+    not_ready_message,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
+class WorkflowStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    parameters: dict[str, str] = Field(default_factory=dict)
+
+
 class CreateConversationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = ""
+    workflow: WorkflowStartRequest | None = None
 
 
 class TurnRequest(BaseModel):
@@ -94,11 +123,21 @@ class ApprovalBody(BaseModel):
         return self
 
 
+class ConversationWorkflowResponse(BaseModel):
+    name: str
+    version: str = ""
+    description: str = ""
+    parameters: dict[str, str] = Field(default_factory=dict)
+    status: str = ""
+    error: str = ""
+
+
 class ConversationResponse(BaseModel):
     id: str
     title: str
     created_at: str
     updated_at: str
+    workflow: ConversationWorkflowResponse | None = None
 
 
 class ConversationListResponse(BaseModel):
@@ -128,32 +167,60 @@ def get_store(request: Request) -> ConversationStore:
 @router.post("", response_model=ConversationResponse)
 def create_conversation(
     body: CreateConversationRequest,
+    request: Request,
     user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationResponse:
-    conversation = store.create_conversation(user.user_id, title=body.title)
-    return _conversation_response(conversation)
+    workflow_name = ""
+    parameters: dict[str, str] = {}
+    if body.workflow is not None:
+        workflow_name, parameters = _validated_workflow(body.workflow)
+        _linux_username_for(request, user.user_id)
+    title = body.title.strip() or workflow_name
+    conversation = store.create_conversation(
+        user.user_id,
+        title=title,
+        workflow_name=workflow_name,
+        workflow_parameters=parameters,
+    )
+    status = ""
+    if body.workflow is not None:
+        try:
+            current = _begin_workflow(request, conversation)
+        except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
+            lifecycle = getattr(request.app.state, "workflow_lifecycle", None)
+            if lifecycle is not None:
+                lifecycle.forget(conversation.id)
+            store.delete_conversation(user.user_id, conversation.id)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        status = current.value
+    return _conversation_response(request, conversation, status=status)
 
 
 @router.get("", response_model=ConversationListResponse)
 def list_conversations(
+    request: Request,
     user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationListResponse:
     rows = store.list_conversations(user.user_id)
-    return ConversationListResponse(conversations=[_conversation_response(row) for row in rows])
+    return ConversationListResponse(
+        conversations=[_conversation_response(request, row) for row in rows]
+    )
 
 
 @router.get("/{conversation_id}", response_model=ConversationResponse)
 def get_conversation(
     conversation_id: str,
+    request: Request,
     user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> ConversationResponse:
     conversation = store.get_conversation(user.user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
-    return _conversation_response(conversation)
+    status = _status_for_open(request, conversation)
+    return _conversation_response(request, conversation, status=status)
 
 
 @router.delete("/{conversation_id}", status_code=204)
@@ -163,7 +230,8 @@ def delete_conversation(
     user: AuthenticatedUser = Depends(require_deployment_access),
     store: ConversationStore = Depends(get_store),
 ) -> Response:
-    if store.get_conversation(user.user_id, conversation_id) is None:
+    conversation = store.get_conversation(user.user_id, conversation_id)
+    if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
     broker = request.app.state.broker
     if not broker.try_begin(conversation_id):
@@ -179,6 +247,17 @@ def delete_conversation(
         )
         if not removed:
             raise HTTPException(status_code=404, detail="Conversation not found.")
+        if conversation.workflow_name:
+            lifecycle = getattr(request.app.state, "workflow_lifecycle", None)
+            if lifecycle is not None:
+                lifecycle.forget(conversation_id)
+            try:
+                stop_workflow_container(container_name_for(conversation_id))
+            except WorkflowError:
+                logger.exception(
+                    "Could not name the workflow container for conversation %s",
+                    conversation_id,
+                )
         blobs = getattr(request.app.state, "attachment_store", None)
         if blobs is not None:
             try:
@@ -223,8 +302,10 @@ async def start_turn(
     validated, optionally stripped, and stored before the agent runs.
     """
     content, images, speak = await _read_turn_input(request)
-    if store.get_conversation(user.user_id, conversation_id) is None:
+    conversation = store.get_conversation(user.user_id, conversation_id)
+    if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
+    _require_workflow_ready(request, conversation)
     if images:
         images = _prepare_images(request, user.user_id, images)
     # Checked before claiming the broker so a refused turn leaves the
@@ -505,13 +586,152 @@ def _form_flag(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _conversation_response(conversation: Conversation) -> ConversationResponse:
+def _conversation_response(
+    request: Request,
+    conversation: Conversation,
+    *,
+    status: str | None = None,
+) -> ConversationResponse:
+    if status is None:
+        status = _recorded_status(request, conversation)
+    error = _recorded_failure(request, conversation) if status == WorkflowStatus.IS_FAILED.value else ""
     return ConversationResponse(
         id=conversation.id,
         title=conversation.title,
         created_at=_iso(conversation.created_at),
         updated_at=_iso(conversation.updated_at),
+        workflow=_workflow_response(conversation, status=status, error=error),
     )
+
+
+def _workflow_response(
+    conversation: Conversation,
+    *,
+    status: str,
+    error: str = "",
+) -> ConversationWorkflowResponse | None:
+    if not conversation.workflow_name:
+        return None
+    version = ""
+    description = ""
+    try:
+        manifest = load_workflow(default_workflow_image_root(), conversation.workflow_name)
+    except WorkflowError:
+        manifest = None
+    if manifest is not None:
+        version = manifest.version
+        description = manifest.description
+    return ConversationWorkflowResponse(
+        name=conversation.workflow_name,
+        version=version,
+        description=description,
+        parameters=dict(conversation.workflow_parameters),
+        status=status,
+        error=error,
+    )
+
+
+def _recorded_status(request: Request, conversation: Conversation) -> str:
+    if not conversation.workflow_name:
+        return ""
+    lifecycle = getattr(request.app.state, "workflow_lifecycle", None)
+    if lifecycle is None:
+        return ""
+    current = lifecycle.status(conversation.id)
+    return current.value if isinstance(current, WorkflowStatus) else ""
+
+
+def _recorded_failure(request: Request, conversation: Conversation) -> str:
+    lifecycle = getattr(request.app.state, "workflow_lifecycle", None)
+    if lifecycle is None:
+        return ""
+    failure = getattr(lifecycle, "failure", None)
+    if failure is None:
+        return ""
+    text = failure(conversation.id)
+    return text.strip() if isinstance(text, str) else ""
+
+
+def _status_for_open(request: Request, conversation: Conversation) -> str:
+    """Opening one workflow chat starts prepare when the server has no status yet."""
+    if not conversation.workflow_name:
+        return ""
+    recorded = _recorded_status(request, conversation)
+    if recorded:
+        return recorded
+    try:
+        return _begin_workflow(request, conversation).value
+    except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _begin_workflow(request: Request, conversation: Conversation) -> WorkflowStatus:
+    attachment = attachment_for(
+        user_id=conversation.user_id,
+        conversation_id=conversation.id,
+        workflow_name=conversation.workflow_name,
+        parameters=conversation.workflow_parameters,
+    )
+    linux_username = _linux_username_for(request, conversation.user_id)
+    lifecycle = request.app.state.workflow_lifecycle
+    return lifecycle.begin(attachment, linux_username)
+
+
+def _require_workflow_ready(request: Request, conversation: Conversation) -> None:
+    """Refuse a turn until the workflow image is built and the container is up."""
+    if not conversation.workflow_name:
+        return
+    status_value = _recorded_status(request, conversation)
+    if not status_value:
+        try:
+            status_value = _begin_workflow(request, conversation).value
+        except (WorkflowError, WorkflowSpecError, WorkflowRuntimeError, OSError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        status = WorkflowStatus(status_value)
+    except ValueError:
+        status = WorkflowStatus.IS_BUILDING
+    if status is WorkflowStatus.IS_READY:
+        return
+    lifecycle = request.app.state.workflow_lifecycle
+    failure = lifecycle.failure(conversation.id) if status is WorkflowStatus.IS_FAILED else ""
+    raise HTTPException(
+        status_code=WORKFLOW_NOT_READY_STATUS,
+        detail={
+            "code": WORKFLOW_NOT_READY_CODE,
+            "status": status.value,
+            "message": not_ready_message(status, failure),
+        },
+    )
+
+
+def _validated_workflow(body: WorkflowStartRequest) -> tuple[str, dict[str, str]]:
+    try:
+        manifest = load_workflow(default_workflow_image_root(), body.name.strip())
+        parameters = validate_parameters(manifest, body.parameters)
+    except WorkflowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return manifest.name, parameters
+
+
+def _linux_username_for(request: Request, user_id: str) -> str:
+    """The Linux account that owns promoted files for this user.
+
+    When the server is not enforcing deployment access, the process user is
+    that account. Root is refused so a workflow cannot be bound as host root.
+    """
+    access = getattr(request.app.state, "access_store", None)
+    if access is None:
+        name = getuser()
+    else:
+        record = access.get(user_id)
+        name = "" if record is None else record.linux_username.strip()
+    if not name or name == "root":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": ACCESS_INCOMPLETE_CODE, "message": ACCESS_INCOMPLETE_MESSAGE},
+        )
+    return name
 
 
 def _message_response(message: Message) -> MessageResponse:

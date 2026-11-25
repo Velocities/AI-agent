@@ -161,7 +161,7 @@ already sets `run_as_linux_user` and per-user scratch. The planned change is
 JWT sub (user_id)
     → UserExecutionTargetRepository.load(user_id)   # SQLite + SecureKeyStore
     → ExecutionTargetRouter (always includes local)
-    → AgentLoop + prompt listing only those names
+    → Agent + prompt listing only those names
 ```
 
 Only **`ai-agent serve`** (and future in-process chat wired like serve) runs this

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from getpass import getuser
+
 from ai_agent.agent.factory import build_agent
 from ai_agent.config import Settings
 from ai_agent.conversations.user_settings import UserSettingsStore
 from ai_agent.deployment.access import AccessStatus
 from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.execution_targets.repository import UserExecutionTargetRepository
+from ai_agent.workflows.manifests import WorkflowError
+from ai_agent.workflows.runtime import ensure_workflow_container, open_attached_workflow
 
 
 def build_api_agent_factory(
@@ -21,6 +25,7 @@ def build_api_agent_factory(
         prompter,
         session,
         audit_user: str,
+        workflow_attachment=None,
     ):
         linux_username = _linux_username_for(audit_user, access_store)
         scratch = settings.agent_scratch_dir
@@ -30,6 +35,12 @@ def build_api_agent_factory(
         personalization = None
         if user_settings is not None:
             personalization = user_settings.get_preferences(audit_user)
+        workflow_session = None
+        if workflow_attachment is not None:
+            owner = linux_username or _process_user()
+            workflow_session = open_attached_workflow(workflow_attachment, owner)
+            ensure_workflow_container(workflow_session)
+            linux_username = owner
         return build_agent(
             prompter=prompter,
             session=session,
@@ -40,9 +51,17 @@ def build_api_agent_factory(
             target_repo=target_repo,
             access_store=access_store,
             personalization=personalization,
+            workflow_session=workflow_session,
         )
 
     return factory
+
+
+def _process_user() -> str:
+    name = getuser()
+    if not name or name == "root":
+        raise WorkflowError("A Linux username is required before a workflow can run.")
+    return name
 
 
 def _linux_username_for(

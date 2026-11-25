@@ -11,7 +11,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_agent.agent.loop import AgentRunResult
+from ai_agent.agent.agent import AgentRunResult
 from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
 from ai_agent.api.auth import AuthenticatedUser, InvalidTokenError
@@ -42,7 +42,7 @@ class _FakeAgent:
         self.should_stop = None
         self.llm = None
 
-    def run(self, content: str, stream_callback=None, **_kwargs) -> AgentRunResult:
+    def answer_user(self, content: str, stream_callback=None, **_kwargs) -> AgentRunResult:
         user = LLMMessage(role="user", content=content)
         self.messages.append(user)
         if self.on_message is not None:

@@ -9,12 +9,13 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from ai_agent.agent.context import gather_runtime_context
-from ai_agent.agent.loop import AgentLoop, AgentRunResult
+from ai_agent.agent.agent import Agent, AgentRunResult
 from ai_agent.approval.prompt import ApprovalPrompter
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.cli.errors import startup_should_exit, turn_should_exit
 from ai_agent.commands.run_as import build_command_executor
+from ai_agent.docker_broker.client import default_docker_broker
 from ai_agent.config import Settings
 from ai_agent.conversations.personalization import UserPreferences
 from ai_agent.deployment.access import AccessStatus
@@ -26,6 +27,7 @@ from ai_agent.execution_targets.secure_key_store import OSSecureKeyStore, Secure
 from ai_agent.execution_targets.store import TargetConfigError
 from ai_agent.llm import create_llm_provider
 from ai_agent.policy.engine import PolicyEngine
+from ai_agent.workflows.session import WorkflowSession, router_for_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ def run_error_notice(error: str | None) -> str | None:
         return "Agent stopped at the tool iteration limit."
     if error == "truncated":
         return (
-            "Answer stopped early after repeated cutoffs. Raise OLLAMA_NUM_CTX (Ollama) or "
+            "Answer stopped early after repeated cutoffs. Raise LLM_CONTEXT_LENGTH or "
             "AGENT_MAX_CONTINUATIONS, or ask for a smaller piece at a time."
         )
     if error == "empty_response":
@@ -80,7 +82,8 @@ def build_agent(
     access_store: DeploymentAccessStore | None = None,
     key_store: SecureKeyStore | None = None,
     personalization: UserPreferences | None = None,
-) -> AgentLoop:
+    workflow_session: WorkflowSession | None = None,
+) -> Agent:
     settings = settings or Settings()
     configure_logging(settings.agent_log_level)
     console = console or Console()
@@ -92,14 +95,19 @@ def build_agent(
         scratch_dir=settings.agent_scratch_dir,
         linux_username=run_as_linux_user,
     )
+    docker_broker = default_docker_broker()
     try:
-        router = _build_router(
-            executor=executor,
-            user_id=user_id,
-            target_repo=target_repo,
-            access_store=access_store,
-            key_store=key_store,
-        )
+        if workflow_session is None:
+            router = _build_router(
+                executor=executor,
+                user_id=user_id,
+                target_repo=target_repo,
+                access_store=access_store,
+                key_store=key_store,
+                docker_broker=docker_broker,
+            )
+        else:
+            router = router_for_workflow(executor, workflow_session, docker_broker)
     except TargetConfigError as exc:
         console.print(f"[red]Invalid execution target config:[/red] {exc}")
         raise
@@ -112,7 +120,7 @@ def build_agent(
     llm = create_llm_provider(settings)
     runtime = gather_runtime_context(settings, linux_username=run_as_linux_user)
 
-    return AgentLoop(
+    return Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -123,6 +131,7 @@ def build_agent(
         router=router,
         runtime_context=runtime,
         personalization=personalization,
+        workflow_session=workflow_session,
     )
 
 
@@ -133,6 +142,7 @@ def _build_router(
     target_repo: UserExecutionTargetRepository | None,
     access_store: DeploymentAccessStore | None,
     key_store: SecureKeyStore | None,
+    docker_broker=None,
 ) -> ExecutionTargetRouter:
     if user_id and target_repo is not None and access_store is not None:
         record = access_store.get(user_id)
@@ -151,11 +161,12 @@ def _build_router(
             executor=executor,
             target_repo=target_repo,
             key_store=store,
+            docker_broker=docker_broker,
         )
     return ExecutionTargetRouter.local_only(executor)
 
 
-def warmup_agent(agent: AgentLoop, console: Console) -> bool:
+def warmup_agent(agent: Agent, console: Console) -> bool:
     health = agent.llm.healthcheck()
     if not health.ok:
         logger.error("LLM healthcheck failed: %s", health.message)

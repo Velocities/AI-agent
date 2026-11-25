@@ -33,6 +33,6 @@ def create_llm_provider(
     return FacadeLlmClient(
         http_session,
         model=settings.llm_model,
-        num_predict=settings.ollama_num_predict,
-        num_ctx=settings.ollama_num_ctx,
+        num_predict=settings.llm_max_output_tokens,
+        num_ctx=settings.llm_context_length,
     )

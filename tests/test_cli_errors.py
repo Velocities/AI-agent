@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from ai_agent.agent.loop import AgentRunResult
+from ai_agent.agent.agent import AgentRunResult
 from ai_agent.agent.factory import present_turn_result, warmup_agent
 from ai_agent.cli.errors import (
     is_fatal_startup_kind,

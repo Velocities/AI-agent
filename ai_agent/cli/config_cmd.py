@@ -271,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.speech_cmd import main as speech_main
 
         return speech_main(raw[1:])
+    if raw and raw[0] == "workflow-containers":
+        from ai_agent.cli.workflow_containers_cmd import main as workflow_containers_main
+
+        return workflow_containers_main(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="ai-agent config",
@@ -304,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "speech",
         help="Download Kokoro-82M weights (ai-agent config speech setup).",
+    )
+    sub.add_parser(
+        "workflow-containers",
+        help="List or remove workflow Docker containers on this host.",
     )
     service_access = sub.add_parser(
         "service-access",

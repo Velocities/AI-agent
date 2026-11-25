@@ -1,3 +1,3 @@
-from ai_agent.agent.loop import AgentLoop, AgentRunResult
+from ai_agent.agent.agent import Agent, AgentRunResult
 
-__all__ = ["AgentLoop", "AgentRunResult"]
+__all__ = ["Agent", "AgentRunResult"]

@@ -122,7 +122,7 @@ def run_repl() -> int:
                 status.start()
 
             try:
-                result = agent.run(
+                result = agent.answer_user(
                     user_input,
                     stream_callback=on_stream_chunk,
                     iteration_callback=on_iteration,

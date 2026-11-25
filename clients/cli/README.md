@@ -27,4 +27,6 @@ ai-agent login
 ai-agent
 ```
 
+In the chat, `/new` starts an ordinary chat. `/workflow` lists workflows installed on the server, and `/workflow text-lab label=north-office` starts that workflow. The tools run in an isolated workflow container for that chat. Optional values such as `label` are stored with the chat and do not rebuild the image.
+
 See the root [README](../../README.md) for server setup and Cloudflare tunnel notes.

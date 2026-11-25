@@ -53,7 +53,7 @@ def test_run_turn_passes_settings_into_the_factory() -> None:
         seen.update(kwargs)
         agent = MagicMock()
         agent.messages = []
-        agent.run.return_value = MagicMock(final_message="ok", error=None)
+        agent.answer_user.return_value = MagicMock(final_message="ok", error=None)
         return agent
 
     store = MagicMock()

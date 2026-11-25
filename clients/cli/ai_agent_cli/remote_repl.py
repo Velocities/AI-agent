@@ -7,6 +7,7 @@ from ai_agent.cli.image_stage import ImageStage, StageCommand
 from ai_agent.deployment.access import ACCESS_DENIED_CODE, ACCESS_PENDING_CODE
 from ai_agent.images import ImageRejected
 from ai_agent.llm.client.types import ImageInput
+from ai_agent.workflows.status import WorkflowStatus, workflow_status_text
 from ai_agent_cli.api_client import AgentApiClient, AgentApiError
 from ai_agent_cli.api_url import public_api_base_url_hint
 from ai_agent_cli.client_state import (
@@ -65,11 +66,26 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
     console.print(f"API: {config.server_url}")
     if hint := public_api_base_url_hint(config.server_url):
         console.print(f"[yellow]{hint}[/yellow]")
-    console.print("Type /new, /list, /server, /attach, /model-info, or exit.\n")
+    console.print("Type /new, /workflow, /list, /server, /attach, /model-info, or exit.\n")
     stage = ImageStage(vision=vision)
+    workflow_status: str | None = None
+    workflow_error = ""
+    try:
+        workflow_status, workflow_error = _workflow_status(client, conversation_id)
+        _print_workflow_status(console, None, workflow_status, workflow_error)
+    except (AgentApiError, httpx.HTTPError):
+        workflow_status = None
+        workflow_error = ""
 
     try:
         while True:
+            if _workflow_pending(workflow_status):
+                try:
+                    refreshed, refreshed_error = _workflow_status(client, conversation_id)
+                except (AgentApiError, httpx.HTTPError):
+                    refreshed, refreshed_error = workflow_status, workflow_error
+                _print_workflow_status(console, workflow_status, refreshed, refreshed_error)
+                workflow_status, workflow_error = refreshed, refreshed_error
             try:
                 user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -102,8 +118,25 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
                 if created is None:
                     return 1
                 conversation_id = created["id"]
+                workflow_status = None
+                workflow_error = ""
                 save_conversation_id(conversation_id)
                 console.print("[dim]Started a new chat.[/dim]")
+                continue
+            if user_input == "/workflow" or user_input.startswith("/workflow "):
+                stage.clear()
+                created = _start_workflow(
+                    client,
+                    console,
+                    user_input[len("/workflow") :].strip(),
+                )
+                if created is None:
+                    continue
+                conversation_id = created["id"]
+                save_conversation_id(conversation_id)
+                workflow_status, workflow_error = _status_from_conversation(created)
+                _print_workflow_started(console, created)
+                _print_workflow_status(console, None, workflow_status, workflow_error)
                 continue
             if user_input == "/model-info":
                 _print_model_info(console, model)
@@ -119,6 +152,9 @@ def _chat_with(console: Console, config: ServerConfig) -> int | ServerConfig:
             images = stage.take()
             if images and not vision:
                 console.print("[red]This server's model does not accept images.[/red]")
+                continue
+            if _workflow_pending(workflow_status):
+                console.print("[yellow]Sending waits until the workflow is ready.[/yellow]")
                 continue
             if not _play_turn(client, console, conversation_id, user_input, images):
                 return 1
@@ -356,6 +392,139 @@ def _create_conversation(
         return None
 
 
+def _start_workflow(
+    client: AgentApiClient,
+    console: Console,
+    argument: str,
+) -> dict | None:
+    """Start a workflow chat. `/workflow` lists them. `/workflow name key=value` starts one."""
+    try:
+        catalog = client.list_workflows()
+    except (AgentApiError, httpx.HTTPError) as exc:
+        _report_api_error(console, exc, base_url=client.base_url)
+        return None
+    if not argument:
+        _print_workflows(console, catalog)
+        return None
+    name, given = _parse_workflow_argument(argument)
+    match = next((item for item in catalog if item.get("name") == name), None)
+    if match is None:
+        console.print(f"[red]No workflow named {name}.[/red]")
+        _print_workflows(console, catalog)
+        return None
+    parameters = _collect_parameters(console, match, given)
+    if parameters is None:
+        return None
+    try:
+        return client.create_conversation(title=name, workflow=name, parameters=parameters)
+    except (AgentApiError, httpx.HTTPError) as exc:
+        _report_api_error(console, exc, base_url=client.base_url)
+        return None
+
+
+def _print_workflows(console: Console, catalog: list[dict]) -> None:
+    if not catalog:
+        console.print("[dim]This server has no workflows.[/dim]")
+        return
+    console.print("[bold]Workflows[/bold]")
+    for item in catalog:
+        name = item.get("name") or ""
+        description = item.get("description") or ""
+        console.print(f"  {name}  [dim]{description}[/dim]")
+        for parameter in item.get("parameters") or []:
+            if not isinstance(parameter, dict):
+                continue
+            mark = "required" if parameter.get("required") else "optional"
+            console.print(
+                f"    {parameter.get('name')} ({mark})  {parameter.get('description') or ''}"
+            )
+    console.print("[dim]Start one with /workflow <name> key=value[/dim]")
+
+
+def _parse_workflow_argument(argument: str) -> tuple[str, dict[str, str]]:
+    parts = argument.split()
+    name = parts[0]
+    given: dict[str, str] = {}
+    for part in parts[1:]:
+        key, separator, value = part.partition("=")
+        if not separator or not key:
+            continue
+        given[key] = value
+    return name, given
+
+
+def _collect_parameters(
+    console: Console,
+    workflow: dict,
+    given: dict[str, str],
+) -> dict[str, str] | None:
+    collected: dict[str, str] = {}
+    for parameter in workflow.get("parameters") or []:
+        if not isinstance(parameter, dict):
+            continue
+        name = str(parameter.get("name") or "")
+        if not name:
+            continue
+        if name in given:
+            collected[name] = given[name]
+            continue
+        if not parameter.get("required"):
+            continue
+        try:
+            value = console.input(f"{name}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return None
+        if not value:
+            console.print(f"[red]{name} is required.[/red]")
+            return None
+        collected[name] = value
+    return collected
+
+
+def _print_workflow_started(console: Console, created: dict) -> None:
+    workflow = created.get("workflow") or {}
+    name = workflow.get("name") if isinstance(workflow, dict) else ""
+    console.print(f"[dim]Started workflow {name or created.get('title') or 'chat'}.[/dim]")
+
+
+def _status_from_conversation(document: dict) -> tuple[str | None, str]:
+    workflow = document.get("workflow")
+    if not isinstance(workflow, dict):
+        return None, ""
+    return str(workflow.get("status") or ""), str(workflow.get("error") or "")
+
+
+def _workflow_status(client: AgentApiClient, conversation_id: str) -> tuple[str | None, str]:
+    return _status_from_conversation(client.get_conversation(conversation_id))
+
+
+def _workflow_pending(status: str | None) -> bool:
+    return status is not None and status != WorkflowStatus.IS_READY
+
+
+def _print_workflow_status(
+    console: Console,
+    previous: str | None,
+    status: str | None,
+    error: str = "",
+) -> None:
+    if status is None or status == previous:
+        return
+    try:
+        line = workflow_status_text(WorkflowStatus(status))
+    except ValueError:
+        line = "The workflow is not ready yet. You can type. Sending waits until it is ready."
+    if status == WorkflowStatus.IS_FAILED and error.strip():
+        line = f"{line} {error.strip()}"
+    if status == WorkflowStatus.IS_READY:
+        console.print(f"[green]{line}[/green]")
+    elif status == WorkflowStatus.IS_FAILED:
+        console.print(f"[red]{line}[/red]")
+    else:
+        console.print(f"[yellow]{line}[/yellow]")
+
+
 def _print_conversations(client: AgentApiClient, console: Console) -> bool:
     try:
         rows = client.list_conversations()
@@ -369,7 +538,10 @@ def _print_conversations(client: AgentApiClient, console: Console) -> bool:
     for row in rows:
         mark = "*" if row.get("id") == current else " "
         title = row.get("title") or "Untitled"
-        console.print(f"{mark} {title}  [dim]{row.get('id')}[/dim]")
+        workflow = row.get("workflow") or {}
+        workflow_name = workflow.get("name") if isinstance(workflow, dict) else ""
+        label = f"{title}  [dim]({workflow_name})[/dim]" if workflow_name else title
+        console.print(f"{mark} {label}  [dim]{row.get('id')}[/dim]")
     return True
 
 

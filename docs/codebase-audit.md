@@ -82,7 +82,7 @@ def _default_agent_factory(
     prompter,
     session,
     audit_user: str,
-) -> AgentLoop:
+) -> Agent:
     return build_agent(
         prompter=prompter,
         session=session,
@@ -319,7 +319,7 @@ unhandled generic error in the terminal.
 
 ## 7. Backend architecture
 
-### 7.1 `AgentLoop` is a god object with two parallel tool paths
+### 7.1 `Agent` is a god object with two parallel tool paths
 
 `ai_agent/agent/loop.py` is 773 lines and owns iteration, streaming, continuations, tool
 dispatch, policy evaluation, approval, audit, and execution.
@@ -411,7 +411,7 @@ Riskiest gaps, in order:
 | 1 | API agent factory fails open; isolation untested | Security | **High** | S (guard) / M (tests) |
 | 2 | `AGENT_DEFAULT_TARGET` silently ignored | Correctness | **High** | S |
 | 3 | No `ai-agent --help`; typos start the REPL | UX / docs | **High** | M |
-| 4 | `AgentLoop` duplicated tool paths | Security / maint. | **High** | L |
+| 4 | `Agent` duplicated tool paths | Security / maint. | **High** | L |
 | 5 | CLI ↔ backend circular dependency | Architecture | Medium | M |
 | 6 | Client protocol duplicated, drift confirmed | Correctness | Medium | M (contract tests) / L (shared lib) |
 | 7 | Seven deployment paths | Docs | Medium | M |
@@ -437,7 +437,7 @@ Riskiest gaps, in order:
 4. **Client contract tests** (#6). Pin the protocol in both clients *before* refactoring
    either one.
 5. **Decoupling** (#5, #10, #13). Largest and least urgent; needs step 4 as a safety net.
-6. **`AgentLoop` unification** (#4). Deliberately last despite high severity — it is the
+6. **`Agent` unification** (#4). Deliberately last despite high severity — it is the
    riskiest refactor and benefits most from the test scaffolding built earlier.
 
 ---

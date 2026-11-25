@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ai_agent.agent.loop import AgentLoop
+from ai_agent.agent.agent import Agent
 from ai_agent.agent.tools import build_tool_definitions
 from ai_agent.api.approvals import ApprovalBroker, RemoteApprovalPrompter
 from ai_agent.approval.prompt import ApprovalPrompter, ApprovalResult, PendingCommand
@@ -41,7 +41,7 @@ def agent_parts(tmp_path: Path):
     session = ApprovalSession()
     prompter = ApprovalPrompter(settings.agent_confirmation_mode, session, MagicMock())
     llm = MagicMock()
-    agent = AgentLoop(
+    agent = Agent(
         settings=settings,
         llm=llm,
         policy=policy,
@@ -272,7 +272,7 @@ def _batch_turn(
             )
         ),
     ]
-    result = agent.run("inspect")
+    result = agent.answer_user("inspect")
     assert result.final_message == "Done."
     assert seen["count"] == 3
     tool_messages = [message for message in agent.messages if message.role == "tool"]
@@ -396,7 +396,7 @@ def test_invalid_ordering_is_a_tool_error(agent_parts) -> None:
             )
         ),
     ]
-    result = agent.run("inspect")
+    result = agent.answer_user("inspect")
     assert result.final_message == "Done."
     payload = json.loads(next(message.content for message in agent.messages if message.role == "tool"))
     assert payload["success"] is False
@@ -539,7 +539,7 @@ def test_stringified_commands_array_runs_as_one_batch(agent_parts) -> None:
             )
         ),
     ]
-    result = agent.run("inspect")
+    result = agent.answer_user("inspect")
     assert result.final_message == "Done."
     assert seen["count"] == 2
     payloads = json.loads(next(message.content for message in agent.messages if message.role == "tool"))
@@ -580,7 +580,7 @@ def test_string_that_is_not_an_array_tells_the_model_not_to_split(agent_parts) -
             )
         ),
     ]
-    result = agent.run("inspect")
+    result = agent.answer_user("inspect")
     assert result.final_message == "Done."
     payload = json.loads(next(message.content for message in agent.messages if message.role == "tool"))
     assert payload["success"] is False
@@ -636,7 +636,7 @@ def test_separate_calls_with_mixed_risk_stay_one_batch(agent_parts) -> None:
             )
         ),
     ]
-    result = agent.run("inspect")
+    result = agent.answer_user("inspect")
     assert result.final_message == "Done."
     assert seen["commands"] == [["uptime"], ["dmesg"]]
     payloads = [

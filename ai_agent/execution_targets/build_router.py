@@ -21,6 +21,7 @@ def build_router_for_user(
     executor: CommandExecutor,
     target_repo: UserExecutionTargetRepository,
     key_store: SecureKeyStore,
+    docker_broker=None,
 ) -> ExecutionTargetRouter:
     # Per-user default target names may be stored in SQLite later. Until then,
     # omitting target always resolves to local.
@@ -36,7 +37,7 @@ def build_router_for_user(
         if rec.type == "ssh":
             targets[rec.name] = _ssh_from_record(rec, executor, key_store, linux_username)
         elif rec.type == "docker":
-            targets[rec.name] = _docker_from_record(rec, executor)
+            targets[rec.name] = _docker_from_record(rec, executor, docker_broker)
     return ExecutionTargetRouter(targets, default_name=default_name)
 
 
@@ -70,6 +71,7 @@ def _ssh_from_record(
 def _docker_from_record(
     rec: ExecutionTargetRecord,
     executor: CommandExecutor,
+    docker_broker=None,
 ) -> DockerExecutionTarget:
     spec = rec.spec
     container = str(spec.get("container") or "").strip()
@@ -82,4 +84,5 @@ def _docker_from_record(
         description=str(spec.get("description") or ""),
         docker_bin=str(spec.get("docker_bin") or "docker"),
         user=str(spec.get("user") or ""),
+        broker=docker_broker,
     )

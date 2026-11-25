@@ -61,6 +61,7 @@ If you have never run this project, use this table once. You can ignore the othe
 | `pip install -e ".[dev]"` | Installs **ai-agent only** — not Ollama, vLLM, or speech engines |
 | `pip install -e '.[voice]'` | Optional. Vosk and Kokoro-82M Python packages. Weights are a separate step |
 | `.env` file | Start from `.env.example` |
+| `docker-buildx` (Ubuntu) | BuildKit for workflow images. `sudo apt install docker-buildx` also installs Docker. Path G and `sudo deploy/systemd/install.sh` install this package when it is missing |
 
 **Engine installs are separate:**
 
@@ -93,7 +94,7 @@ ollama pull qwen3:14b
 | `LLM_HOST` | `http://localhost:11434` | Where **ai-agent** connects (see Path B for facade URL) |
 | `LLM_MANAGE_UPSTREAM` | `true` | `ai-agent-llm` starts `ollama serve` if needed |
 
-Optional: `OLLAMA_NUM_CTX=16384` (context window, Ollama only).
+Optional: `LLM_CONTEXT_LENGTH=16384` (context window in tokens; Ollama and vLLM).
 
 **3. Run the server and the client.**
 
@@ -207,7 +208,7 @@ Full walkthrough: [SSH remote provider](#ssh-remote-provider).
 | `LLM_UPSTREAM` | `http://localhost:8000` | vLLM bind URL (default port 8000) |
 | `LLM_MANAGE_UPSTREAM` | `true` | `ai-agent-llm` runs `vllm serve …` |
 | `LLM_STARTUP_TIMEOUT` | `180` | Model load can take minutes |
-| `VLLM_MAX_TOKENS` | optional | Cap reply length |
+| `LLM_MAX_OUTPUT_TOKENS` | optional | Cap reply length (tokens) |
 
 Optional: `LLM_VLLM_BINARY=/path/to/vllm` if the CLI is not on `PATH`.
 
@@ -247,8 +248,10 @@ Run `ai-agent-llm` (facade + warmup) or point `LLM_HOST` directly at the engine 
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv python3-pip acl
+sudo apt install -y python3-venv python3-pip acl docker-buildx
 ```
+
+`docker-buildx` is the BuildKit plugin workflow image builds use. The package depends on Docker, so this installs the engine as well. `sudo deploy/systemd/install.sh` installs the same package if it is still missing.
 
 Install **Ollama** ([ollama.com](https://ollama.com/)) or **vLLM** on the same machine. The Python package does not install them.
 
@@ -357,6 +360,7 @@ ai-agent start     # delegates to systemctl; use sudo if you get “Permission d
 | `activating (start)` a long time | Model warmup | Normal; `sudo journalctl -u ai-agent -f` |
 | Start fails after ~900s | Model too slow to load | Increase `LLM_STARTUP_TIMEOUT` in `.env` and `TimeoutStartSec` in the unit template, reinstall unit |
 | `ollama` / `vllm` not found in journal | Engine not on `PATH` for `ai` | Install Ollama system-wide or set `LLM_OLLAMA_BINARY` / `LLM_VLLM_BINARY` in `.env` |
+| Workflow build cannot find BuildKit, or Docker says the legacy builder is deprecated | `docker-buildx` is not installed | `sudo apt install docker-buildx`, then `sudo deploy/systemd/install.sh` |
 | GPU errors | `ai` not in device groups | `sudo usermod -aG render,video ai`, restart service |
 | API bind error / port in use | vLLM and API both want 8000 | Change `API_BIND_PORT` and tunnel config |
 
@@ -560,6 +564,12 @@ Effective risk for chained expressions is the **maximum** risk of all segments.
 
 Policy is enforced in **`ai_agent/policy/default_policy.yaml`**. The LLM cannot override it.
 
+**Workflow execution exception:** When the execution target is `workflow` (a
+per-chat workflow container), host policy and CLI approval are **not** applied
+to `run_command`, `run_commands`, or `run_tool`. Isolation is the container,
+`/work` confinement, and the Docker broker exec whitelist instead. See
+[`workflow_image/README.md`](workflow_image/README.md#host-policy-vs-the-container).
+
 ### Linux user boundary
 
 Run the agent as user `ai`:
@@ -719,13 +729,14 @@ See [Path F](#path-f--public-api-through-cloudflare). This process calls `LLM_HO
 
 Speech packages and weights are optional and separate from server startup. Install the packages with `pip install -e '.[voice]'`, then download Kokoro-82M with `ai-agent config speech setup`. A missing or wrong `SPEECH_STT_MODEL` / `SPEECH_TTS_MODEL` is logged and left off; the rest of the API still starts. Details: [docs/voice-prototype.md](docs/voice-prototype.md).
 
-### LLM — engine-specific options
+### LLM — context and reply length (tokens)
 
-| Variable | Engine | Description |
-|----------|--------|-------------|
-| `OLLAMA_NUM_CTX` | Ollama | Context window (default `16384`) |
-| `OLLAMA_NUM_PREDICT` | Ollama | Optional reply token cap |
-| `VLLM_MAX_TOKENS` | vLLM | Optional reply token cap |
+| Variable | Description |
+|----------|-------------|
+| `LLM_CONTEXT_LENGTH` | Context window (default `16384`). Ollama `num_ctx`, vLLM `--max-model-len`. |
+| `LLM_MAX_OUTPUT_TOKENS` | Optional reply cap. Ollama `num_predict`, vLLM `max_tokens`. |
+
+Legacy names `OLLAMA_NUM_CTX`, `OLLAMA_NUM_PREDICT`, and `VLLM_MAX_TOKENS` still work as aliases.
 
 ### Agent behavior
 
@@ -781,9 +792,8 @@ on `ai-agent serve`.
 | `LLM_TIMEOUT` | HTTP read timeout for streaming generations (seconds) |
 | `LLM_OLLAMA_BINARY` | Optional `ollama` binary path |
 | `LLM_VLLM_BINARY` | Optional `vllm` binary path |
-| `OLLAMA_NUM_CTX` | Context window (Ollama engine only) |
-| `OLLAMA_NUM_PREDICT` | Optional reply token cap (Ollama engine only) |
-| `VLLM_MAX_TOKENS` | Optional reply token cap (vLLM engine only) |
+| `LLM_CONTEXT_LENGTH` | Context window in tokens (default `16384`; Ollama and vLLM) |
+| `LLM_MAX_OUTPUT_TOKENS` | Optional reply token cap (Ollama and vLLM) |
 | `AGENT_MAX_CONTINUATIONS` | How many times one answer may resume after being cut off |
 | `AGENT_CONTINUATION_TAIL` | Characters of the partial answer resent when resuming |
 | `AGENT_LOG_LEVEL` | Logging level |
@@ -964,7 +974,7 @@ To watch the resume path directly:
 python scripts/resume_smoke_test.py
 ```
 
-It reports chunk count, how many resumes happened, and the final length. Forcing `OLLAMA_NUM_PREDICT` low (for example `180`) makes resumes easy to observe.
+It reports chunk count, how many resumes happened, and the final length. Forcing `LLM_MAX_OUTPUT_TOKENS` low (for example `180`) makes resumes easy to observe.
 
 ### Why answers used to stop mid-sentence
 
@@ -972,15 +982,15 @@ Ollama's default context window is **4096 tokens**, shared between prompt and re
 
 Two things prevent that now:
 
-- `OLLAMA_NUM_CTX` defaults to **16384** instead of Ollama's 4096
+- `LLM_CONTEXT_LENGTH` defaults to **16384** instead of Ollama's 4096
 - Resume prompts are a fixed size: system prompt + request + last `AGENT_CONTINUATION_TAIL` characters
 
 ### Tuning
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `OLLAMA_NUM_CTX` | `16384` | Context window. Raise for longer answers, lower if VRAM is tight |
-| `OLLAMA_NUM_PREDICT` | unset | Hard cap on reply tokens. Leave unset for uncapped replies |
+| `LLM_CONTEXT_LENGTH` | `16384` | Context window in tokens. Raise for longer answers, lower if VRAM is tight |
+| `LLM_MAX_OUTPUT_TOKENS` | unset | Hard cap on reply tokens. Leave unset for uncapped replies |
 | `AGENT_MAX_CONTINUATIONS` | `8` | How many times one answer may resume |
 | `AGENT_CONTINUATION_TAIL` | `2000` | Characters of the partial answer resent when resuming |
 
@@ -1073,7 +1083,7 @@ ai_agent/
   speech/         # CPU Vosk transcription and Kokoro-82M synthesis
   conversations/  # SQLite transcript store and Alembic migrations
   cli/            # Terminal commands (`serve`, `config`, `apk`, `host-setup`)
-  agent/factory.py # In-process AgentLoop wiring (API turns, smoke tests, local REPL)
+  agent/factory.py # In-process Agent wiring (API turns, smoke tests, local REPL)
   service/        # `ai-agent serve`: engine, facade, and API in one process
   commands/       # CommandExpr AST, render, executor
   execution_targets/  # Named local / SSH / Docker backends and router
