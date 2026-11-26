@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -39,6 +41,40 @@ _WORKFLOW_POLICY_REASON = (
     "Workflow target: commands run in an isolated container; host policy does not apply."
 )
 
+logger = logging.getLogger(__name__)
+
+# llama and similar often emit Windows paths with single backslashes inside a
+# JSON string (C:\Users\...), which is invalid JSON (\U is read as an escape).
+_JSON_ESCAPE_RE = re.compile(r"\\(u[0-9a-fA-F]{4}|.)")
+_PATH_FLAGS = frozenset({"-LiteralPath", "-Path", "-Destination", "-FilePath"})
+
+
+def _repair_json_escapes(text: str) -> str:
+    """Turn invalid JSON backslash escapes into literal backslashes."""
+
+    def _replace(match: re.Match[str]) -> str:
+        body = match.group(1)
+        if body.startswith("u") and len(body) == 5:
+            return match.group(0)
+        if body in '"\\/bfnrt':
+            return match.group(0)
+        if body == "'":
+            return "'"
+        return "\\\\" + body
+
+    return _JSON_ESCAPE_RE.sub(_replace, text)
+
+
+def _loads_commands_json(value: str) -> list | None:
+    for candidate in (value, _repair_json_escapes(value)):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return parsed
+    return None
+
 
 def coerce_command_list(value: object) -> tuple[list | None, str | None]:
     """Accept the array models send, and the same array wrapped in a string.
@@ -47,16 +83,74 @@ def coerce_command_list(value: object) -> tuple[list | None, str | None]:
     to fail the batch, after which the model retried each command alone.
     """
     if isinstance(value, list):
-        return value, None
+        return _normalize_command_paths(value), None
     if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, list):
-            return parsed, None
+        parsed = _loads_commands_json(value)
+        if parsed is not None:
+            logger.info(
+                "Coerced stringified commands JSON into array (%s commands)",
+                len(parsed),
+            )
+            return _normalize_command_paths(parsed), None
+        logger.warning(
+            "Failed to coerce commands string (%s chars): %s",
+            len(value),
+            value[:180],
+        )
         return None, _STRING_COMMANDS_ERROR
     return None, "commands must be an array of command expressions"
+
+
+def _normalize_path_arg(value: str) -> str:
+    """Strip wrapping quotes and collapse over-escaped Windows backslashes."""
+    path = value.strip()
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in {"'", '"'}:
+        path = path[1:-1]
+    while "\\\\" in path:
+        collapsed = path.replace("\\\\", "\\")
+        if collapsed == path:
+            break
+        path = collapsed
+    return path
+
+
+def _normalize_command_paths(commands: list) -> list:
+    """Fix common llama path mangling on PowerShell -LiteralPath values."""
+    for item in commands:
+        if not isinstance(item, dict):
+            continue
+        argv = item.get("argv")
+        if not isinstance(argv, list):
+            continue
+        fixed: list[object] = []
+        index = 0
+        changed = False
+        while index < len(argv):
+            arg = argv[index]
+            fixed.append(arg)
+            if (
+                isinstance(arg, str)
+                and arg in _PATH_FLAGS
+                and index + 1 < len(argv)
+                and isinstance(argv[index + 1], str)
+            ):
+                original = argv[index + 1]
+                normalized = _normalize_path_arg(original)
+                if normalized != original:
+                    changed = True
+                    logger.info(
+                        "Normalized path arg %s: %r -> %r",
+                        arg,
+                        original,
+                        normalized,
+                    )
+                fixed.append(normalized)
+                index += 2
+                continue
+            index += 1
+        if changed:
+            item["argv"] = fixed
+    return commands
 
 
 @dataclass(frozen=True)
@@ -293,8 +387,14 @@ class ToolHandler:
             return self._handle_run_tool(call)
 
         if call.name == "run_commands":
-            commands, commands_error = coerce_command_list(call.arguments.get("commands", []))
+            raw_commands = call.arguments.get("commands", [])
+            logger.info(
+                "run_commands: commands type=%s",
+                type(raw_commands).__name__,
+            )
+            commands, commands_error = coerce_command_list(raw_commands)
             if commands_error or commands is None:
+                logger.warning("run_commands coerce failed: %s", commands_error)
                 payload = {"success": False, "error": commands_error}
                 return LLMMessage(
                     role="tool",
@@ -630,6 +730,13 @@ class ToolHandler:
             not skip_host_approval and not self.prompter.should_auto_run(decision)
         )
         if not decision.allowed:
+            logger.warning(
+                "Policy denied %s on %s: %s | %s",
+                tool_name,
+                target_name,
+                decision.reason,
+                render_command(expr),
+            )
             payload = {
                 "success": False,
                 "error": decision.reason,
@@ -649,6 +756,12 @@ class ToolHandler:
             return payload
 
         if not approved:
+            logger.info(
+                "User denied %s on %s: %s",
+                tool_name,
+                target_name,
+                render_command(expr),
+            )
             payload = {
                 "success": False,
                 "error": "User denied command execution",
@@ -674,10 +787,22 @@ class ToolHandler:
             }
             return payload
 
+        logger.info(
+            "Running %s on %s: %s",
+            tool_name,
+            target_name,
+            render_command(expr),
+        )
         result = runner() if runner is not None else target.run(expr)
         payload = result.as_tool_payload()
         if result.truncated:
             payload["note"] = "Output was truncated before being returned to the model."
+        logger.info(
+            "Finished %s on %s success=%s",
+            tool_name,
+            target_name,
+            payload.get("success"),
+        )
         self.audit.log_event(
             session_id=self.session.session_id,
             tool_name=tool_name,

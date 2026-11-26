@@ -47,17 +47,23 @@ def start_local_server(console: Console) -> LocalServerProcess | None:
     env["API_BIND_HOST"] = host
     env["API_BIND_PORT"] = str(port)
     command = [sys.executable, "-m", "ai_agent.service.supervisor"]
+    log_dir = Path.home() / ".local" / "share" / "ai-agent"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "local-serve.log"
     console.print(
         f"[dim]Starting local agent server on {base_url} (ai-agent serve)…[/dim]"
     )
+    console.print(f"[dim]Server log: {log_path}[/dim]")
     try:
+        log_handle = log_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
             command,
             env=env,
             cwd=_REPO_ROOT,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
         )
+        process._ai_agent_log_handle = log_handle  # type: ignore[attr-defined]
     except OSError as exc:
         console.print(f"[red]Could not start the local server:[/red] {exc}")
         return None
@@ -74,10 +80,18 @@ def start_local_server(console: Console) -> LocalServerProcess | None:
             process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             process.kill()
-        if process.stderr:
-            detail = process.stderr.read().decode("utf-8", errors="replace").strip()
-            if detail:
-                console.print(f"[dim]{detail[-3000:]}[/dim]")
+        log_handle = getattr(process, "_ai_agent_log_handle", None)
+        if log_handle is not None:
+            try:
+                log_handle.close()
+            except OSError:
+                pass
+        try:
+            detail = log_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            detail = ""
+        if detail:
+            console.print(f"[dim]{detail[-3000:]}[/dim]")
         return None
     return LocalServerProcess(process=process, base_url=base_url, token=token)
 
@@ -134,3 +148,9 @@ def run_local_chat() -> int:
             handle.process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             handle.process.kill()
+        log_handle = getattr(handle.process, "_ai_agent_log_handle", None)
+        if log_handle is not None:
+            try:
+                log_handle.close()
+            except OSError:
+                pass
