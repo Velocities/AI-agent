@@ -1,6 +1,6 @@
 """CLI /model-info lines."""
 
-from ai_agent_cli.remote_repl import model_info_lines
+from ai_agent_cli.terminal_chat import model_info_lines
 
 
 def test_model_info_lines_describe_the_running_model() -> None:

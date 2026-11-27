@@ -1,6 +1,6 @@
 """Workflow containers skip host policy and approval."""
 
-from ai_agent.agent.tool_handler import ToolHandler
+from ai_agent.agent.command_parse import workflow_policy_decision
 from ai_agent.commands.ast import SingleCommand
 from ai_agent.execution_targets.workflow import WorkflowExecutionTarget
 
@@ -16,6 +16,6 @@ def test_workflow_target_opted_out_of_host_policy() -> None:
 
 def test_workflow_policy_decision_always_allows() -> None:
     expr = SingleCommand(argv=["fetch-pages"])
-    decision = ToolHandler._workflow_policy_decision(expr)
+    decision = workflow_policy_decision(expr)
     assert decision.allowed
     assert "isolated container" in decision.reason

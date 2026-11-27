@@ -5,8 +5,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent.agent.agent import Agent
-from ai_agent.agent.tools import COMMAND_DUMP_NUDGE, CONTINUE_NUDGE
-from ai_agent.approval.prompt import ApprovalPrompter
+from ai_agent.agent.tools import (
+    COMMAND_DUMP_NUDGE,
+    CONTINUE_NUDGE,
+    parse_dumped_tool_call,
+)
+from ai_agent.approval.prompt import ApprovalPrompter, ApprovalResult
 from ai_agent.approval.session import ApprovalSession
 from ai_agent.audit.logger import AuditLogger
 from ai_agent.commands.executor import CommandExecutor
@@ -230,6 +234,123 @@ def test_dumped_command_json_is_nudged_to_use_the_tool(agent_parts) -> None:
     assert result.final_message == "Will use the tool."
     assert llm.chat.call_count == 2
     assert agent.messages[-2].content == COMMAND_DUMP_NUDGE
+
+
+def test_dumped_named_tool_json_is_executed(agent_parts) -> None:
+    agent, llm, _ = agent_parts
+    agent.prompter.prompt_batch = MagicMock(
+        return_value=ApprovalResult(approved=True)
+    )
+    dumped = json.dumps(
+        {
+            "name": "run_commands",
+            "parameters": {
+                "commands": json.dumps(
+                    [{"type": "single", "argv": ["hostname"]}]
+                ),
+                "reason": "find files",
+                "target": "local",
+                "ordering": "unordered",
+            },
+        }
+    )
+    llm.chat.side_effect = [
+        LLMResponse(message=LLMMessage(role="assistant", content=dumped)),
+        LLMResponse(
+            message=LLMMessage(role="assistant", content="Found the largest files.")
+        ),
+    ]
+    result = agent.answer_user("what are the 5 largest files on my Desktop")
+    assert result.final_message == "Found the largest files."
+    assert llm.chat.call_count == 2
+    assert agent.prompter.prompt_batch.called
+    tool_messages = [m for m in agent.messages if m.role == "tool"]
+    assert tool_messages
+    assert tool_messages[0].name == "run_commands"
+    payload = json.loads(tool_messages[0].content)
+    assert isinstance(payload, list)
+    assert payload[0]["success"] is True
+    assert payload[0]["stdout"].strip()
+
+
+def test_parse_dumped_tool_call_accepts_name_parameters() -> None:
+    call = parse_dumped_tool_call(
+        '{"name":"run_command","parameters":{"reason":"x","command":{"type":"single","argv":["pwd"]}}}'
+    )
+    assert call is not None
+    assert call.name == "run_command"
+    assert call.arguments["command"]["argv"] == ["pwd"]
+    assert parse_dumped_tool_call('{"hello":"world"}') is None
+
+
+def test_coerce_command_list_repairs_windows_path_escapes() -> None:
+    from ai_agent.agent.command_parse import coerce_command_list
+
+    # Invalid JSON: \' and single-backslash Windows paths inside the string.
+    raw = (
+        '[{"type":"single","argv":["powershell","-NoProfile","-Command",'
+        '"Get-ChildItem","-LiteralPath","C:\\Users\\Admin\\Desktop"]}]'
+    )
+    parsed, err = coerce_command_list(raw)
+    assert err is None
+    assert parsed is not None
+    assert parsed[0]["argv"][0] == "powershell"
+    assert parsed[0]["argv"][5] == r"C:\Users\Admin\Desktop"
+
+
+def test_coerce_command_list_strips_quoted_overescaped_paths() -> None:
+    from ai_agent.agent.command_parse import coerce_command_list
+
+    commands = [
+        {
+            "type": "single",
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-ChildItem",
+                "-LiteralPath",
+                r"'C:\\Users\\Admin\\Desktop'",
+            ],
+        }
+    ]
+    parsed, err = coerce_command_list(commands)
+    assert err is None
+    assert parsed is not None
+    assert parsed[0]["argv"][5] == r"C:\Users\Admin\Desktop"
+
+
+def test_parse_dumped_tool_call_repairs_raw_newlines() -> None:
+    dumped = json.dumps(
+        {
+            "name": "run_commands",
+            "parameters": {
+                "commands": json.dumps(
+                    [
+                        {
+                            "type": "single",
+                            "argv": [
+                                "powershell",
+                                "-NoProfile",
+                                "-Command",
+                                "(Get-ChildItem -LiteralPath C:\\Desktop)",
+                            ],
+                        }
+                    ]
+                ),
+                "reason": "find files",
+                "target": "local",
+                "ordering": "unordered",
+            },
+        }
+    )
+    # llama often inserts a raw newline inside the JSON string.
+    dumped = dumped.replace("Get-ChildItem ", "Get-ChildItem \n", 1)
+    call = parse_dumped_tool_call(dumped)
+    assert call is not None
+    assert call.name == "run_commands"
+    assert call.arguments["ordering"] == "unordered"
+    assert isinstance(call.arguments["commands"], str)
 
 
 def test_plain_text_is_the_final_answer(agent_parts) -> None:

@@ -37,12 +37,17 @@ def warmup_engine(
     }
     start = time.perf_counter()
     content = ""
+    saw_tool_call = False
     try:
         for line in engine.chat_lines(payload):
             data = json.loads(line)
             message = data.get("message") or {}
-            if message.get("content"):
-                content += message["content"]
+            text = message.get("content")
+            if isinstance(text, str):
+                content += text
+            calls = message.get("tool_calls")
+            if isinstance(calls, list) and calls:
+                saw_tool_call = True
     except Exception as exc:
         duration = time.perf_counter() - start
         detail = str(exc)
@@ -50,7 +55,9 @@ def warmup_engine(
         return False, detail, duration
 
     duration = time.perf_counter() - start
-    if not content.strip():
+    # A tool call is a real completion. llama3.1 answers this prompt by calling
+    # respond and leaves message content empty.
+    if not content.strip() and not saw_tool_call:
         detail = "LLM warmup returned no content."
         logger.warning("Model warmup failed after %.1fs: %s", duration, detail)
         return False, detail, duration

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import httpx
 from rich.console import Console
 
-from ai_agent.api.client_config import CLIENT_CONFIG_PATH
+from ai_agent_cli.contracts import CLIENT_CONFIG_PATH
 from ai_agent_cli.client_state import (
     ServerConfig,
     clear_session_for,
@@ -19,7 +19,7 @@ from ai_agent_cli.client_state import (
 )
 
 _USAGE = (
-    "usage: ai-agent server-url [--list | --remove URL | URL]\n"
+    "usage: ai-agent-chat server-url [--list | --remove URL | URL]\n"
     "\n"
     "Show the active AI server, list saved servers, add one, or remove one.\n"
     "The CLI downloads Supabase settings from that server.\n"
@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         current = load_server_config()
         if current is None:
             console.print(
-                "No server URL saved. Run [bold]ai-agent login[/bold] and enter one."
+                "No server URL saved. Run [bold]ai-agent-chat login[/bold] and enter one."
             )
             return 1
         console.print(current.server_url)
@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     console.print(f"Using {update.config.server_url}.")
     if update.needs_login:
-        console.print("Not signed in on this server. Run [bold]ai-agent login[/bold].")
+        console.print("Not signed in on this server. Run [bold]ai-agent-chat login[/bold].")
     return 0
 
 

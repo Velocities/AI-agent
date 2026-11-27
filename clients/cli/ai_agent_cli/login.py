@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 from rich.console import Console
 
-from ai_agent.config import Settings
+import os
+
 from ai_agent_cli.client_state import (
     StoredSession,
     clear_session_for,
@@ -86,11 +87,10 @@ def refresh_session(
 def main(argv: list[str] | None = None) -> int:
     del argv
     console = Console()
-    settings = Settings()
     config = ensure_server_config(console)
     if config is None:
         return 1
-    port = settings.cli_oauth_port
+    port = int(os.environ.get("CLI_OAUTH_PORT", "53682") or "53682")
     if port < 1 or port > 65535:
         console.print(f"[red]CLI_OAUTH_PORT is not a valid port: {port}[/red]")
         return 1
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     save_session_for(config.server_url, session)
     console.print(f"[green]Signed in to {config.server_url}.[/green]")
-    console.print("Start a chat with [bold]ai-agent[/bold].")
+    console.print("Start a chat with [bold]ai-agent-chat[/bold].")
     return 0
 
 

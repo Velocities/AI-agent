@@ -3,7 +3,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from ai_agent.agent.tools import CONTINUE_NUDGE
+from ai_agent.agent.tools import (
+    CONTINUE_NUDGE,
+    looks_like_command_dump,
+    looks_like_named_tool_dump,
+    parse_dumped_tool_call,
+)
 from ai_agent.config import Settings
 from ai_agent.llm.base import LLMErrorKind, LLMMessage, LLMProvider, LLMResponse
 from ai_agent.llm.streaming import (
@@ -34,6 +39,18 @@ class AssistantGenerator:
         self.llm = llm
         self.settings = settings
         self.tool_definitions = tool_definitions
+
+    def generate_turn(
+        self,
+        messages: list[LLMMessage],
+        stream_callback: Callable[[str], None] | None,
+        notice_callback: Callable[[str], None] | None,
+    ) -> LLMResponse:
+        return self._generate_assistant_turn(messages, stream_callback, notice_callback)
+
+    @staticmethod
+    def was_cut_short(response: LLMResponse) -> bool:
+        return AssistantGenerator._was_cut_short(response)
 
     def _generate_assistant_turn(
         self,
@@ -126,16 +143,37 @@ class AssistantGenerator:
         response: LLMResponse | None = None
         active_tool_name: str | None = None
         streamed_content = ""
+        # Hold content that may be a printed tool-call dump until the turn ends.
+        held_content = ""
+        holding_for_dump: bool | None = None
 
         def emit(text: str) -> None:
             visible = trimmer.feed(text)
             if visible:
                 stream_callback(visible)
 
+        def emit_content(text: str) -> None:
+            nonlocal held_content, holding_for_dump, streamed_content
+            if holding_for_dump is False:
+                emit(text)
+                streamed_content += text
+                return
+            held_content += text
+            if holding_for_dump is None:
+                stripped = held_content.lstrip()
+                if not stripped:
+                    return
+                if stripped.startswith("{"):
+                    holding_for_dump = True
+                    return
+                holding_for_dump = False
+                emit(held_content)
+                streamed_content += held_content
+                held_content = ""
+
         for chunk in self.llm.chat_stream(messages, tools=self.tool_definitions):
             if chunk.content_delta:
-                emit(chunk.content_delta)
-                streamed_content += chunk.content_delta
+                emit_content(chunk.content_delta)
             if chunk.tool_name:
                 active_tool_name = chunk.tool_name
             if chunk.tool_arguments_delta and active_tool_name == "respond":
@@ -146,7 +184,20 @@ class AssistantGenerator:
                 response = chunk.response
 
         if response is not None:
-            self._emit_unstreamed_content(response, streamed_content, emit)
+            self._emit_unstreamed_content(response, streamed_content + held_content, emit_content)
+
+            if holding_for_dump and held_content:
+                if (
+                    parse_dumped_tool_call(held_content) is not None
+                    or looks_like_named_tool_dump(held_content)
+                    or looks_like_command_dump(held_content)
+                ):
+                    # Agent loop recovers or nudges; do not show the dump as the answer.
+                    held_content = ""
+                else:
+                    emit(held_content)
+                    streamed_content += held_content
+                    held_content = ""
 
             for call in response.message.tool_calls:
                 if call.name != "respond":
@@ -164,6 +215,9 @@ class AssistantGenerator:
             trailing = streamer.flush_message()
             if trailing:
                 emit(trailing)
+
+        elif holding_for_dump and held_content:
+            emit(held_content)
 
         buffered = trimmer.flush()
         if buffered:

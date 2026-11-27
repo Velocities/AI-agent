@@ -46,6 +46,27 @@ class ApprovalPrompter:
     def should_auto_run(self, decision: PolicyDecision) -> bool:
         return auto_approves(self.session, self.mode, decision)
 
+    def needs_user(self, decision: PolicyDecision) -> bool:
+        """True when a person must confirm a command policy already allowed."""
+        return decision.allowed and not self.should_auto_run(decision)
+
+    def ask(
+        self,
+        decision: PolicyDecision,
+        *,
+        reason: str | None = None,
+        target_display: str | None = None,
+        target_name: str | None = None,
+        target_kind: str | None = None,
+    ) -> ApprovalResult:
+        return self.prompt_single(
+            decision,
+            reason=reason,
+            target_display=target_display,
+            target_name=target_name,
+            target_kind=target_kind,
+        )
+
     def prompt_single(
         self,
         decision: PolicyDecision,

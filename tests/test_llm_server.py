@@ -13,6 +13,7 @@ from ai_agent.llm.http.session import LlmHttpSession, LlmSessionError
 from ai_agent.llm.http.errors import LLMErrorKind
 from ai_agent.llm.client.types import LLMMessage
 from ai_agent.llm.server.facade import AgentLlmFacade, bind_llm_server, public_url
+from ai_agent.llm.server.warmup import warmup_engine
 
 
 def test_public_url_rewrites_wildcard_binds() -> None:
@@ -133,3 +134,49 @@ def test_facade_maps_upstream_connect_failure() -> None:
         response = httpx.get(f"{url}/api/tags", timeout=2.0)
     assert response.status_code == 502
     assert "unavailable" in response.json()["error"]
+
+
+def test_warmup_accepts_tool_call_without_text() -> None:
+    engine = MagicMock()
+    engine.engine_name = "Ollama"
+    engine.model = "llama3.1:8b"
+    engine.chat_lines.return_value = iter(
+        [
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "respond",
+                                    "arguments": {"finished": True, "message": "ready"},
+                                }
+                            }
+                        ],
+                    }
+                }
+            )
+        ]
+    )
+
+    ok, detail, duration = warmup_engine(engine, "system")
+
+    assert ok is True
+    assert detail == "ready"
+    assert duration >= 0
+
+
+def test_warmup_rejects_empty_completion() -> None:
+    engine = MagicMock()
+    engine.engine_name = "Ollama"
+    engine.model = "llama3.1:8b"
+    engine.chat_lines.return_value = iter(
+        [json.dumps({"message": {"role": "assistant", "content": ""}})]
+    )
+
+    ok, detail, _duration = warmup_engine(engine, "system")
+
+    assert ok is False
+    assert detail == "LLM warmup returned no content."

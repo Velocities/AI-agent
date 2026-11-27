@@ -1,32 +1,22 @@
-"""Stage images for the next chat line.
-
-Client-side metadata stripping is intentionally not implemented. The server
-strips by default. See docs/vision-and-attachments.md section 3.
-"""
+"""Stage images for the next chat line."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ai_agent.attachments.store import (
+from ai_agent_cli.images import (
     DEFAULT_ATTACHMENT_REPLAY_MAX_BYTES,
     DEFAULT_ATTACHMENT_REPLAY_MAX_IMAGES,
-)
-from ai_agent.images import (
     DEFAULT_IMAGE_MAX_BYTES,
     DEFAULT_IMAGE_MAX_COUNT,
     DEFAULT_IMAGE_MAX_DIMENSION,
     DEFAULT_IMAGE_MAX_PIXELS,
     ImageRejected,
+    maybe_strip_for_transit,
     validate_image_bytes,
 )
-from ai_agent.llm.client.types import ImageInput
-
-
-def maybe_strip_for_transit(image: ImageInput) -> ImageInput:
-    # TODO: client-side metadata strip; server still strips (docs/vision-and-attachments.md §3).
-    return image
+from ai_agent_cli.types import ImageInput
 
 
 @dataclass
@@ -39,13 +29,6 @@ class StageCommand:
 
 @dataclass
 class ImageStage:
-    """Process-local files waiting for the next turn.
-
-    `vision` False rejects `/attach`. `vision` None means the caller could not
-    probe a model document (the in-process REPL on the model host) and attach
-    is still allowed after the bytes validate.
-    """
-
     vision: bool | None = None
     max_bytes: int = DEFAULT_IMAGE_MAX_BYTES
     max_count: int = DEFAULT_IMAGE_MAX_COUNT

@@ -8,6 +8,7 @@ from rich.console import Console
 from ai_agent.api.agent_factory import build_api_agent_factory
 from ai_agent.api.app import create_app
 from ai_agent.attachments.runtime import open_attachment_services
+from ai_agent.api.local_auth import bootstrap_local_standalone_access, local_standalone_enabled, resolve_verifier
 from ai_agent.config import Settings
 from ai_agent.conversations.db import database_display_path, database_url, open_stores
 
@@ -53,7 +54,7 @@ def main() -> int:
         console.print(f"[red]{exc}[/red]")
         return 1
 
-    if not settings.supabase_url.strip():
+    if not settings.supabase_url.strip() and not local_standalone_enabled(settings):
         logger.warning(
             "SUPABASE_URL is unset. /health will answer, /api/me will return 503."
         )
@@ -64,12 +65,21 @@ def main() -> int:
         console.print(f"[red]Could not open conversation database:[/red] {exc}")
         return 1
 
+    verifier, settings = resolve_verifier(settings)
+    if local_standalone_enabled(settings):
+        bootstrap_local_standalone_access(access_store, settings)
+
     host = settings.api_bind_host.strip()
     port = settings.api_bind_port
     display_host = "127.0.0.1" if host.lower() == "localhost" else host
     console.print("[bold]AI Agent API[/bold]")
     console.print(f"Listening: http://{display_host}:{port}")
-    if settings.supabase_url.strip():
+    if local_standalone_enabled(settings):
+        console.print("Auth: local standalone bearer token")
+        console.print(
+            f"[dim]User id {settings.local_standalone_user_id.strip() or 'default'}[/dim]"
+        )
+    elif settings.supabase_url.strip():
         console.print("Auth: Supabase access token")
     else:
         console.print("[yellow]Auth: not configured[/yellow] (set SUPABASE_URL)")
@@ -93,6 +103,7 @@ def main() -> int:
     )
     app = create_app(
         settings,
+        verifier=verifier,
         store=store,
         access_store=access_store,
         monitoring_admin_store=monitoring_admins,

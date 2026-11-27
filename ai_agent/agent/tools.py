@@ -1,4 +1,5 @@
 import json
+import re
 
 COMMAND_EXPR_SCHEMA = {
     "type": "object",
@@ -221,27 +222,120 @@ SCHEMA_NUDGE = (
 
 COMMAND_DUMP_NUDGE = (
     "The JSON you wrote is assistant text, not a tool call, so nothing ran. "
-    "Call run_command (or run_commands) now with target, command, and reason. "
-    "Do not print CommandExpr JSON. No semicolons in argv — use run_commands for "
-    "multiple grep -R steps, and set ordering to ordered or unordered. "
-    "find -exec needs argv ending with '{}' then '+'."
+    "Call run_command or run_commands now through the tool interface "
+    "(do not print {\"name\":...} JSON). "
+    "On Windows PowerShell use separate argv elements: "
+    "powershell -NoProfile -Command Get-ChildItem -LiteralPath <path> … "
+    "No pipes, semicolons, or Sort-Object in PowerShell. "
+    "List files with Get-ChildItem, then answer from the tool output. "
+    "run_commands must set ordering to ordered or unordered."
+)
+
+# Names the agent always (or optionally) exposes. Text that looks like a tool
+# dump for any other name is left as ordinary assistant content.
+_RECOVERABLE_TOOL_NAMES = frozenset(
+    {"run_command", "run_commands", "respond", "run_tool"}
+)
+
+# llama3.1 often prints this shape as assistant text, sometimes with raw newlines
+# inside strings so json.loads fails until whitespace is collapsed.
+_NAMED_TOOL_DUMP = re.compile(
+    r'^\s*\{\s*"name"\s*:\s*"(?:run_command|run_commands|respond|run_tool)"\s*,'
+    r'\s*"(?:parameters|arguments)"\s*:',
+    re.DOTALL,
 )
 
 
-def looks_like_command_dump(text: str) -> bool:
-    """True when the model printed a CommandExpr instead of calling a tool."""
+def _strip_json_fence(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
         if len(lines) >= 3 and lines[-1].strip().startswith("```"):
-            stripped = "\n".join(lines[1:-1]).strip()
-    if not stripped.startswith("{"):
-        return False
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(data, dict):
+            return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _repair_json_text(text: str) -> str:
+    """Collapse raw newlines models insert inside JSON strings."""
+    return re.sub(r"[\r\n]+", " ", _strip_json_fence(text)).strip()
+
+
+def _parse_json_object(text: str) -> dict | None:
+    stripped = _strip_json_fence(text)
+    if not stripped.startswith("{") and not _repair_json_text(text).startswith("{"):
+        return None
+    for candidate in (stripped, _repair_json_text(text)):
+        if not candidate.startswith("{"):
+            continue
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _tool_call_from_object(data: dict):
+    from ai_agent.llm.base import ToolCall
+
+    name: object | None = None
+    raw_args: object | None = None
+    if isinstance(data.get("name"), str) and (
+        "parameters" in data or "arguments" in data
+    ):
+        name = data["name"]
+        raw_args = data.get("parameters", data.get("arguments"))
+    else:
+        function = data.get("function")
+        if (
+            data.get("type") == "function"
+            and isinstance(function, dict)
+            and isinstance(function.get("name"), str)
+        ):
+            name = function["name"]
+            raw_args = function.get("arguments", function.get("parameters"))
+
+    if not isinstance(name, str) or name not in _RECOVERABLE_TOOL_NAMES:
+        return None
+
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(_repair_json_text(raw_args))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw_args, dict):
+        return None
+
+    return ToolCall(id=f"recovered-{name}", name=name, arguments=raw_args)
+
+
+def parse_dumped_tool_call(text: str):
+    """Recover a tool call the model printed as assistant JSON.
+
+    Smaller models (notably llama3.1) often emit
+    ``{"name":"run_commands","parameters":{...}}`` as plain text instead of a
+    structured tool call. Return a ``ToolCall`` when that shape is clear.
+    """
+    data = _parse_json_object(text)
+    if data is None:
+        return None
+    return _tool_call_from_object(data)
+
+
+def looks_like_named_tool_dump(text: str) -> bool:
+    """True when assistant text looks like a printed tool call, even if JSON is broken."""
+    if parse_dumped_tool_call(text) is not None:
+        return True
+    return bool(_NAMED_TOOL_DUMP.match(_repair_json_text(text)))
+
+
+def looks_like_command_dump(text: str) -> bool:
+    """True when the model printed a CommandExpr instead of calling a tool."""
+    if looks_like_named_tool_dump(text):
+        return True
+    data = _parse_json_object(text)
+    if data is None:
         return False
     if data.get("type") in {"single", "pipe", "and", "or", "redirect", "write_file"}:
         return True

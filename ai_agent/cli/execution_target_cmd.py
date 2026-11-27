@@ -332,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--user-id",
         metavar="UUID",
-        help="Supabase user id (default: ai-agent login session sub).",
+        help="Supabase user id (default: ai-agent-chat login session sub).",
     )
     parser.add_argument(
         "--service-db",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pwd
+import os
 import stat
 from pathlib import Path
 
@@ -15,28 +15,39 @@ from ai_agent.deployment.access_store import DeploymentAccessStore
 from ai_agent.deployment.monitoring_admin_store import MonitoringAdminStore
 from ai_agent.execution_targets.repository import UserExecutionTargetRepository
 
+_APP_DATA = Path(".local") / "share" / "ai-agent"
+_DB_NAME = "conversations.db"
+
 
 def default_database_path() -> Path:
     """SQLite file on the machine running the model and ai-agent-serve."""
-    return Path.home() / ".local" / "share" / "ai-agent" / "conversations.db"
+    return Path.home() / _APP_DATA / _DB_NAME
 
 
 def shared_deployment_database_path() -> Path:
-    """Single SQLite file for systemd + admin CLI (see CONVERSATION_DATABASE).
-
-    Lives in the unit's StateDirectory=ai-agent so the service account and the
-    admin group share one database.
-    """
-    return Path("/var/lib/ai-agent") / "conversations.db"
+    """Shared DB for systemd installs (Linux) or the current user (Windows)."""
+    if os.name == "posix":
+        return Path("/var/lib/ai-agent") / _DB_NAME
+    return default_database_path()
 
 
 def service_user_database_path(service_user: str = "ai") -> Path:
-    """Where the API stores data when CONVERSATION_DATABASE is unset and User=ai."""
+    """Home of a named service account on Linux; current user on Windows."""
+    home = _unix_account_home(service_user)
+    if home is None:
+        home = Path(f"/var/lib/{service_user}") if os.name == "posix" else Path.home()
+    return home / _APP_DATA / _DB_NAME
+
+
+def _unix_account_home(username: str) -> Path | None:
+    if os.name != "posix":
+        return None
     try:
-        home = Path(pwd.getpwnam(service_user).pw_dir)
+        import pwd
+
+        return Path(pwd.getpwnam(username).pw_dir)
     except KeyError:
-        home = Path(f"/var/lib/{service_user}")
-    return home / ".local" / "share" / "ai-agent" / "conversations.db"
+        return None
 
 
 def service_user_database_url(service_user: str = "ai") -> str:
@@ -52,8 +63,7 @@ def database_url(settings: Settings) -> str:
     if configured:
         return configured
     path = default_database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(stat.S_IRWXU)
+    _ensure_private_dir(path.parent)
     return f"sqlite:///{path}"
 
 
@@ -62,8 +72,8 @@ def deployment_database_url(settings: Settings) -> str:
 
     Reads ``CONVERSATION_DATABASE`` from settings (``.env`` in the service
     WorkingDirectory). When unset, uses the shared ``StateDirectory`` file under
-    ``/var/lib/ai-agent/conversations.db`` — not the service user's
-    ``~/.local/share/...`` path.
+    ``/var/lib/ai-agent/conversations.db`` on Linux — or the current user's
+    app data directory on Windows.
     """
     configured = settings.conversation_database.strip()
     if configured:
@@ -170,11 +180,20 @@ def _enable_sqlite(engine: Engine) -> None:
         cursor.close()
 
 
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "posix":
+        return
+    path.chmod(stat.S_IRWXU)
+
+
 def _shared_sqlite_file_mode() -> int:
     return stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
 
 
 def _restrict_sqlite_file(url: str) -> None:
+    if os.name != "posix":
+        return
     made = make_url(url)
     if not made.drivername.startswith("sqlite") or not made.database:
         return
