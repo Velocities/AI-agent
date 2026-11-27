@@ -31,6 +31,7 @@ def failure_message(call: ToolCall, error: str) -> LLMMessage:
 
 
 def respond_result(call: ToolCall) -> tuple[LLMMessage, str | None]:
+    """The tool message, and the user-visible answer when the model is done"""
     finished = call.arguments.get("finished")
     message = call.arguments.get("message", "")
     if not isinstance(finished, bool):

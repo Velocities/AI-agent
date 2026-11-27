@@ -158,6 +158,10 @@ def policy_decision(
     expr: CommandExpr,
     target: ExecutionTarget | None,
 ) -> PolicyDecision:
+    """Whether this command is allowed, and what risk it carries.
+
+    A workflow container is isolated from the host, so host policy does not apply.
+    """
     if target is not None and not target.uses_host_policy:
         return workflow_policy_decision(expr)
     return policy.verify(expr)

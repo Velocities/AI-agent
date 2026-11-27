@@ -164,7 +164,11 @@ class Agent:
         iteration_callback: Callable[[int], None] | None = None,
         notice_callback: Callable[[str], None] | None = None,
     ) -> AgentRunResult:
-        """Ask the model, then parse, check policy, ask permission, and run."""
+        """Ask the model, then parse, check policy, ask permission, and run.
+
+        This method is the only place that orders those stages. Each helper
+        returns a result and does not call the next stage itself.
+        """
         self.remember_message(
             LLMMessage(
                 role="user",
@@ -190,6 +194,7 @@ class Agent:
             if iteration_callback is not None:
                 iteration_callback(iteration)
             logger.info("Iteration %s: asking model", iteration)
+            # Let the model read the conversation and either answer or call tools
             response = self.assistant.generate_turn(
                 self.messages, stream_callback, notice_callback
             )
@@ -218,6 +223,8 @@ class Agent:
                     error="truncated",
                 )
             if not assistant.tool_calls:
+                # Weaker models print a tool call as text. Promote it, or treat
+                # the text as the final answer when it is not a call.
                 recovered = self.recover_printed_tool_call(
                     assistant, iteration, dump_recoveries, notice
                 )
@@ -234,10 +241,12 @@ class Agent:
                 iteration,
                 [call.name for call in assistant.tool_calls],
             )
+            # Parse, check policy, ask permission, then run or report a rejection
             final_message = self.handle_tool_calls(assistant.tool_calls)
             if final_message is not None:
                 logger.info("Iteration %s: tool path returned final message", iteration)
                 return AgentRunResult(final_message=final_message, iterations=iteration)
+            # Stop if the model keeps hitting the same tool error. A success clears the streak.
             error_signature = latest_tool_error(self.messages)
             if error_signature:
                 recent_tool_errors.append(error_signature)
@@ -276,7 +285,7 @@ class Agent:
         dump_recoveries: int,
         notice: Callable[[str], None],
     ) -> str | AgentRunResult | None:
-        """Promote a tool call the model printed as text. None means a real answer."""
+        """Promote a printed tool call, nudge the model, or accept a real answer"""
         answer = (assistant.content or "").strip()
         recovered = parse_dumped_tool_call(answer) if answer else None
         if recovered is not None and dump_recoveries < 2:
@@ -317,6 +326,8 @@ class Agent:
         )
 
     def handle_tool_calls(self, tool_calls: list[ToolCall]) -> str | None:
+        # Several command calls in one turn share a single permission question.
+        # Anything mixed with respond or run_tool is handled one call at a time.
         command_calls = [
             call for call in tool_calls if call.name in {"run_command", "run_commands"}
         ]
@@ -330,6 +341,7 @@ class Agent:
             final_message = None
             for call in tool_calls:
                 if call.name == "respond":
+                    # finished=True is the answer the user sees. The loop stops.
                     message, finished = respond_result(call)
                     messages.append(message)
                     if finished is not None:
@@ -353,20 +365,27 @@ class Agent:
         return failure_message(call, f"Unknown tool: {call.name}")
 
     def handle_run_command(self, call: ToolCall) -> LLMMessage:
+        # Turn the model's JSON into a command tree. A bad shape never reaches policy.
         expr, parse_error = parse_command_structure(call.arguments.get("command", {}))
         if parse_error or expr is None:
             return failure_message(call, parse_error or "Invalid command expression")
+        # Pick the machine this command runs on
         target_name, target, target_error = resolve_target(self.router, call.arguments)
         if target_error:
             return failure_message(call, target_error)
+        # Check if the model's command is allowed, and whether it is safe enough
+        # to auto-approve without the user
         decision = policy_decision(self.policy, expr, target)
         allowed = self.permission_for_one(call, decision, target)
+        # Tell the model it was rejected, or run the command and send the output back
         payload = self.outcome_for(
             call.name, call.arguments, expr, decision, allowed, target_name, target
         )
         return tool_message(call, payload)
 
     def handle_run_commands(self, call: ToolCall) -> LLMMessage:
+        # One permission question for the list. A command that does not parse is
+        # one failed entry; the others still run.
         commands, commands_error = coerce_command_list(call.arguments.get("commands", []))
         if commands_error or commands is None:
             logger.warning("run_commands coerce failed: %s", commands_error)
@@ -400,6 +419,7 @@ class Agent:
             payloads.append(payload)
             decided.append(payload)
         if approval is not None:
+            # Tell the model which commands in this list the user accepted
             apply_batch_approval(
                 decided,
                 accepted=approval.accepted,
@@ -408,7 +428,12 @@ class Agent:
         return tool_message(call, payloads)
 
     def handle_command_batch(self, tool_calls: list[ToolCall]) -> list[LLMMessage]:
-        """One permission prompt for several command calls. A bad call falls back."""
+        """One permission prompt for several command calls.
+
+        One tool message is returned per command. A call that does not parse,
+        or names an unknown target, drops the shared prompt and each call is
+        handled on its own.
+        """
         pending: list[PendingCommand] = []
         call_map: list[tuple[ToolCall, CommandExpr, str, ExecutionTarget | None]] = []
         groups: list[int | None] = []
@@ -455,12 +480,14 @@ class Agent:
                 )
                 if target_error:
                     return [self.handle_one_call(item) for item in tool_calls]
+                # Included in the one shared prompt only after policy has a decision
                 decision = policy_decision(self.policy, expr, target)
                 pending.append(
                     self.pending_command(expr, decision, call.arguments, target)
                 )
                 call_map.append((call, expr, target_name, target))
                 groups.append(None)
+        # Isolated workflow containers skip the host prompt. Every command may run.
         workflow_batch = all(
             target is not None and not target.uses_host_policy
             for _call, _expr, _target_name, target in call_map
@@ -500,6 +527,8 @@ class Agent:
         ]
 
     def handle_run_tool(self, call: ToolCall) -> LLMMessage:
+        # The entrypoint comes from the workflow manifest, not from the model.
+        # Host policy does not apply inside the workflow container.
         if self.workflow is None:
             return failure_message(call, "run_tool is only available inside a workflow session")
         name = call.arguments.get("tool")
@@ -529,6 +558,7 @@ class Agent:
             target,
             runner=lambda: target.run_tool(tool.entrypoint, json.dumps(raw_input)),
         )
+        # Give the model the parsed tool JSON, not the container's raw stdout
         return tool_message(call, workflow_tool_result(payload, tool))
 
     def permission_for_one(
@@ -537,10 +567,13 @@ class Agent:
         decision: PolicyDecision,
         target: ExecutionTarget | None,
     ) -> bool:
+        # The container is isolated, so there is nothing on the host to approve
         if target is not None and not target.uses_host_policy:
             return True
+        # Policy already forbade it. Do not ask the user to override that.
         if not decision.allowed:
             return False
+        # Safe enough for this confirmation mode to run without asking
         if not self.prompter.needs_user(decision):
             return True
         approval = self.prompter.ask(
@@ -558,6 +591,7 @@ class Agent:
         ordering: str,
         target: ExecutionTarget | None,
     ) -> tuple[ApprovalResult | None, list[bool]]:
+        # One yes/no for the whole list. Each flag says whether that command may run.
         if target is not None and not target.uses_host_policy:
             return None, [True] * len(pending)
         if not pending:
@@ -579,7 +613,10 @@ class Agent:
         target: ExecutionTarget | None,
         runner: Callable[[], object] | None = None,
     ) -> dict:
-        """Tell the model the policy or user said no, or return the process output."""
+        """Tell the model the policy or user said no, or return the process output.
+
+        run_command only starts the process. The choice to run it was already made.
+        """
         skip_prompt = target is not None and not target.uses_host_policy
         confirmation_required = not skip_prompt and not self.prompter.should_auto_run(decision)
         if not decision.allowed:
@@ -615,6 +652,7 @@ class Agent:
             )
         else:
             payload = run_command(target, expr, target_name, runner)
+            # An unknown target is an error for the model, and is not an audited run
             if target is not None:
                 self.record_outcome(
                     tool_name,
@@ -640,6 +678,8 @@ class Agent:
             if parse_error or expr is None:
                 prepared.append(PreparedCommand(expr=None, pending=None, error=parse_error))
                 continue
+            # Check if this command is allowed, and whether it is safe enough
+            # to auto-approve without the user
             decision = policy_decision(self.policy, expr, target)
             prepared.append(
                 PreparedCommand(
