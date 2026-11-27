@@ -1,8 +1,9 @@
 """run_tool returns structured output only."""
 
 import json
+from pathlib import Path
 
-from ai_agent.agent.tool_handler import ToolHandler
+from ai_agent.agent.tool_result import workflow_tool_result
 from ai_agent.workflows.manifests import WorkflowTool
 
 
@@ -14,6 +15,7 @@ def _fetch_pages_tool() -> WorkflowTool:
         nix_attr="fetch-pages",
         entrypoint="fetch-pages",
         input_schema={"type": "object", "required": ["urls"], "properties": {}},
+        directory=Path("."),
         output_schema={
             "type": "object",
             "required": ["pages", "fetched", "failed"],
@@ -36,6 +38,6 @@ def test_run_tool_payload_drops_stdout() -> None:
         "stderr": "",
         "execution_target": {"name": "workflow", "kind": "workflow"},
     }
-    slim = ToolHandler._run_tool_payload(payload, tool)
+    slim = workflow_tool_result(payload, tool)
     assert "stdout" not in slim
     assert slim["output"] == {"pages": [], "fetched": 0, "failed": 0}

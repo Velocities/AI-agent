@@ -284,7 +284,7 @@ def test_parse_dumped_tool_call_accepts_name_parameters() -> None:
 
 
 def test_coerce_command_list_repairs_windows_path_escapes() -> None:
-    from ai_agent.agent.tool_handler import coerce_command_list
+    from ai_agent.agent.command_parse import coerce_command_list
 
     # Invalid JSON: \' and single-backslash Windows paths inside the string.
     raw = (
@@ -299,7 +299,7 @@ def test_coerce_command_list_repairs_windows_path_escapes() -> None:
 
 
 def test_coerce_command_list_strips_quoted_overescaped_paths() -> None:
-    from ai_agent.agent.tool_handler import coerce_command_list
+    from ai_agent.agent.command_parse import coerce_command_list
 
     commands = [
         {

@@ -137,6 +137,10 @@ class PolicyEngine:
         """Whether commands without a matching rule can still run once the user approves."""
         return self.config.fallback_risk != RiskLevel.FORBIDDEN
 
+    def verify(self, expr: CommandExpr, *, piped_to: str | None = None) -> PolicyDecision:
+        """Whether this command is allowed, and what risk it carries."""
+        return self.evaluate(expr, piped_to=piped_to)
+
     def evaluate(self, expr: CommandExpr, *, piped_to: str | None = None) -> PolicyDecision:
         segments: list[SegmentDecision] = []
         redirect_path: str | None = None

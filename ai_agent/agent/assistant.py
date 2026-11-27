@@ -40,6 +40,18 @@ class AssistantGenerator:
         self.settings = settings
         self.tool_definitions = tool_definitions
 
+    def generate_turn(
+        self,
+        messages: list[LLMMessage],
+        stream_callback: Callable[[str], None] | None,
+        notice_callback: Callable[[str], None] | None,
+    ) -> LLMResponse:
+        return self._generate_assistant_turn(messages, stream_callback, notice_callback)
+
+    @staticmethod
+    def was_cut_short(response: LLMResponse) -> bool:
+        return AssistantGenerator._was_cut_short(response)
+
     def _generate_assistant_turn(
         self,
         messages: list[LLMMessage],
