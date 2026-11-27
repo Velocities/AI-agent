@@ -86,3 +86,21 @@ Run tests:
 ```bash
 pytest
 ```
+
+## Workflows
+
+A workflow chat does not run commands on the host. The client names a workflow. The server owns the container name, the sleep directory, and every Docker call. Sending stays closed until the container is ready.
+
+![Workflow startup, the broker, and the path back to the user](docs/workflow-components.svg)
+
+Startup goes through `invoke`. The broker checks whether the image tag is already present, builds it with BuildKit when it is not, and starts the container with `docker run` as `sleep infinity`. A later open of the same chat uses `docker start` on that container. The model never supplies this argv. The only writable mount is `/work`, bind-mounted from `/var/lib/ai-agent/workflow-sleep/<user>/<conversation>`.
+
+The API process is not in the `docker` group and does not open the Docker socket. It talks to `ai-agent-docker` on `/run/ai-agent/docker.sock`. That process is the broker, and it has two calls. `invoke(argv, timeout, stdin)` is for lifecycle: image inspect, a fixed BuildKit build, `docker run`, `docker start`, `docker inspect`, and `docker rm`. `exec(container, user, cwd, argv, script, script_args, stdin, timeout)` is how a command enters a container that already exists. The broker authorizes the argv before anything is executed, and it refuses a shell string, a Docker path, a host network, or a mount that is not the sleep volume or a read-only Nix store.
+
+Once the container is up, the model has one target, `workflow`. `run_command`, `run_commands`, and `run_tool` skip host policy and skip the user prompt. That is deliberate. Inside the container the model may run the tools the manifest gave it, and other commands, including as root in the container. `run_tool` entrypoints come from the workflow lock, not from a path the model invents. Output comes back as the tool result. The model then calls `respond`, and that text is the answer the user sees.
+
+A normal chat is the opposite boundary. Commands run on the host as the approved Linux user. `default_policy.yaml` decides what is allowed, confirmation mode decides who must say yes, and network tools stay on localhost. A workflow trades that for a sandbox with wide permission inside it. The container has its own bridge network, so a workflow tool may reach the internet. It does not share the host network. Root in the container is an unprivileged uid on the host, because dockerd runs with user-namespace remap.
+
+The sandbox is still closed on the host side. The container cannot mount the Docker socket, `/`, `/home`, or the agent tree. Command working directories and `write_file` stay under `/work`. The container is started with `no-new-privileges`, without `SYS_ADMIN`, and with a process limit. Stopping the workflow removes the container and leaves the sleep directory. That directory is the saved sleep state. The next start bind-mounts the same path, so files in `/work` survive.
+
+Saving into the user's own environment is a different step, and it is required for anything that should leave the sandbox. The model cannot do it by running a command, because `/work` is not the user's home. The turn loop does not perform this copy. Promotion copies chosen files from `/work` into that home only after the user says yes or picks items. Confirmation mode and session grants do not cover it. The model does not supply the file list or the approval. The write runs as the approved Linux user, stays under that user's home, and a root executor is refused.
