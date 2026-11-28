@@ -1,7 +1,10 @@
 apiVersion: ai-agent.tool/v1
 name: count-lines
-version: 0.1.0
+version: 1.0.0
 description: Count lines in a text string.
+libraries:
+  - name: textkit
+    version: 1.0.0
 nix:
   attr: count-lines
 entrypoint: count-lines

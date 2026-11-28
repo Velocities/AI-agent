@@ -6,13 +6,13 @@
       "attr": "count-lines",
       "entrypoint": "count-lines",
       "name": "count-lines",
-      "version": "0.1.0"
+      "version": "1.0.0"
     },
     {
       "attr": "count-words",
       "entrypoint": "count-words",
       "name": "count-words",
-      "version": "0.1.0"
+      "version": "1.0.0"
     }
   ]
 }

@@ -1,7 +1,8 @@
 # Workflow image definitions
 
-This directory (`workflow_image/`) is the Docker build context for workflow
-containers: the shared `Dockerfile`, Nix flake, and per-workflow manifests.
+This directory (`workflow_image/`) holds the engine Dockerfile and Nix flake,
+plus the development catalog of tools, libraries, and workflows. A build
+context is a staged directory for one workflow, not this whole tree.
 It is not the same thing as the SSH key sandbox under `.ai-agent/ssh/`.
 
 One generic image build, one container per workflow session. Tools are Nix
@@ -10,25 +11,36 @@ layer.
 
 ## Layout
 
+Tools and libraries are not stored inside a workflow. A workflow pins versions.
+During development this directory is also the catalog. An installed server
+uses `/var/lib/ai-agent/catalog` instead. See
+[`docs/workflow-catalog.md`](../docs/workflow-catalog.md).
+
 ```text
-flake.nix                          shared package set
-nix/textkit/                       library both example tools import
-nix/wordnotes/                     library only count-words imports
-workflows/<name>/workflow.yaml     name, version, prompt, parameters, tools
+Dockerfile                         engine file, copied into each staged build
+flake.nix                          builds one staged workflow.lock.json
+tools/<tool>/<version>/            tool.yaml, default.nix, source
+libraries/<library>/<version>/     one Python module, installed once per image
+workflows/<name>/workflow.yaml     name, version, prompt, parameters, tool pins
 workflows/<name>/workflow.lock.json
-workflows/<name>/tools/<tool>/tool.yaml
-workflows/<name>/tools/<tool>/default.nix
-Dockerfile                         reads WORKFLOW and builds that closure
 ```
 
 `workflow.yaml` is the authoring file. `workflow.lock.json` is what Nix
-reads: tool name, version, Nix attribute, and entrypoint. It does not
-include `parameters` or `initial_prompt`. The agent checks the lock against
-the YAML and refuses to build when they differ.
+reads for the workflow: tool name, version, Nix attribute, and entrypoint.
+Library pins stay in each tool's `tool.yaml`. The lock does not include
+`parameters` or `initial_prompt`. The agent checks the lock against the
+YAML and refuses to build when they differ.
 
-A tool's `default.nix` is the package. It receives the shared libraries
-(`textkit`, `wordnotes`) and returns one executable. Tools do not import
-each other.
+A tool's `default.nix` is the package. It receives the libraries named in
+its `tool.yaml` (`textkit`, `wordnotes`) and returns one executable. The
+flake builds each library version once and passes that derivation to every
+tool that pins it. Tools do not import each other.
+
+The agent writes `<catalog>/.build/<name>-<fingerprint>/` with this
+Dockerfile, the flake, that workflow's lock, and the tools it names. The
+build reads each tool's `tool.yaml` and copies the libraries that tool
+declares. Docker builds that directory. Editing one workflow does not copy
+the others into the context.
 
 ## Example: text-lab
 
@@ -36,24 +48,10 @@ each other.
 built once. `count-words` also uses `wordnotes`, so its Python environment
 is a different store path.
 
-Build the closure on the host when Nix is installed. Later workflow builds
-reuse the same `textkit` store path:
-
-```bash
-cd workflow_image
-nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.text-lab
-```
-
 Build the image with BuildKit. On Ubuntu the package is `docker-buildx`
 (`sudo apt install docker-buildx`), which also installs Docker. The systemd
-installer installs that package when the plugin is missing. Docker skips this
-layer when the workflow sources and the `WORKFLOW` argument are unchanged.
-If the tag is already present, skip the build and start a container:
-
-```bash
-docker buildx build --load --build-arg WORKFLOW=text-lab --build-arg NIX_SYSTEM=x86_64-linux \
-  -t ai-agent-workflow:text-lab workflow_image
-```
+installer installs that package when the plugin is missing. The agent skips
+the build when the tag for this staged closure is already present.
 
 The agent tags images as `ai-agent-workflow:<name>-<fingerprint>`. The
 fingerprint covers the lock, the Nix expressions, the shared libraries, and
@@ -154,14 +152,9 @@ JSON become titles and posts. A login wall is reported as a failed page.
 
 The workflow asks the user five questions first: time, product shape,
 audience, domain, and one constraint. Those answers are not image inputs.
-Build it the same way, with a different workflow name:
-
-```bash
-cd workflow_image
-nix --extra-experimental-features 'nix-command flakes' build .#packages.x86_64-linux.product-ideas
-docker buildx build --load --build-arg WORKFLOW=product-ideas --build-arg NIX_SYSTEM=x86_64-linux \
-  -t ai-agent-workflow:product-ideas workflow_image
-```
+The agent stages and builds it the same way, with workflow name `product-ideas`.
+`fetch-pages` pins no libraries. It uses the same `pkgs.python3` as the other
+tools in an image, so the interpreter and its `json` module are installed once.
 
 From a client, start it with `/workflow product-ideas` or the Android
 Workflow button. The model then uses `fetch-pages`, for example:

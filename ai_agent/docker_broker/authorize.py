@@ -174,11 +174,13 @@ def _authorize_build(argv: list[str], workflow_image_root: Path | None) -> list[
         raise BrokerRejected("The image tag does not match this workflow.")
     try:
         context = Path(argv[10]).resolve()
-        allowed = Path(workflow_image_root).resolve()
+        allowed = (Path(workflow_image_root).resolve() / ".build").resolve()
     except OSError as exc:
         raise BrokerRejected(f"Build context cannot be resolved: {exc}") from exc
-    if context != allowed:
-        raise BrokerRejected("The build context is the configured workflow_image tree.")
+    if context.parent != allowed or context.name != f"{name}-{fingerprint}":
+        raise BrokerRejected(
+            "The build context is the staged closure for this workflow under the catalog .build directory."
+        )
     return argv
 
 

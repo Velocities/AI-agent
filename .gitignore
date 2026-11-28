@@ -12,6 +12,7 @@ conversations.db
 .ai-agent/
 venv/
 .pytest_cache/
+workflow_image/.build/
 .mypy_cache/
 .ruff_cache/
 *.log

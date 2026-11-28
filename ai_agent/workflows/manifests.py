@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 TOOL_API = "ai-agent.tool/v1"
 WORKFLOW_API = "ai-agent.workflow/v1"
 _SEGMENT = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
+_LIBRARY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array"}
 
@@ -38,12 +39,19 @@ class _Interface(BaseModel):
     output: dict
 
 
+class _LibraryFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    version: str
+
+
 class _ToolFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     apiVersion: str
     name: str
     version: str
     description: str = ""
+    libraries: list[_LibraryFile] = Field(default_factory=list)
     nix: _NixRef
     entrypoint: str
     interface: _Interface
@@ -81,6 +89,13 @@ class WorkflowParameter:
 
 
 @dataclass(frozen=True)
+class WorkflowLibrary:
+    name: str
+    version: str
+    directory: Path
+
+
+@dataclass(frozen=True)
 class WorkflowTool:
     name: str
     version: str
@@ -90,6 +105,7 @@ class WorkflowTool:
     input_schema: dict
     output_schema: dict
     directory: Path
+    libraries: tuple[WorkflowLibrary, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -110,9 +126,29 @@ class WorkflowManifest:
         raise WorkflowError(f"Unknown workflow tool {name!r}. Tools: {known}")
 
 
-def default_workflow_image_root() -> Path:
-    """Tree with the generic workflow Dockerfile, flakes, and workflow manifests."""
+def workflow_engine_root() -> Path:
+    """Dockerfile and flake.nix. These stay with the engine install."""
     return Path(__file__).resolve().parents[2] / "workflow_image"
+
+
+def default_catalog_root() -> Path:
+    """Definitions tree: tools/, libraries/, and workflows/.
+
+    ``WORKFLOW_CATALOG_ROOT`` selects the installed catalog. An empty value
+    uses ``workflow_image`` in this checkout, which is also where the engine
+    files live during development.
+    """
+    from ai_agent.config import Settings
+
+    configured = Settings().workflow_catalog_root.strip()
+    if configured:
+        return Path(configured)
+    return workflow_engine_root()
+
+
+def default_workflow_image_root() -> Path:
+    """Catalog root. The name remains for callers that stage image builds."""
+    return default_catalog_root()
 
 
 def load_workflow(workflow_image_root: Path, name: str) -> WorkflowManifest:
@@ -134,10 +170,11 @@ def load_workflow(workflow_image_root: Path, name: str) -> WorkflowManifest:
     _version(document.version, "workflow version")
     parameters = _parameters(document.parameters)
     tools = tuple(
-        _load_tool(directory, ref.name, ref.version) for ref in document.tools
+        _load_tool(workflow_image_root, ref.name, ref.version) for ref in document.tools
     )
     if not tools:
         raise WorkflowError(f"Workflow {workflow_name!r} requires at least one tool")
+    _require_one_library_version(tools)
     manifest = WorkflowManifest(
         name=document.name,
         version=document.version,
@@ -224,10 +261,23 @@ def parse_tool_output(tool: WorkflowTool, stdout: str) -> dict:
     return value
 
 
-def _load_tool(workflow_dir: Path, name: str, version: str) -> WorkflowTool:
+def _require_one_library_version(tools: tuple[WorkflowTool, ...]) -> None:
+    seen: dict[str, str] = {}
+    for tool in tools:
+        for lib in tool.libraries:
+            previous = seen.get(lib.name)
+            if previous is not None and previous != lib.version:
+                raise WorkflowError(
+                    f"Tools in this image request {lib.name} {previous} and {lib.name} {lib.version}. "
+                    "A library name is installed once per image."
+                )
+            seen[lib.name] = lib.version
+
+
+def _load_tool(catalog: Path, name: str, version: str) -> WorkflowTool:
     tool_name = _segment(name, "tool name")
-    _version(version, "tool version")
-    directory = workflow_dir / "tools" / tool_name
+    tool_version = _version(version, "tool version")
+    directory = catalog / "tools" / tool_name / tool_version
     path = directory / "tool.yaml"
     if not path.is_file():
         raise WorkflowError(f"Workflow requires {tool_name!r} but {path} is missing")
@@ -260,7 +310,20 @@ def _load_tool(workflow_dir: Path, name: str, version: str) -> WorkflowTool:
         input_schema=document.interface.input,
         output_schema=document.interface.output,
         directory=directory,
+        libraries=tuple(
+            _load_library(catalog, item.name, item.version) for item in document.libraries
+        ),
     )
+
+
+def _load_library(catalog: Path, name: str, version: str) -> WorkflowLibrary:
+    lib_name = _token(name, "library name", _LIBRARY)
+    lib_version = _version(version, "library version")
+    directory = catalog / "libraries" / lib_name / lib_version
+    source = directory / f"{lib_name}.py"
+    if not source.is_file():
+        raise WorkflowError(f"Library {lib_name} {lib_version} is missing {source.name}")
+    return WorkflowLibrary(name=lib_name, version=lib_version, directory=directory)
 
 
 def _parameters(items: list[_ParameterFile]) -> tuple[WorkflowParameter, ...]:
@@ -294,7 +357,8 @@ def _require_matching_lock(path: Path, manifest: WorkflowManifest) -> None:
     if loaded != expected:
         raise WorkflowError(
             f"{path} does not match workflow.yaml. Rebuild the lock from the "
-            "tool names, versions, nix attrs, and entrypoints. Leave parameters out."
+            "tool names, versions, nix attrs, and entrypoints. "
+            "Leave parameters out."
         )
 
 

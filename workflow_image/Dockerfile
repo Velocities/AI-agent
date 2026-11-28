@@ -7,13 +7,13 @@
 # fills in) are not build inputs. The host writes those into /work when it
 # starts a container from this image.
 #
-#   docker buildx build --load --build-arg WORKFLOW=text-lab -t ai-agent-workflow:text-lab .
+#   docker buildx build --load --build-arg WORKFLOW=text-lab -t ai-agent-workflow:text-lab <staged>
 #
-# The same file builds any workflow that has a workflow.lock.json and a
-# default.nix per tool. Unchanged tools stay in the Nix store of this build
-# stage; Docker reuses the build layer when the copied sources and WORKFLOW
-# argument are unchanged. Do not mount a fresh empty directory over
-# /nix/store here: that hides the Nix this image needs in order to build.
+# The context is one staged workflow: this Dockerfile, flake.nix, that
+# workflow's lock, and the tool and library versions the lock names.
+# A library version is built once and every tool that pins it references
+# that store path. Do not mount a fresh empty directory over /nix/store
+# here: that hides the Nix this image needs in order to build.
 
 # Hub publishes patch tags (2.24.15), not bare 2.24.
 FROM nixos/nix:2.24.15 AS build
@@ -23,8 +23,9 @@ ARG NIX_SYSTEM=x86_64-linux
 
 WORKDIR /src
 COPY flake.nix ./
-COPY nix ./nix
-COPY workflows ./workflows
+COPY workflow.lock.json ./
+COPY tools ./tools
+COPY libraries ./libraries
 
 RUN --mount=type=cache,target=/root/.cache/nix \
     nix --extra-experimental-features 'nix-command flakes' \

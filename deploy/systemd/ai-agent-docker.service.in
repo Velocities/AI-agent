@@ -15,7 +15,7 @@ User=@BROKER_USER@
 Group=@SERVICE_GROUP@
 SupplementaryGroups=docker
 WorkingDirectory=@WORKING_DIRECTORY@
-ExecStart=@BROKER_BIN@ --socket /run/ai-agent/docker.sock --api-user @SERVICE_USER@ --workflow-image-root @WORKING_DIRECTORY@/workflow_image
+ExecStart=@BROKER_BIN@ --socket /run/ai-agent/docker.sock --api-user @SERVICE_USER@ --workflow-image-root @CATALOG_ROOT@
 StateDirectory=ai-docker
 StateDirectoryMode=0750
 Environment=HOME=/var/lib/ai-docker

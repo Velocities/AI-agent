@@ -2,6 +2,9 @@
 # Install the ai-agent systemd unit for this checkout.
 # Usage: sudo deploy/systemd/install.sh
 # Optional: AI_AGENT_SERVICE_USER=ai (default). The user is created if missing.
+#
+# Python steps live in the sibling files (ensure_env.py, render_unit.py,
+# read_env.py, docker_daemon_userns.py). This script is the order of work.
 
 set -euo pipefail
 
@@ -10,6 +13,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+# Checkout that this unit will run. The script lives in deploy/systemd/.
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "${script_dir}/../.." && pwd)
 venv="${root}/.venv"
@@ -17,6 +21,8 @@ exec_start="${venv}/bin/ai-agent"
 template="${script_dir}/ai-agent.service.in"
 dest=/etc/systemd/system/ai-agent.service
 service_user="${AI_AGENT_SERVICE_USER:-ai}"
+# Definitions the API loads. Not the git checkout.
+catalog_root=/var/lib/ai-agent/catalog
 
 if [[ ! -x "${exec_start}" ]]; then
   echo "Missing ${exec_start}." >&2
@@ -24,6 +30,7 @@ if [[ ! -x "${exec_start}" ]]; then
   exit 1
 fi
 
+# System account that runs the API. Home is the state directory, not a login.
 if ! id -u "${service_user}" >/dev/null 2>&1; then
   shell_path=/usr/sbin/nologin
   if [[ ! -x "${shell_path}" ]]; then
@@ -39,6 +46,7 @@ if ! id -u "${service_user}" >/dev/null 2>&1; then
 fi
 
 service_group=$(id -gn "${service_user}")
+# 2770: the admin group can use the database, and new files stay in that group.
 install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
 install -d -o "${service_user}" -g "${service_group}" -m 0750 /tmp/ai-agent
 
@@ -46,8 +54,8 @@ can_run_exec() {
   runuser -u "${service_user}" -- test -x "${exec_start}"
 }
 
-# Typical failure: checkout under ~/… while the login home directory is 750 (drwxr-x---).
-# Others cannot traverse; grant the service user execute-only ACL on blocking parents.
+# A checkout under a 750 home directory is not traversable by the service user.
+# Grant execute-only on each blocking parent. AI_AGENT_SKIP_ACL=1 refuses instead.
 ensure_traversal_to_checkout() {
   local dir="${root}"
   local fixed=false
@@ -89,6 +97,7 @@ if ! can_run_exec; then
   fi
 fi
 
+# The process reads .env from the checkout. Group-read is enough for the service user.
 if [[ ! -f "${root}/.env" ]]; then
   echo "warning: ${root}/.env does not exist. Copy .env.example and edit it before starting." >&2
 elif ! runuser -u "${service_user}" -- test -r "${root}/.env"; then
@@ -106,7 +115,7 @@ elif ! runuser -u "${service_user}" -- test -r "${root}/.env"; then
   fi
 fi
 
-# Shared by the service account and the admin group. StateDirectory creates it.
+# One database for the service and for `ai-agent config` run by an admin.
 shared_db="/var/lib/ai-agent/conversations.db"
 shared_db_url="sqlite:///${shared_db}"
 if [[ -f "${shared_db}" ]]; then
@@ -120,84 +129,25 @@ if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "${service_user}" ]]; then
   fi
 fi
 if [[ -f "${root}/.env" ]]; then
-  python3 - "${root}/.env" "${shared_db_url}" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-env_path = Path(sys.argv[1])
-shared_url = sys.argv[2]
-text = env_path.read_text()
-if re.search(r"^CONVERSATION_DATABASE=\S", text, re.MULTILINE):
-    sys.exit(0)
-if re.search(r"^CONVERSATION_DATABASE=\s*$", text, re.MULTILINE):
-    text = re.sub(
-        r"^CONVERSATION_DATABASE=\s*$",
-        f"CONVERSATION_DATABASE={shared_url}",
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-else:
-    if not text.endswith("\n"):
-        text += "\n"
-    text += (
-        "\n# Shared by systemd (user ai) and admin CLI — do not use per-login paths.\n"
-        f"CONVERSATION_DATABASE={shared_url}\n"
-    )
-env_path.write_text(text)
-print(f"Set CONVERSATION_DATABASE in {env_path} to the shared deployment database.")
-PY
+  python3 "${script_dir}/ensure_env.py" "${root}/.env" "${shared_db_url}" "${catalog_root}"
   chgrp "${service_group}" "${root}/.env" 2>/dev/null || true
   chmod 640 "${root}/.env" 2>/dev/null || true
 else
   echo "warning: add to .env when created: CONVERSATION_DATABASE=${shared_db_url}" >&2
+  echo "warning: add to .env when created: WORKFLOW_CATALOG_ROOT=${catalog_root}" >&2
 fi
 
-python3 - \
+# API unit. It is written here and started only when the operator enables it.
+python3 "${script_dir}/render_unit.py" \
   "${template}" \
   "${dest}" \
-  "${service_user}" \
-  "${service_group}" \
-  "${root}" \
-  "${exec_start}" \
-  "${venv}/bin" <<'PY'
-import sys
-from pathlib import Path
+  "@SERVICE_USER@=${service_user}" \
+  "@SERVICE_GROUP@=${service_group}" \
+  "@WORKING_DIRECTORY@=${root}" \
+  "@EXEC_START@=${exec_start}" \
+  "@PATH@=${venv}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-(
-    template,
-    dest,
-    user,
-    group,
-    root,
-    exec_start,
-    venv_bin,
-) = sys.argv[1:]
-
-
-def escape(value: str) -> str:
-    return value.replace("%", "%%")
-
-
-path = (
-    f"{escape(venv_bin)}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-)
-text = Path(template).read_text()
-replacements = {
-    "@SERVICE_USER@": escape(user),
-    "@SERVICE_GROUP@": escape(group),
-    "@WORKING_DIRECTORY@": escape(root),
-    "@EXEC_START@": escape(exec_start),
-    "@PATH@": path,
-}
-for key, value in replacements.items():
-    if key not in text:
-        raise SystemExit(f"template is missing {key}")
-    text = text.replace(key, value)
-Path(dest).write_text(text)
-PY
-
+# Broker account, unit, and socket drop-in. The API user is not in the docker group.
 install_docker_broker() {
   local broker_user=ai-docker
   local broker_home=/var/lib/ai-docker
@@ -230,6 +180,7 @@ install_docker_broker() {
   fi
   install -d -o "${broker_user}" -g "${broker_user}" -m 0750 "${broker_home}"
   install -d -o "${broker_user}" -g "${broker_user}" -m 0750 "${broker_home}/.docker"
+  # Same group as the API so the broker can read staged build contexts.
   usermod -aG "${service_group}" "${broker_user}"
   local dir="${root}"
   while [[ "${dir}" != "/" ]]; do
@@ -241,40 +192,24 @@ install_docker_broker() {
     dir=$(dirname "${dir}")
   done
   install -d -o "${broker_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent/workflow-sleep
-  if ! runuser -u "${broker_user}" -- test -r "${root}/workflow_image/Dockerfile" 2>/dev/null; then
-    echo "warning: ${broker_user} cannot read ${root}/workflow_image/Dockerfile." >&2
-    echo "Workflow image builds need that tree to be readable by ${broker_user}." >&2
+  if ! runuser -u "${broker_user}" -- test -x "${catalog_root}" 2>/dev/null; then
+    echo "warning: ${broker_user} cannot read ${catalog_root}." >&2
+    echo "Workflow image builds stage a context under that catalog." >&2
   fi
-  python3 - \
+  if ! runuser -u "${service_user}" -- test -r "${root}/workflow_image/Dockerfile" 2>/dev/null; then
+    echo "warning: ${service_user} cannot read ${root}/workflow_image/Dockerfile." >&2
+    echo "The API copies that file into each staged workflow build." >&2
+  fi
+  python3 "${script_dir}/render_unit.py" \
     "${broker_template}" \
     "${broker_dest}" \
-    "${broker_user}" \
-    "${service_group}" \
-    "${service_user}" \
-    "${root}" \
-    "${broker_bin}" <<'PY'
-import sys
-from pathlib import Path
-
-template, dest, user, group, api_user, root, broker_bin = sys.argv[1:]
-
-def escape(value: str) -> str:
-    return value.replace("%", "%%")
-
-text = Path(template).read_text()
-replacements = {
-    "@BROKER_USER@": escape(user),
-    "@SERVICE_GROUP@": escape(group),
-    "@SERVICE_USER@": escape(api_user),
-    "@WORKING_DIRECTORY@": escape(root),
-    "@BROKER_BIN@": escape(broker_bin),
-}
-for key, value in replacements.items():
-    if key not in text:
-        raise SystemExit(f"broker template is missing {key}")
-    text = text.replace(key, value)
-Path(dest).write_text(text)
-PY
+    "@BROKER_USER@=${broker_user}" \
+    "@SERVICE_GROUP@=${service_group}" \
+    "@SERVICE_USER@=${service_user}" \
+    "@WORKING_DIRECTORY@=${root}" \
+    "@BROKER_BIN@=${broker_bin}" \
+    "@CATALOG_ROOT@=${catalog_root}"
+  # The API reaches Docker only through this socket.
   install -d /etc/systemd/system/ai-agent.service.d
   cat > /etc/systemd/system/ai-agent.service.d/docker-broker.conf <<EOF
 [Unit]
@@ -293,6 +228,8 @@ EOF
   fi
 }
 
+# Root inside a workflow container must not be root on the host.
+# Skip the dockerd restart when other containers are running.
 configure_docker_userns() {
   local pending=/var/lib/ai-agent/docker-userns.pending
   if docker info --format '{{range .SecurityOptions}}{{.}} {{end}}' 2>/dev/null | grep -q userns; then
@@ -317,34 +254,12 @@ configure_docker_userns() {
   if ! grep -q '^dockremap:' /etc/subgid 2>/dev/null; then
     echo 'dockremap:100000:65536' >> /etc/subgid
   fi
-  if ! python3 - <<'PY'
-import json
-from pathlib import Path
-
-path = Path("/etc/docker/daemon.json")
-data = {}
-if path.exists() and path.read_text().strip():
-    data = json.loads(path.read_text())
-current = data.get("userns-remap")
-if current not in (None, "default"):
-    raise SystemExit(f"leave-userns:{current}")
-data["userns-remap"] = "default"
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
-  then
+  if ! python3 "${script_dir}/docker_daemon_userns.py" enable; then
     echo "warning: left Docker's userns-remap setting unchanged." >&2
     return 0
   fi
   if ! systemctl restart docker; then
-    python3 - <<'PY'
-import json
-from pathlib import Path
-path = Path("/etc/docker/daemon.json")
-data = json.loads(path.read_text())
-data.pop("userns-remap", None)
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
+    python3 "${script_dir}/docker_daemon_userns.py" revert
     systemctl restart docker || true
     echo "userns-remap could not be enabled; dockerd was restored." > "${pending}"
     echo "warning: could not enable userns-remap. Workflow containers will not start until it is on." >&2
@@ -354,8 +269,59 @@ PY
   echo "Enabled Docker userns-remap so root inside a workflow container is not root on the host."
 }
 
-# Workflow images are built with BuildKit. docker-buildx depends on docker.io,
-# so this also installs the engine when the machine does not have it yet.
+# First install copies the checkout catalog, or clones WORKFLOW_CATALOG_URL.
+# A catalog that already has workflows is left in place.
+install_workflow_catalog() {
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 "${catalog_root}"
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 "${catalog_root}/.build"
+  if [[ -d "${catalog_root}/workflows" ]] && [[ -n "$(ls -A "${catalog_root}/workflows" 2>/dev/null || true)" ]]; then
+    echo "Workflow catalog already present at ${catalog_root}."
+    return 0
+  fi
+  local url=""
+  if [[ -f "${root}/.env" ]]; then
+    url=$(python3 "${script_dir}/read_env.py" "${root}/.env" WORKFLOW_CATALOG_URL)
+  fi
+  if [[ -n "${url}" ]] && command -v git >/dev/null 2>&1; then
+    local tmp
+    tmp=$(mktemp -d)
+    if git clone "${url}" "${tmp}/catalog"; then
+      local name
+      for name in tools libraries workflows; do
+        if [[ -d "${tmp}/catalog/${name}" ]]; then
+          rm -rf "${catalog_root}/${name}"
+          cp -a "${tmp}/catalog/${name}" "${catalog_root}/${name}"
+        fi
+      done
+      if [[ -d "${tmp}/catalog/.git" ]]; then
+        rm -rf "${catalog_root}/.git"
+        cp -a "${tmp}/catalog/.git" "${catalog_root}/.git"
+      fi
+      rm -rf "${tmp}"
+      chown -R "${service_user}:${service_group}" "${catalog_root}"
+      echo "Cloned the workflow catalog into ${catalog_root}."
+      return 0
+    fi
+    rm -rf "${tmp}"
+    echo "warning: could not clone the workflow catalog. Seeding it from this checkout." >&2
+  fi
+  local name
+  for name in tools libraries workflows; do
+    if [[ ! -d "${root}/workflow_image/${name}" ]]; then
+      echo "warning: ${root}/workflow_image/${name} is missing." >&2
+      continue
+    fi
+    rm -rf "${catalog_root}/${name}"
+    cp -a "${root}/workflow_image/${name}" "${catalog_root}/${name}"
+  done
+  chown -R "${service_user}:${service_group}" "${catalog_root}"
+  echo "Seeded the workflow catalog at ${catalog_root} from this checkout."
+}
+
+install_workflow_catalog
+
+# BuildKit builds workflow images. The docker-buildx package also installs the engine.
 if ! command -v docker >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
   echo "Installing docker-buildx. Workflow image builds use BuildKit."
   if ! apt-get update || ! apt-get install -y docker-buildx; then
@@ -380,6 +346,9 @@ cat <<EOF
 Installed ${dest}
 Service user: ${service_user}
 Working directory: ${root}
+Workflow catalog: ${catalog_root}
+Pull catalog updates with: ai-agent catalog pull
+Force a 1.0.0 line you are still testing with: ai-agent catalog pull --force
 Local commands run as each approved user's UID/GID (setpriv).
 The unit does not remount the filesystem.
 Workflow image builds use BuildKit. The installer installs the docker-buildx

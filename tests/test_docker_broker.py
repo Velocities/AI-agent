@@ -342,12 +342,22 @@ def test_run_guard_refuses_containers_when_dockerd_does_not_remap(tmp_path: Path
     assert broker.invoke(inspect, timeout=5).returncode == 0
 
 
-def test_workflow_build_context_is_the_workflow_image_tree() -> None:
+def test_workflow_build_context_is_the_staged_closure() -> None:
     root = default_workflow_image_root()
     manifest = load_workflow(root, "text-lab")
     argv = docker_build_argv(manifest, workflow_image_root=root, nix_system="x86_64-linux")
     assert argv[:4] == ["docker", "buildx", "build", "--load"]
     assert authorize(argv, workflow_image_root=root) == argv
+    context = Path(argv[-1])
+    assert context.parent == (root / ".build").resolve()
+    assert (context / "tools" / "count-lines" / "1.0.0" / "count_lines.py").is_file()
+    assert "textkit" not in (context / "workflow.lock.json").read_text(encoding="utf-8")
+    lines_libs = (context / "tools" / "count-lines" / "1.0.0" / "libraries.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"textkit"' in lines_libs
+    assert not (context / "tools" / "fetch-pages").exists()
+    assert (context / "libraries" / "textkit" / "1.0.0" / "textkit.py").is_file()
     tag = image_tag(manifest, root)
     assert authorize(docker_image_inspect_argv(tag))[-1] == tag
     with pytest.raises(BrokerRejected):
