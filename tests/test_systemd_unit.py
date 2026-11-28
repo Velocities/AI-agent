@@ -25,6 +25,14 @@ def test_installer_seeds_catalog_outside_the_checkout() -> None:
     assert "workflow_image" not in broker
 
 
+def test_installer_calls_helper_scripts_instead_of_inline_python() -> None:
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "<<'PY'" not in text
+    for name in ("ensure_env.py", "render_unit.py", "read_env.py", "docker_daemon_userns.py"):
+        assert name in text
+        assert (INSTALL.parent / name).is_file()
+
+
 def test_installer_does_not_select_protect_home() -> None:
     text = INSTALL.read_text(encoding="utf-8")
     assert "protect_home" not in text
