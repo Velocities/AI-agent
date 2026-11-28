@@ -12,6 +12,6 @@ parameters:
     description: Short name for this session. Stored in /work/session.json when the container starts.
 tools:
   - name: count-lines
-    version: 0.1.0
+    version: 1.0.0
   - name: count-words
-    version: 0.1.0
+    version: 1.0.0

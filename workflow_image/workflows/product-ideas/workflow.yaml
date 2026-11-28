@@ -28,4 +28,4 @@ initial_prompt: |
   Then recommend 3 ideas. For each one, name the repeated problem, who has it, the product shape that fits their answers, and the URLs that showed the pattern. Say when a pattern showed up only once. Do not invent quotes or pages you did not fetch.
 tools:
   - name: fetch-pages
-    version: 0.1.0
+    version: 1.0.0

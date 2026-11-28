@@ -1,7 +1,12 @@
 apiVersion: ai-agent.tool/v1
 name: count-words
-version: 0.1.0
+version: 1.0.0
 description: Count words, and words longer than three characters, in a text string.
+libraries:
+  - name: textkit
+    version: 1.0.0
+  - name: wordnotes
+    version: 1.0.0
 nix:
   attr: count-words
 entrypoint: count-words

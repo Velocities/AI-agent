@@ -7,7 +7,7 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     if not args:
         print(
-            "usage: ai-agent {serve|config|apk|host-setup|start|stop|restart|status}\n"
+            "usage: ai-agent {serve|config|apk|host-setup|catalog|start|stop|restart|status}\n"
             "\n"
             "Server operator commands for this deployment.\n"
             "Terminal chat: ai-agent-chat  (or ai-agent-chat --local for loopback mode)",
@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
         from ai_agent.cli.host_setup import main as host_setup_main
 
         return host_setup_main(args[1:])
+    if args[0] == "catalog":
+        from ai_agent.cli.catalog_cmd import main as catalog_main
+
+        return catalog_main(args[1:])
     print(
         f"unknown command: {args[0]}\n"
         "Chat client: ai-agent-chat",

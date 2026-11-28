@@ -1,6 +1,6 @@
 apiVersion: ai-agent.tool/v1
 name: fetch-pages
-version: 0.1.0
+version: 1.0.0
 description: >
   Fetch up to 16 public http(s) URLs in one call and return readable text.
   Up to 8 requests run at once, with at most 4 to the same host. HTML is

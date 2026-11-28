@@ -17,6 +17,7 @@ exec_start="${venv}/bin/ai-agent"
 template="${script_dir}/ai-agent.service.in"
 dest=/etc/systemd/system/ai-agent.service
 service_user="${AI_AGENT_SERVICE_USER:-ai}"
+catalog_root=/var/lib/ai-agent/catalog
 
 if [[ ! -x "${exec_start}" ]]; then
   echo "Missing ${exec_start}." >&2
@@ -120,38 +121,48 @@ if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "${service_user}" ]]; then
   fi
 fi
 if [[ -f "${root}/.env" ]]; then
-  python3 - "${root}/.env" "${shared_db_url}" <<'PY'
+  python3 - "${root}/.env" "${shared_db_url}" "${catalog_root}" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 env_path = Path(sys.argv[1])
 shared_url = sys.argv[2]
+catalog = sys.argv[3]
 text = env_path.read_text()
-if re.search(r"^CONVERSATION_DATABASE=\S", text, re.MULTILINE):
-    sys.exit(0)
-if re.search(r"^CONVERSATION_DATABASE=\s*$", text, re.MULTILINE):
-    text = re.sub(
-        r"^CONVERSATION_DATABASE=\s*$",
-        f"CONVERSATION_DATABASE={shared_url}",
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-else:
+changed = False
+if not re.search(r"^CONVERSATION_DATABASE=\S", text, re.MULTILINE):
+    if re.search(r"^CONVERSATION_DATABASE=\s*$", text, re.MULTILINE):
+        text = re.sub(
+            r"^CONVERSATION_DATABASE=\s*$",
+            f"CONVERSATION_DATABASE={shared_url}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += (
+            "\n# Shared by systemd (user ai) and admin CLI — do not use per-login paths.\n"
+            f"CONVERSATION_DATABASE={shared_url}\n"
+        )
+    changed = True
+    print(f"Set CONVERSATION_DATABASE in {env_path} to the shared deployment database.")
+if not re.search(r"^WORKFLOW_CATALOG_ROOT=\S", text, re.MULTILINE):
     if not text.endswith("\n"):
         text += "\n"
-    text += (
-        "\n# Shared by systemd (user ai) and admin CLI — do not use per-login paths.\n"
-        f"CONVERSATION_DATABASE={shared_url}\n"
-    )
-env_path.write_text(text)
-print(f"Set CONVERSATION_DATABASE in {env_path} to the shared deployment database.")
+    text += f"WORKFLOW_CATALOG_ROOT={catalog}\n"
+    changed = True
+    print(f"Set WORKFLOW_CATALOG_ROOT in {env_path} to {catalog}.")
+if changed:
+    env_path.write_text(text)
 PY
   chgrp "${service_group}" "${root}/.env" 2>/dev/null || true
   chmod 640 "${root}/.env" 2>/dev/null || true
 else
   echo "warning: add to .env when created: CONVERSATION_DATABASE=${shared_db_url}" >&2
+  echo "warning: add to .env when created: WORKFLOW_CATALOG_ROOT=${catalog_root}" >&2
 fi
 
 python3 - \
@@ -241,9 +252,13 @@ install_docker_broker() {
     dir=$(dirname "${dir}")
   done
   install -d -o "${broker_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent/workflow-sleep
-  if ! runuser -u "${broker_user}" -- test -r "${root}/workflow_image/Dockerfile" 2>/dev/null; then
-    echo "warning: ${broker_user} cannot read ${root}/workflow_image/Dockerfile." >&2
-    echo "Workflow image builds need that tree to be readable by ${broker_user}." >&2
+  if ! runuser -u "${broker_user}" -- test -x "${catalog_root}" 2>/dev/null; then
+    echo "warning: ${broker_user} cannot read ${catalog_root}." >&2
+    echo "Workflow image builds stage a context under that catalog." >&2
+  fi
+  if ! runuser -u "${service_user}" -- test -r "${root}/workflow_image/Dockerfile" 2>/dev/null; then
+    echo "warning: ${service_user} cannot read ${root}/workflow_image/Dockerfile." >&2
+    echo "The API copies that file into each staged workflow build." >&2
   fi
   python3 - \
     "${broker_template}" \
@@ -252,11 +267,12 @@ install_docker_broker() {
     "${service_group}" \
     "${service_user}" \
     "${root}" \
-    "${broker_bin}" <<'PY'
+    "${broker_bin}" \
+    "${catalog_root}" <<'PY'
 import sys
 from pathlib import Path
 
-template, dest, user, group, api_user, root, broker_bin = sys.argv[1:]
+template, dest, user, group, api_user, root, broker_bin, catalog_root = sys.argv[1:]
 
 def escape(value: str) -> str:
     return value.replace("%", "%%")
@@ -268,6 +284,7 @@ replacements = {
     "@SERVICE_USER@": escape(api_user),
     "@WORKING_DIRECTORY@": escape(root),
     "@BROKER_BIN@": escape(broker_bin),
+    "@CATALOG_ROOT@": escape(catalog_root),
 }
 for key, value in replacements.items():
     if key not in text:
@@ -354,6 +371,69 @@ PY
   echo "Enabled Docker userns-remap so root inside a workflow container is not root on the host."
 }
 
+install_workflow_catalog() {
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 "${catalog_root}"
+  install -d -o "${service_user}" -g "${service_group}" -m 2770 "${catalog_root}/.build"
+  if [[ -d "${catalog_root}/workflows" ]] && [[ -n "$(ls -A "${catalog_root}/workflows" 2>/dev/null || true)" ]]; then
+    echo "Workflow catalog already present at ${catalog_root}."
+    return 0
+  fi
+  local url=""
+  if [[ -f "${root}/.env" ]]; then
+    url=$(python3 - "${root}/.env" <<'PY'
+import sys
+from pathlib import Path
+url = ""
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        continue
+    key, value = stripped.split("=", 1)
+    if key.strip() == "WORKFLOW_CATALOG_URL":
+        url = value.strip().strip('"').strip("'")
+print(url)
+PY
+)
+  fi
+  if [[ -n "${url}" ]] && command -v git >/dev/null 2>&1; then
+    local tmp
+    tmp=$(mktemp -d)
+    if git clone "${url}" "${tmp}/catalog"; then
+      local name
+      for name in tools libraries workflows; do
+        if [[ -d "${tmp}/catalog/${name}" ]]; then
+          rm -rf "${catalog_root}/${name}"
+          cp -a "${tmp}/catalog/${name}" "${catalog_root}/${name}"
+        fi
+      done
+      if [[ -d "${tmp}/catalog/.git" ]]; then
+        rm -rf "${catalog_root}/.git"
+        cp -a "${tmp}/catalog/.git" "${catalog_root}/.git"
+      fi
+      rm -rf "${tmp}"
+      chown -R "${service_user}:${service_group}" "${catalog_root}"
+      echo "Cloned the workflow catalog into ${catalog_root}."
+      return 0
+    fi
+    rm -rf "${tmp}"
+    echo "warning: could not clone the workflow catalog. Seeding it from this checkout." >&2
+  fi
+  local name
+  for name in tools libraries workflows; do
+    if [[ ! -d "${root}/workflow_image/${name}" ]]; then
+      echo "warning: ${root}/workflow_image/${name} is missing." >&2
+      continue
+    fi
+    rm -rf "${catalog_root}/${name}"
+    cp -a "${root}/workflow_image/${name}" "${catalog_root}/${name}"
+  done
+  chown -R "${service_user}:${service_group}" "${catalog_root}"
+  echo "Seeded the workflow catalog at ${catalog_root} from this checkout."
+}
+
+install_workflow_catalog
+
 # Workflow images are built with BuildKit. docker-buildx depends on docker.io,
 # so this also installs the engine when the machine does not have it yet.
 if ! command -v docker >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
@@ -380,6 +460,9 @@ cat <<EOF
 Installed ${dest}
 Service user: ${service_user}
 Working directory: ${root}
+Workflow catalog: ${catalog_root}
+Pull catalog updates with: ai-agent catalog pull
+Force a 1.0.0 line you are still testing with: ai-agent catalog pull --force
 Local commands run as each approved user's UID/GID (setpriv).
 The unit does not remount the filesystem.
 Workflow image builds use BuildKit. The installer installs the docker-buildx

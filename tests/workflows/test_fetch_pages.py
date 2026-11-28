@@ -12,10 +12,9 @@ from ai_agent.workflows.manifests import default_workflow_image_root, load_workf
 _TOOL = (
     Path(__file__).resolve().parents[2]
     / "workflow_image"
-    / "workflows"
-    / "product-ideas"
     / "tools"
     / "fetch-pages"
+    / "1.0.0"
     / "fetch_pages.py"
 )
 

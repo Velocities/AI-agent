@@ -348,6 +348,23 @@ class Settings(BaseSettings):
             "Leave false until a deployment needs it."
         ),
     )
+    workflow_catalog_root: str = Field(
+        default="",
+        alias="WORKFLOW_CATALOG_ROOT",
+        description=(
+            "Directory of tools/, libraries/, and workflows/. "
+            "Empty uses workflow_image in this checkout. "
+            "The systemd installer sets /var/lib/ai-agent/catalog."
+        ),
+    )
+    workflow_catalog_url: str = Field(
+        default="",
+        alias="WORKFLOW_CATALOG_URL",
+        description=(
+            "Git repository whose root contains tools/, libraries/, and workflows/. "
+            "ai-agent catalog pull fetches it."
+        ),
+    )
     speech_stt_model: str = Field(
         default="",
         alias="SPEECH_STT_MODEL",

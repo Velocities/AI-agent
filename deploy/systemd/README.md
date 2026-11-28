@@ -59,8 +59,11 @@ The script:
 
 - creates a system user named `ai` if that user does not exist (home `/var/lib/ai-agent`, no login shell)
 - creates `/tmp/ai-agent` for the scratch directory
-- writes `/etc/systemd/system/ai-agent.service` for this checkout and this virtualenv
+- creates `/var/lib/ai-agent/catalog` and seeds it from `WORKFLOW_CATALOG_URL` or from this checkout when that directory has no workflows yet
+- writes `/etc/systemd/system/ai-agent.service` for this checkout and this virtualenv, and sets `WORKFLOW_CATALOG_ROOT=/var/lib/ai-agent/catalog` in `.env` when that line is missing
 - runs `systemctl daemon-reload`
+
+The running server reads definitions from `/var/lib/ai-agent/catalog`, not from the checkout. `ai-agent catalog pull` updates that directory. `ai-agent catalog pull --force` replaces tracked files you are still editing on a `1.0.0` line. Untracked files stay. Pull does not rebuild images or restart containers.
 
 It does not start or enable the service. Re-run it after you move the checkout or recreate `.venv`.
 
