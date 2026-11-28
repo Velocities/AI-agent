@@ -17,7 +17,7 @@ catalog/
   workflows/text-lab/
 ```
 
-Development uses `workflow_image/` in this checkout as the catalog, which is why the engine files sit beside the definitions there. An installed server uses `/var/lib/ai-agent/catalog` and does not read the checkout for definitions.
+`WORKFLOW_CATALOG_ROOT` is the directory the API and the tests read. An installed server uses `/var/lib/ai-agent/catalog`. This repository does not contain the definitions.
 
 A workflow names tools:
 
@@ -45,7 +45,7 @@ The Docker context for a build is a staged directory, `<catalog>/.build/<workflo
 
 `deploy/systemd/install.sh` creates `/var/lib/ai-agent/catalog` and `.build` under it, group-writable by the `ai` group so the API user can stage builds and the broker user can read them. The installer writes `WORKFLOW_CATALOG_ROOT=/var/lib/ai-agent/catalog` into `.env` when that line is missing. The API reads `.env`. The broker unit gets the same path as `--workflow-image-root`. `ai-agent catalog pull` from the checkout uses the `.env` value, so it updates the installed catalog.
 
-On an empty catalog the installer clones `WORKFLOW_CATALOG_URL` when that variable is set and `git` is available. Otherwise it copies `tools/`, `libraries/`, and `workflows/` from this checkout. A catalog that already has workflows is left alone.
+On an empty catalog the installer clones `WORKFLOW_CATALOG_URL`. A catalog that already has workflows is left alone.
 
 ## Pull
 

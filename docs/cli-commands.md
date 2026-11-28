@@ -24,7 +24,7 @@ Two other programs are installed beside them: [ai-agent-llm](#ai-agent-llm) and 
 | `ai-agent host-setup` | Install the laptop SSH key on a GPU machine. |
 | `ai-agent catalog pull` | Fetch workflow, tool, and library definitions. |
 | `ai-agent catalog pull --force` | Replace local edits to tracked catalog files with upstream. |
-| `ai-agent catalog create-tool <name>` | Scaffold `workflow_image/tools/<name>/1.0.0` for a new tool. |
+| `ai-agent catalog create-tool <name>` | Scaffold `tools/<name>/1.0.0` in the catalog root. |
 
 `ai-agent apk` and `ai-agent config` print help when you give them no further arguments. `start`, `stop`, `restart`, `status`, and `serve` run as soon as you type them.
 

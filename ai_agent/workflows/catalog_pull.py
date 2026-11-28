@@ -147,8 +147,14 @@ def _git(
     catalog: Path | None,
     *args: str,
 ) -> subprocess.CompletedProcess[str]:
+    command = ["git", *args]
+    if catalog is not None:
+        # The installer owns this directory as the service user. Pull runs as
+        # the admin, and Git refuses that mismatch unless this invocation
+        # names the directory.
+        command = ["git", "-c", f"safe.directory={catalog.resolve()}", *args]
     return subprocess.run(
-        ["git", *args],
+        command,
         cwd=catalog,
         check=False,
         capture_output=True,

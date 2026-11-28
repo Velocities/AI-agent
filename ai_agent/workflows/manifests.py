@@ -134,16 +134,18 @@ def workflow_engine_root() -> Path:
 def default_catalog_root() -> Path:
     """Definitions tree: tools/, libraries/, and workflows/.
 
-    ``WORKFLOW_CATALOG_ROOT`` selects the installed catalog. An empty value
-    uses ``workflow_image`` in this checkout, which is also where the engine
-    files live during development.
+    ``WORKFLOW_CATALOG_ROOT`` is that directory. The engine Dockerfile and
+    flake stay in this checkout and are not part of the catalog.
     """
     from ai_agent.config import Settings
 
     configured = Settings().workflow_catalog_root.strip()
-    if configured:
-        return Path(configured)
-    return workflow_engine_root()
+    if not configured:
+        raise WorkflowError(
+            "WORKFLOW_CATALOG_ROOT is not set. "
+            "Point it at a checkout of the workflow catalog."
+        )
+    return Path(configured)
 
 
 def default_workflow_image_root() -> Path:

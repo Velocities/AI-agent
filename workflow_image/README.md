@@ -1,8 +1,9 @@
 # Workflow image definitions
 
-This directory (`workflow_image/`) holds the engine Dockerfile and Nix flake,
-plus the development catalog of tools, libraries, and workflows. A build
-context is a staged directory for one workflow, not this whole tree.
+This directory (`workflow_image/`) holds the engine Dockerfile and Nix flake.
+Tool, library, and workflow definitions live in the catalog checkout named by
+`WORKFLOW_CATALOG_ROOT`. A build context is a staged directory for one
+workflow, not this whole tree.
 It is not the same thing as the SSH key sandbox under `.ai-agent/ssh/`.
 
 One generic image build, one container per workflow session. Tools are Nix
@@ -12,17 +13,12 @@ layer.
 ## Layout
 
 Tools and libraries are not stored inside a workflow. A workflow pins versions.
-During development this directory is also the catalog. An installed server
-uses `/var/lib/ai-agent/catalog` instead. See
+Those files are in the catalog, not in this directory. See
 [`docs/workflow-catalog.md`](../docs/workflow-catalog.md).
 
 ```text
 Dockerfile                         engine file, copied into each staged build
 flake.nix                          builds one staged workflow.lock.json
-tools/<tool>/<version>/            tool.yaml, default.nix, source
-libraries/<library>/<version>/     one Python module, installed once per image
-workflows/<name>/workflow.yaml     name, version, prompt, parameters, tool pins
-workflows/<name>/workflow.lock.json
 ```
 
 `workflow.yaml` is the authoring file. `workflow.lock.json` is what Nix
@@ -127,7 +123,7 @@ from ai_agent.agent.factory import build_agent
 from ai_agent.workflows.session import bind_workflow
 
 session = bind_workflow(
-    Path("workflow_image"),
+    Path("/var/lib/ai-agent/catalog"),
     "text-lab",
     linux_username="alice",
     container_name="text-lab-demo",

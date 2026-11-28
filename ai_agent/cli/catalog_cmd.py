@@ -7,7 +7,7 @@ import sys
 from ai_agent.config import Settings
 from ai_agent.workflows.catalog_pull import CatalogPullError, pull_catalog
 from ai_agent.workflows.create_tool import CreateToolError, create_tool
-from ai_agent.workflows.manifests import default_catalog_root, workflow_engine_root
+from ai_agent.workflows.manifests import default_catalog_root
 
 _USAGE = "usage: ai-agent catalog pull [--force]\n   or: ai-agent catalog create-tool <name>"
 
@@ -46,15 +46,8 @@ def _create_tool(argv: list[str]) -> int:
         print(_USAGE, file=sys.stderr)
         return 2
     name = argv[0]
-    checkout = workflow_engine_root()
-    installed = default_catalog_root()
-    if installed.resolve() != checkout.resolve():
-        other = installed / "tools" / name.strip()
-        if other.exists():
-            print(f"A tool named {name.strip()} already exists at {other}.", file=sys.stderr)
-            return 1
     try:
-        version_dir = create_tool(checkout, name)
+        version_dir = create_tool(default_catalog_root(), name)
     except CreateToolError as exc:
         print(str(exc), file=sys.stderr)
         return 1

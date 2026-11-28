@@ -37,10 +37,6 @@ def test_create_tool_refuses_a_bad_name(tmp_path: Path) -> None:
 
 def test_create_tool_command_prints_the_directory(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(
-        "ai_agent.cli.catalog_cmd.workflow_engine_root",
-        lambda: tmp_path,
-    )
-    monkeypatch.setattr(
         "ai_agent.cli.catalog_cmd.default_catalog_root",
         lambda: tmp_path,
     )

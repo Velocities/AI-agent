@@ -55,20 +55,21 @@ def test_stage_copies_only_the_pinned_closure(tmp_path: Path) -> None:
 
 
 def test_fingerprint_ignores_tools_this_workflow_does_not_pin(tmp_path: Path) -> None:
-    source = workflow_engine_root()
+    catalog = default_catalog_root()
+    engine = workflow_engine_root()
     copy = tmp_path / "catalog"
-    shutil.copytree(source, copy, ignore=shutil.ignore_patterns(".build"))
-    original = closure_fingerprint(load_workflow(source, "text-lab"), engine_root=source)
+    shutil.copytree(catalog, copy, ignore=shutil.ignore_patterns(".build", ".git"))
+    original = closure_fingerprint(load_workflow(catalog, "text-lab"), engine_root=engine)
     page = copy / "tools" / "fetch-pages" / "1.0.0" / "fetch_pages.py"
     page.write_text(page.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
     assert (
-        closure_fingerprint(load_workflow(copy, "text-lab"), engine_root=source)
+        closure_fingerprint(load_workflow(copy, "text-lab"), engine_root=engine)
         == original
     )
     notes = copy / "libraries" / "wordnotes" / "1.0.0" / "wordnotes.py"
     notes.write_text(notes.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
     assert (
-        closure_fingerprint(load_workflow(copy, "text-lab"), engine_root=source)
+        closure_fingerprint(load_workflow(copy, "text-lab"), engine_root=engine)
         != original
     )
 

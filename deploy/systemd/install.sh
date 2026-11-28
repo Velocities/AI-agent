@@ -269,7 +269,7 @@ configure_docker_userns() {
   echo "Enabled Docker userns-remap so root inside a workflow container is not root on the host."
 }
 
-# First install copies the checkout catalog, or clones WORKFLOW_CATALOG_URL.
+# First install clones WORKFLOW_CATALOG_URL. Definitions are not in this checkout.
 # A catalog that already has workflows is left in place.
 install_workflow_catalog() {
   install -d -o "${service_user}" -g "${service_group}" -m 2770 /var/lib/ai-agent
@@ -283,40 +283,36 @@ install_workflow_catalog() {
   if [[ -f "${root}/.env" ]]; then
     url=$(python3 "${script_dir}/read_env.py" "${root}/.env" WORKFLOW_CATALOG_URL)
   fi
-  if [[ -n "${url}" ]] && command -v git >/dev/null 2>&1; then
-    local tmp
-    tmp=$(mktemp -d)
-    if git clone "${url}" "${tmp}/catalog"; then
-      local name
-      for name in tools libraries workflows; do
-        if [[ -d "${tmp}/catalog/${name}" ]]; then
-          rm -rf "${catalog_root}/${name}"
-          cp -a "${tmp}/catalog/${name}" "${catalog_root}/${name}"
-        fi
-      done
-      if [[ -d "${tmp}/catalog/.git" ]]; then
-        rm -rf "${catalog_root}/.git"
-        cp -a "${tmp}/catalog/.git" "${catalog_root}/.git"
+  if [[ -z "${url}" ]]; then
+    echo "warning: WORKFLOW_CATALOG_URL is unset, so ${catalog_root} has no workflows." >&2
+    echo "Set it to the catalog repository and re-run this installer." >&2
+    return 0
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "warning: git is not installed, so the workflow catalog was not cloned." >&2
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp -d)
+  if git clone "${url}" "${tmp}/catalog"; then
+    local name
+    for name in tools libraries workflows; do
+      if [[ -d "${tmp}/catalog/${name}" ]]; then
+        rm -rf "${catalog_root}/${name}"
+        cp -a "${tmp}/catalog/${name}" "${catalog_root}/${name}"
       fi
-      rm -rf "${tmp}"
-      chown -R "${service_user}:${service_group}" "${catalog_root}"
-      echo "Cloned the workflow catalog into ${catalog_root}."
-      return 0
+    done
+    if [[ -d "${tmp}/catalog/.git" ]]; then
+      rm -rf "${catalog_root}/.git"
+      cp -a "${tmp}/catalog/.git" "${catalog_root}/.git"
     fi
     rm -rf "${tmp}"
-    echo "warning: could not clone the workflow catalog. Seeding it from this checkout." >&2
+    chown -R "${service_user}:${service_group}" "${catalog_root}"
+    echo "Cloned the workflow catalog into ${catalog_root}."
+    return 0
   fi
-  local name
-  for name in tools libraries workflows; do
-    if [[ ! -d "${root}/workflow_image/${name}" ]]; then
-      echo "warning: ${root}/workflow_image/${name} is missing." >&2
-      continue
-    fi
-    rm -rf "${catalog_root}/${name}"
-    cp -a "${root}/workflow_image/${name}" "${catalog_root}/${name}"
-  done
-  chown -R "${service_user}:${service_group}" "${catalog_root}"
-  echo "Seeded the workflow catalog at ${catalog_root} from this checkout."
+  rm -rf "${tmp}"
+  echo "warning: could not clone the workflow catalog from WORKFLOW_CATALOG_URL." >&2
 }
 
 install_workflow_catalog

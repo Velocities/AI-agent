@@ -9,18 +9,13 @@ import pytest
 
 from ai_agent.workflows.manifests import default_workflow_image_root, load_workflow
 
-_TOOL = (
-    Path(__file__).resolve().parents[2]
-    / "workflow_image"
-    / "tools"
-    / "fetch-pages"
-    / "1.0.0"
-    / "fetch_pages.py"
-)
+def _tool_path() -> Path:
+    manifest = load_workflow(default_workflow_image_root(), "product-ideas")
+    return manifest.tool("fetch-pages").directory / "fetch_pages.py"
 
 
 def _tool():
-    spec = importlib.util.spec_from_file_location("fetch_pages_tool", _TOOL)
+    spec = importlib.util.spec_from_file_location("fetch_pages_tool", _tool_path())
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

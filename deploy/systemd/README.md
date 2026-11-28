@@ -59,7 +59,7 @@ The script:
 
 - creates a system user named `ai` if that user does not exist (home `/var/lib/ai-agent`, no login shell)
 - creates `/tmp/ai-agent` for the scratch directory
-- creates `/var/lib/ai-agent/catalog` and seeds it from `WORKFLOW_CATALOG_URL` or from this checkout when that directory has no workflows yet
+- creates `/var/lib/ai-agent/catalog` and clones `WORKFLOW_CATALOG_URL` when that directory has no workflows yet
 - writes `/etc/systemd/system/ai-agent.service` for this checkout and this virtualenv, and sets `WORKFLOW_CATALOG_ROOT=/var/lib/ai-agent/catalog` in `.env` when that line is missing
 - runs `systemctl daemon-reload`
 

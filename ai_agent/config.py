@@ -353,7 +353,6 @@ class Settings(BaseSettings):
         alias="WORKFLOW_CATALOG_ROOT",
         description=(
             "Directory of tools/, libraries/, and workflows/. "
-            "Empty uses workflow_image in this checkout. "
             "The systemd installer sets /var/lib/ai-agent/catalog."
         ),
     )
