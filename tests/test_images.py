@@ -38,7 +38,7 @@ from ai_agent.llm.server.engine.ollama import OllamaEngine
 from ai_agent.llm.server.engine.vllm import VLLMEngine
 from ai_agent.llm.vision import canonical_image_fields, ollama_message, openai_content
 from ai_agent.policy.engine import PolicyEngine
-from ai_agent_cli.api_client import AgentApiClient
+from ai_agent_client.api import AgentApiClient
 
 ALICE = "11111111-1111-4111-8111-111111111111"
 

@@ -1020,6 +1020,8 @@ ai_agent/
   llm/            # client/ (agent), server/ (ai-agent-llm), http/, SSH tunnel
   policy/         # Risk levels, policy engine, default_policy.yaml
 clients/cli/      # Terminal chat client (`ai_agent_cli`, entry `ai-agent-chat`)
+clients/python/   # HTTP client shared by the terminal and Discord clients (`ai_agent_client`)
+clients/discord/  # Discord bot (`ai_agent_discord`, entry `ai-agent-discord`)
 clients/android/  # Discord sign-in, then reads chats from ai-agent-serve
 deploy/cloudflared/  # Example Cloudflare Tunnel config for Path F
 deploy/systemd/   # Ubuntu service unit and installer (`ai-agent.service`)
@@ -1027,7 +1029,7 @@ supabase/         # SQL migrations (profiles only for now)
 tests/
 ```
 
-Chat client: [`clients/cli/README.md`](clients/cli/README.md). Commands reference: [`docs/cli-commands.md`](docs/cli-commands.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
+Chat client: [`clients/cli/README.md`](clients/cli/README.md). Commands reference: [`docs/cli-commands.md`](docs/cli-commands.md). Discord bot: [`clients/discord/README.md`](clients/discord/README.md). Android client (Discord sign-in, Supabase session + `profiles`): see [`clients/android/README.md`](clients/android/README.md).
 
 ---
 

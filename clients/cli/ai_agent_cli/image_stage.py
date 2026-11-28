@@ -16,7 +16,7 @@ from ai_agent_cli.images import (
     maybe_strip_for_transit,
     validate_image_bytes,
 )
-from ai_agent_cli.types import ImageInput
+from ai_agent_client.types import ImageInput
 
 
 @dataclass

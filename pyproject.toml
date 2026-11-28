@@ -41,6 +41,9 @@ voice = [
     "kokoro-onnx>=0.6.0,<1",
     "vosk>=0.3.45",
 ]
+discord = [
+    "discord.py>=2.4",
+]
 
 [project.scripts]
 ai-agent = "ai_agent.cli.app:main"
@@ -48,9 +51,10 @@ ai-agent-chat = "ai_agent_cli.app:main"
 ai-agent-llm = "ai_agent.cli.llm_serve:main"
 ai-agent-serve = "ai_agent.api.serve:main"
 ai-agent-docker-broker = "ai_agent.docker_broker.server:main"
+ai-agent-discord = "ai_agent_discord.app:main"
 
 [tool.setuptools.packages.find]
-where = [".", "clients/cli"]
+where = [".", "clients/cli", "clients/python", "clients/discord"]
 include = ["ai_agent*", "ai_agent_cli*"]
 
 [tool.setuptools.package-data]

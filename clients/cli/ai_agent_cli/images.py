@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from PIL import Image, ImageFile, UnidentifiedImageError
 from PIL.Image import DecompressionBombError, DecompressionBombWarning
 
-from ai_agent_cli.types import ImageInput
+from ai_agent_client.types import ImageInput
 
 DEFAULT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_IMAGE_MAX_COUNT = 8

@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 
 import httpx
 
-from ai_agent_cli.types import ImageInput
+from ai_agent_client.types import ImageInput
 
 _IMAGE_EXTENSIONS = {
     "image/png": "png",

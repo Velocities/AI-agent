@@ -87,7 +87,7 @@ This document is the complete specification for implementing [`vision-and-attach
 | `ai_agent/config.py` | `Settings` / env aliases. `image_max_bytes` already exists (`IMAGE_MAX_BYTES`). |
 | `clients/cli/ai_agent_cli/remote_repl.py` | `@path` via `parse_image_prompt`. Commands: `/new`, `/list`, `/server`. |
 | `ai_agent/cli/local_repl.py` | Same `@path` for in-process chat. |
-| `clients/cli/ai_agent_cli/api_client.py` | `stream_turn` already multipart when `images` is non-empty. |
+| `clients/python/ai_agent_client/api.py` | `stream_turn` sends multipart when `images` is non-empty. |
 | `clients/android/.../ImageUpload.kt` | Client sniff + `MAX_COUNT = 8`. UX only. |
 | `clients/android/.../ImageAttachments.kt` | `fromUri` → `ImageTypes.accept`. Insert `maybeStripForTransit` TODO after accept. |
 | `clients/android/.../AgentApi.kt` | `speechStatus` pattern for `GET /api/model`. |

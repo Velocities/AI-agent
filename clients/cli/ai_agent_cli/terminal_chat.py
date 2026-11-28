@@ -5,6 +5,9 @@ from dataclasses import dataclass
 import httpx
 from rich.console import Console
 
+from ai_agent_client.api import AgentApiClient, AgentApiError
+from ai_agent_client.types import ImageInput
+from ai_agent_cli.api_url import public_api_base_url_hint
 from ai_agent_cli.auth.base import ChatAuth
 from ai_agent_cli.auth.remote import RemoteSupabaseAuth
 from ai_agent_cli.contracts import (
@@ -16,9 +19,6 @@ from ai_agent_cli.contracts import (
 )
 from ai_agent_cli.image_stage import ImageStage, StageCommand
 from ai_agent_cli.images import ImageRejected
-from ai_agent_cli.types import ImageInput
-from ai_agent_cli.api_client import AgentApiClient, AgentApiError
-from ai_agent_cli.api_url import public_api_base_url_hint
 from ai_agent_cli.client_state import (
     load_conversation_id,
     load_session_for,

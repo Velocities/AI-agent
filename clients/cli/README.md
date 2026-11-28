@@ -17,7 +17,7 @@ HTTP-only chat client for [`ai-agent serve`](../../README.md). Use **`ai-agent-c
 | `ai_agent_cli/terminal_chat.py` | Interactive HTTP chat loop |
 | `ai_agent_cli/local_server.py` | Spawns `ai-agent serve` for `--local` |
 | `ai_agent_cli/auth/` | Swappable bearer auth (remote Supabase vs local standalone) |
-| `ai_agent_cli/api_client.py` | HTTP client |
+| `ai_agent_client` | HTTP client shared with the Discord bot (`clients/python`) |
 | `ai_agent_cli/contracts.py` | API literals shared with Android |
 
 The chat client does not import `ai_agent.cli` or run the agent in-process. Local mode is still HTTP against a child server process.

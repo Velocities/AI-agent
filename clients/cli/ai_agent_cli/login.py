@@ -32,18 +32,26 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def authorize_url(*, supabase_url: str, anon_key: str, redirect_to: str, challenge: str) -> str:
+def authorize_url(
+    *,
+    supabase_url: str,
+    anon_key: str,
+    redirect_to: str,
+    challenge: str,
+    state: str | None = None,
+) -> str:
     base = supabase_url.strip().rstrip("/")
-    query = urlencode(
-        {
-            "provider": "discord",
-            "redirect_to": redirect_to,
-            "code_challenge": challenge,
-            "code_challenge_method": "s256",
-            "response_type": "code",
-            "apikey": anon_key,
-        }
-    )
+    fields = {
+        "provider": "discord",
+        "redirect_to": redirect_to,
+        "code_challenge": challenge,
+        "code_challenge_method": "s256",
+        "response_type": "code",
+        "apikey": anon_key,
+    }
+    if state:
+        fields["state"] = state
+    query = urlencode(fields)
     return f"{base}/auth/v1/authorize?{query}"
 
 
